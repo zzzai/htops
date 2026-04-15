@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: hetang-ops-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${HETANG_PG_DATABASE:-hetang_ops}
+      POSTGRES_USER: ${HETANG_PG_USER:-hetang_app}
+      POSTGRES_PASSWORD: ${HETANG_PG_PASSWORD:?set HETANG_PG_PASSWORD in .env.postgres}
+      POSTGRES_INITDB_ARGS: --auth=scram-sha-256
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - postgres
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - max_connections=50
+    ports:
+      - ${HETANG_PG_PORT:-55432}:5432
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${HETANG_PG_USER:-hetang_app} -d ${HETANG_PG_DATABASE:-hetang_ops}
+      interval: 10s
+      timeout: 5s
+      retries: 6

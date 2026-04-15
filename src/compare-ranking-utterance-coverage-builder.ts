@@ -1,0 +1,110 @@
+import { resolveSemanticIntent, type HetangSemanticIntentKind, type HetangSemanticLane } from "./semantic-intent.js";
+import type { CompareRankingUtteranceSample } from "./compare-ranking-route-eval-fixture-builder.js";
+import type { HetangInboundMessageAuditRecord, HetangOpsConfig } from "./types.js";
+
+export type CompareRankingSampleCoverage = "covered_exact" | "uncovered_paraphrase";
+
+export type CompareRankingUtteranceCoverageEntry = {
+  rawText: string;
+  normalizedText: string;
+  count: number;
+  action: "compare" | "ranking";
+  sampleCoverage: CompareRankingSampleCoverage;
+  lane: HetangSemanticLane;
+  intentKind: HetangSemanticIntentKind;
+  capabilityId?: string;
+};
+
+function normalizeAuditText(value: string): string {
+  return value.trim().replace(/\s+/gu, " ");
+}
+
+function normalizeSampleLookupText(value: string): string {
+  return value.trim().replace(/[\s，,、；;：:。.!！？?]/gu, "");
+}
+
+function buildSampleExactTextIndex(samples: CompareRankingUtteranceSample[]): Set<string> {
+  return new Set(
+    samples.flatMap((sample) => [sample.primary, ...sample.similars]).map(normalizeSampleLookupText),
+  );
+}
+
+type AggregatedAuditUtterance = {
+  rawText: string;
+  normalizedText: string;
+  count: number;
+};
+
+export function buildCompareRankingUtteranceCoverageFromInboundAudits(params: {
+  config: HetangOpsConfig;
+  now: Date;
+  audits: HetangInboundMessageAuditRecord[];
+  samples: CompareRankingUtteranceSample[];
+}): CompareRankingUtteranceCoverageEntry[] {
+  const aggregated = new Map<string, AggregatedAuditUtterance>();
+  for (const audit of params.audits) {
+    const rawText = normalizeAuditText(audit.effectiveContent?.trim() || audit.content.trim());
+    if (!rawText) {
+      continue;
+    }
+    const normalizedText = normalizeAuditText(rawText);
+    const existing = aggregated.get(normalizedText);
+    if (existing) {
+      existing.count += 1;
+      continue;
+    }
+    aggregated.set(normalizedText, {
+      rawText,
+      normalizedText,
+      count: 1,
+    });
+  }
+
+  const sampleExactTextIndex = buildSampleExactTextIndex(params.samples);
+  const entries: CompareRankingUtteranceCoverageEntry[] = [];
+
+  for (const aggregatedEntry of aggregated.values()) {
+    const intent = resolveSemanticIntent({
+      config: params.config,
+      text: aggregatedEntry.rawText,
+      now: params.now,
+    });
+
+    if (
+      intent.lane !== "query" ||
+      intent.kind !== "query" ||
+      (intent.action !== "compare" && intent.action !== "ranking")
+    ) {
+      continue;
+    }
+
+    entries.push({
+      rawText: aggregatedEntry.rawText,
+      normalizedText: aggregatedEntry.normalizedText,
+      count: aggregatedEntry.count,
+      action: intent.action,
+      sampleCoverage: sampleExactTextIndex.has(normalizeSampleLookupText(aggregatedEntry.rawText))
+        ? "covered_exact"
+        : "uncovered_paraphrase",
+      lane: intent.lane,
+      intentKind: intent.kind,
+      capabilityId: intent.capabilityId,
+    });
+  }
+
+  return entries.sort((left, right) => right.count - left.count || left.rawText.localeCompare(right.rawText, "zh-Hans-CN"));
+}
+
+export function filterCompareRankingUtteranceCoverage(
+  entries: CompareRankingUtteranceCoverageEntry[],
+  filter: "all" | "covered" | "uncovered",
+): CompareRankingUtteranceCoverageEntry[] {
+  switch (filter) {
+    case "covered":
+      return entries.filter((entry) => entry.sampleCoverage === "covered_exact");
+    case "uncovered":
+      return entries.filter((entry) => entry.sampleCoverage === "uncovered_paraphrase");
+    default:
+      return entries;
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@openclaw/hetang-ops",
+  "version": "2026.3.30",
+  "private": true,
+  "description": "OpenClaw adapter for the standalone Hetang Ops runtime",
+  "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.3.22"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

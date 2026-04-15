@@ -1,0 +1,7 @@
+{
+  "id": "hetang-ops",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

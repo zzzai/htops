@@ -1,0 +1,22 @@
+[Unit]
+Description=Hetang Query API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/htops
+Environment=HOME=/root
+Environment=PATH=/root/.volta/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HETANG_ROOT_DIR=/root/htops
+Environment=HTOPS_CONFIG_PATH=/root/htops/htops.json
+EnvironmentFile=-/root/htops/.env.runtime
+ExecStart=/usr/bin/env bash /root/htops/ops/hetang-query-api.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

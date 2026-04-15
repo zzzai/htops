@@ -1,0 +1,42 @@
+{
+  "version": "v1",
+  "generatedAt": "2026-04-15",
+  "channel": "wecom",
+  "notes": [
+    "Sanitized public example only.",
+    "Copy this file to wecom-access-roster.v1.json in local deployments and replace placeholders with real sender ids, names, and scopes."
+  ],
+  "storeScopeCatalog": [
+    {
+      "token": "门店A",
+      "orgId": "STORE_ALPHA",
+      "storeName": "示例门店A"
+    },
+    {
+      "token": "门店B",
+      "orgId": "STORE_BETA",
+      "storeName": "示例门店B"
+    }
+  ],
+  "entries": [
+    {
+      "senderId": "example_hq_sender",
+      "employeeName": "示例总部同学",
+      "matchNames": ["示例总部同学", "示例总部"],
+      "role": "hq",
+      "hourlyQuota": 500,
+      "dailyQuota": 5000,
+      "notes": "public example entry"
+    }
+  ],
+  "plannedEntries": [
+    {
+      "employeeName": "示例区域运营",
+      "matchNames": ["示例区域运营", "示例区域运营-城市区运营"],
+      "role": "manager",
+      "stores": ["门店A", "门店B"],
+      "notes": "replace with real user and scopes",
+      "reasonPending": "待补真实 WeCom senderId"
+    }
+  ]
+}

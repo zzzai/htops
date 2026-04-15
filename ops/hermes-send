@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="${HETANG_ROOT_DIR:-/root/htops}"
+RUNTIME_ENV_FILE="${HETANG_RUNTIME_ENV_FILE:-${ROOT_DIR}/.env.runtime}"
+NODE_BIN="${HETANG_NODE_BIN:-${HOME}/.volta/bin/node}"
+SOURCE_ENTRY="${ROOT_DIR}/scripts/hermes-send.ts"
+
+export PATH="${HOME}/.volta/bin:/usr/local/bin:/usr/bin:/bin:${HOME}/.local/bin:${HOME}/.npm-global/bin:${PATH:-}"
+
+if [[ -f "${RUNTIME_ENV_FILE}" ]]; then
+  set -a
+  source "${RUNTIME_ENV_FILE}"
+  set +a
+fi
+
+cd "${ROOT_DIR}"
+exec "${NODE_BIN}" --import tsx "${SOURCE_ENTRY}" "$@"

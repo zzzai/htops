@@ -1,0 +1,38 @@
+{
+  "name": "htops",
+  "version": "2026.3.30",
+  "private": true,
+  "description": "Standalone Hetang operations runtime",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run src/**/*.test.ts",
+    "test:standalone": "vitest run src/standalone-env.test.ts src/command-runner.test.ts",
+    "cli": "node --import tsx src/main.ts",
+    "codex:doctor": "node --import tsx scripts/codex-doctor.ts",
+    "codex:bootstrap": "node --import tsx scripts/codex-bootstrap.ts",
+    "codex:workflow:doctor": "node --import tsx scripts/codex-workflow-doctor.ts",
+    "bridge": "node --import tsx scripts/run-bridge-service.ts",
+    "tools:server": "node --import tsx scripts/run-tools-service.ts",
+    "worker:scheduled": "node --import tsx scripts/run-worker-service.ts --mode scheduled",
+    "worker:analysis": "node --import tsx scripts/run-worker-service.ts --mode analysis",
+    "ops:route-compare-summary": "node --import tsx scripts/summarize-route-compare.ts",
+    "jobs:run": "node --import tsx scripts/run-due-jobs.ts",
+    "brief:midday": "node --import tsx scripts/send-midday-briefs.ts",
+    "push:reactivation": "node --import tsx scripts/send-reactivation-picks.ts",
+    "import:legacy:yingbin": "node --import tsx scripts/import-legacy-yingbin.ts"
+  },
+  "dependencies": {
+    "@wecom/aibot-node-sdk": "^1.0.6",
+    "commander": "^14.0.1",
+    "mysql2": "^3.21.1",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "@types/pg": "^8.20.0",
+    "pg-mem": "^3.0.14",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}

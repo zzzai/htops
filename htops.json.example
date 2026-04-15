@@ -1,0 +1,101 @@
+{
+  "api": {
+    "appKey": "REPLACE_WITH_APP_KEY",
+    "appSecret": "REPLACE_WITH_APP_SECRET"
+  },
+  "database": {
+    "url": "postgresql://hetang_app:REPLACE_WITH_A_24_PLUS_CHAR_PASSWORD@127.0.0.1:55432/hetang_ops",
+    "queryPoolMax": 12,
+    "syncPoolMax": 4,
+    "analysisPoolMax": 4,
+    "queryUrl": "postgresql://hetang_app:REPLACE_WITH_A_24_PLUS_CHAR_PASSWORD@127.0.0.1:55432/hetang_ops",
+    "syncUrl": "postgresql://hetang_app:REPLACE_WITH_A_24_PLUS_CHAR_PASSWORD@127.0.0.1:55432/hetang_ops",
+    "analysisUrl": "postgresql://hetang_app:REPLACE_WITH_A_24_PLUS_CHAR_PASSWORD@127.0.0.1:55432/hetang_ops"
+  },
+  "sync": {
+    "enabled": true,
+    "initialBackfillDays": 3,
+    "overlapDays": 7,
+    "runAtLocalTime": "03:00"
+  },
+  "reporting": {
+    "enabled": true,
+    "sharedDelivery": {
+      "channel": "wecom",
+      "target": "REPLACE_WITH_SHARED_DELIVERY_TARGET",
+      "enabled": true
+    },
+    "buildAtLocalTime": "08:50",
+    "sendAtLocalTime": "09:00",
+    "middayBriefAtLocalTime": "12:00",
+    "reactivationPushAtLocalTime": "15:00",
+    "sendReportEnabled": false,
+    "sendMiddayBriefEnabled": true,
+    "sendReactivationPushEnabled": true
+  },
+  "stores": [
+    {
+      "orgId": "STORE_ALPHA",
+      "storeName": "示例门店A",
+      "rawAliases": [
+        "门店A"
+      ],
+      "isActive": true
+    },
+    {
+      "orgId": "STORE_BETA",
+      "storeName": "示例门店B",
+      "rawAliases": [
+        "门店B"
+      ],
+      "isActive": true
+    },
+    {
+      "orgId": "STORE_GAMMA",
+      "storeName": "示例门店C",
+      "rawAliases": [
+        "门店C"
+      ],
+      "isActive": true
+    },
+    {
+      "orgId": "STORE_DELTA",
+      "storeName": "示例门店D",
+      "rawAliases": [
+        "门店D"
+      ],
+      "isActive": true
+    },
+    {
+      "orgId": "STORE_EPSILON",
+      "storeName": "示例门店E",
+      "rawAliases": [
+        "门店E"
+      ],
+      "isActive": true
+    }
+  ],
+  "service": {
+    "enableInGateway": false,
+    "scheduledPollIntervalMs": 60000,
+    "analysisPollIntervalMs": 10000
+  },
+  "conversationQuality": {
+    "intentClarifier": {
+      "enabled": true,
+      "maxQuestionsPerTurn": 1
+    },
+    "replyGuard": {
+      "enabled": true,
+      "allowOneRepairAttempt": true
+    },
+    "correctionInterrupt": {
+      "enabled": true,
+      "recentTurnTtlMs": 180000
+    }
+  },
+  "queue": {
+    "maxPendingAnalysisJobsPerOrg": 20,
+    "deadLetterEnabled": true
+  }
+}

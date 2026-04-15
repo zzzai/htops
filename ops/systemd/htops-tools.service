@@ -1,0 +1,18 @@
+[Unit]
+Description=Hetang Hermes Tools Facade
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/htops
+Environment=HETANG_ROOT_DIR=/root/htops
+Environment=HETANG_RUNTIME_ENV_FILE=/root/htops/.env.runtime
+ExecStart=/usr/bin/env bash /root/htops/ops/htops-tools.sh
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/htops-tools.systemd.log
+StandardError=append:/tmp/htops-tools.systemd.log
+
+[Install]
+WantedBy=multi-user.target

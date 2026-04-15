@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "generatedAt": "2026-04-15",
+  "channel": "wecom",
+  "notes": [
+    "Sanitized public example only.",
+    "Copy this file to wecom-target-directory.v1.json in local deployments and replace placeholder chat ids."
+  ],
+  "entries": [
+    {
+      "target": "REPLACE_WITH_WECOM_CHAT_ID",
+      "aliases": ["示例共享群", "shared-delivery", "reporting-shared-delivery"],
+      "notes": "public example target"
+    }
+  ]
+}
