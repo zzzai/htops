@@ -1,6 +1,76 @@
 # Hetang Ops
 
+> Fast enough for realtime chat. Deterministic enough for business truth. Narrow enough to evolve safely.
+
 This project syncs five Hetang stores into PostgreSQL, keeps raw API audit data, builds daily operating reports, and delivers summaries through configurable messaging adapters such as WeCom.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    T[Text] --> CC[Conversation Control]
+    CC --> SI[Semantic Intent]
+    SI --> EG{Early Stop Gate}
+
+    EG -->|meta / clarify / unsupported| OUT[Answer / Action]
+    EG -->|query| LS[Lane Select]
+    EG -->|analysis| LS
+
+    LS -->|query| CG[Capability Graph]
+    CG --> SSL[Serving Semantic Layer]
+    SSL --> SE[Safe Execution]
+    SE --> RG[Reply Guard]
+    RG --> OUT
+
+    LS -->|analysis| ANA[Async Analysis Lane]
+    ANA --> RG
+
+    classDef front fill:#EEF4FF,stroke:#5B8DEF,color:#0F172A,stroke-width:1.5px;
+    classDef core fill:#F8F5FF,stroke:#8B5CF6,color:#111827,stroke-width:1.5px;
+    classDef trust fill:#ECFDF3,stroke:#22C55E,color:#052E16,stroke-width:1.5px;
+    classDef output fill:#FFF7ED,stroke:#F97316,color:#7C2D12,stroke-width:1.5px;
+
+    class T,CC,SI,EG front;
+    class LS,CG,SSL,ANA core;
+    class SE,RG trust;
+    class OUT output;
+```
+
+<table>
+  <tr>
+    <td width="25%">
+      <strong>Front Door</strong><br/>
+      Text -> Conversation Control -> Semantic Intent -> Early Stop Gate
+      <br/><br/>
+      Cheap checks, clarification, noop handling, and direct meta replies should end here whenever possible.
+    </td>
+    <td width="25%">
+      <strong>Routing Brain</strong><br/>
+      Lane Select -> Capability Graph
+      <br/><br/>
+      Query, analysis, and capability ownership are chosen explicitly instead of being scattered across ad-hoc branches.
+    </td>
+    <td width="25%">
+      <strong>Truth Layer</strong><br/>
+      Serving Semantic Layer -> Safe Execution
+      <br/><br/>
+      Business answers come from structured serving reads and safe execution paths, not free-form generation.
+    </td>
+    <td width="25%">
+      <strong>Delivery Layer</strong><br/>
+      Reply Guard -> Answer / Action
+      <br/><br/>
+      Final output is checked for store mismatch, unsupported claims, template leakage, and other trust-breaking errors.
+    </td>
+  </tr>
+</table>
+
+## Design Principles
+
+- `Query` remains deterministic, auditable, and permission-safe.
+- `Analysis` can be richer, but it must stay bounded and fact-first.
+- `Capability Graph` is the canonical routing surface for new query and report work.
+- `Reply Guard` is the last trust barrier, not the main router.
 
 ## Project Boundary
 
@@ -78,47 +148,6 @@ Outbound delivery is no longer hard-coded to OpenClaw.
 - Default standalone deployment now uses `ops/hermes-send`, so htops only knows the stable `message send` CLI contract and no longer needs to point at OpenClaw directly.
 
 If neither is set, Hetang only reuses the current gateway entry when it is already running inside a compatible `dist/index.js` host. Otherwise it fails fast and asks for an explicit adapter configuration.
-
-## Codex Enhancement Pack
-
-The repository now ships a project-local Codex enhancement pack so the best next-step Codex upgrades are visible and runnable from inside the repo.
-
-Primary goals:
-
-- land a low-risk Exa-first upgrade path
-- keep global Codex mutations explicit instead of hidden
-- preserve room for staged adoption of `oh-my-codex` and selective `everything-claude-code` patterns later
-
-Use:
-
-```bash
-npm run codex:doctor
-npm run codex:bootstrap
-```
-
-If the host already has Codex CLI and you want to apply the Exa MCP upgrade directly:
-
-```bash
-npm run codex:bootstrap -- --apply-exa
-```
-
-Long-lived guidance lives in:
-
-- `docs/codex-enhancement-pack.md`
-- `docs/codex-workflow-layer.md`
-
-The repo also now carries a low-risk workflow layer inspired by `oh-my-codex`:
-
-```bash
-npm run codex:workflow:doctor
-```
-
-Key files:
-
-- `AGENTS.md`
-- `.omx/README.md`
-- `.omx/commands/`
-- `.omx/templates/`
 
 ## Hermes Bridge
 
