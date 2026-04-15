@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="${HETANG_ROOT_DIR:-/root/htops}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="${HETANG_ROOT_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 RUNTIME_ENV_FILE="${HETANG_RUNTIME_ENV_FILE:-${ROOT_DIR}/.env.runtime}"
 TARGET_GROUP="${HETANG_REACTIVATION_TARGET:-龙虾测试群}"
 TARGET_CHAT_ID="${HETANG_REACTIVATION_TARGET_CHAT_ID:-REPLACE_WITH_SHARED_DELIVERY_TARGET}"
@@ -45,7 +46,8 @@ cd "${ROOT_DIR}"
       const fs = require("node:fs");
       const os = require("node:os");
       const path = require("node:path");
-      const configPath = process.env.HTOPS_CONFIG_PATH || "/root/htops/htops.json";
+      const rootDir = process.env.HTOPS_ROOT_DIR || process.env.HETANG_ROOT_DIR || process.cwd();
+      const configPath = process.env.HTOPS_CONFIG_PATH || path.join(rootDir, "htops.json");
       const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
       const stores = raw?.stores ?? [];
       for (const store of stores) {

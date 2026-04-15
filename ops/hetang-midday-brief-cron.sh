@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="${HETANG_ROOT_DIR:-/root/htops}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="${HETANG_ROOT_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 RUNTIME_ENV_FILE="${HETANG_RUNTIME_ENV_FILE:-${ROOT_DIR}/.env.runtime}"
 TARGET_GROUP="${HETANG_MIDDAY_TARGET:-龙虾测试群}"
 TARGET_CHAT_ID="${HETANG_MIDDAY_TARGET_CHAT_ID:-REPLACE_WITH_SHARED_DELIVERY_TARGET}"

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/htops
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+cd "${ROOT_DIR}"
 set -a
-if [[ -f /root/htops/.env.runtime ]]; then
-  source /root/htops/.env.runtime
+if [[ -f "${ROOT_DIR}/.env.runtime" ]]; then
+  source "${ROOT_DIR}/.env.runtime"
 fi
 set +a
 

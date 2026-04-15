@@ -22,7 +22,7 @@ from wecom_send_mode import parse_bool_flag, parse_reply_mode, patch_wecom_reply
 
 
 LOGGER = logging.getLogger(__name__)
-PROJECT_ROOT = Path(os.getenv("HETANG_ROOT_DIR", "/root/htops"))
+PROJECT_ROOT = Path(os.getenv("HETANG_ROOT_DIR", str(Path(__file__).resolve().parents[1])))
 RUNTIME_ENV_PATH = Path(
     os.getenv("HETANG_RUNTIME_ENV_FILE", str(PROJECT_ROOT / ".env.runtime")),
 )

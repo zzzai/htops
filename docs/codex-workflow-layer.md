@@ -39,7 +39,6 @@ This repo-local layer gives the team:
 Run:
 
 ```bash
-cd /root/htops
 npm run codex:workflow:doctor
 ```
 

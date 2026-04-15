@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-PROJECT_ROOT = Path(os.getenv("HETANG_ROOT_DIR", "/root/htops"))
+PROJECT_ROOT = Path(os.getenv("HETANG_ROOT_DIR", str(Path(__file__).resolve().parents[1])))
 DEFAULT_CONFIG_PATH = Path(os.getenv("HTOPS_CONFIG_PATH", str(PROJECT_ROOT / "htops.json")))
 
 STRONG_DOMAIN_TERMS = (

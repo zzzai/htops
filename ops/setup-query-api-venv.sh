@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="${HETANG_ROOT_DIR:-/root/htops}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="${HETANG_ROOT_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 VENV_DIR="${HETANG_QUERY_API_VENV:-${ROOT_DIR}/api/.venv}"
 PYTHON_BIN="${HETANG_QUERY_API_BOOTSTRAP_PYTHON:-/usr/bin/python3}"
 PIP_INDEX_URL="${HETANG_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"

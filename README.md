@@ -1,15 +1,13 @@
 # Hetang Ops
 
-Canonical project root is now `/root/htops`.
-
 This project syncs five Hetang stores into PostgreSQL, keeps raw API audit data, builds daily operating reports, and delivers summaries through configurable messaging adapters such as WeCom.
 
 ## Project Boundary
 
-- `/root/htops` is the business project root and the only place where Hetang code, config, scripts, and runtime state should keep evolving.
+- This repository root is the business project root where Hetang code, config, scripts, and runtime state should keep evolving.
 - OpenClaw is now an optional gateway adapter only.
-- OpenClaw-specific compatibility files live under `/root/htops/adapters/openclaw`.
-- `/root/openclaw/extensions/hetang-ops` should point to `/root/htops/adapters/openclaw`, not to the whole project root.
+- OpenClaw-specific compatibility files live under `adapters/openclaw/`.
+- If another gateway repo needs this adapter, point that integration at `adapters/openclaw/`, not at the whole project root.
 
 ## Internal Architecture Notes
 
@@ -23,10 +21,9 @@ This project syncs five Hetang stores into PostgreSQL, keeps raw API audit data,
 
 ## Standalone Bootstrap
 
-1. Install Node dependencies inside `/root/htops`:
+1. Install Node dependencies from the repository root:
 
 ```bash
-cd /root/htops
 pnpm install
 ```
 
@@ -35,10 +32,10 @@ The project already ships `.npmrc` with `https://registry.npmmirror.com`, so `pn
 2. Build the query API Python virtualenv:
 
 ```bash
-bash /root/htops/ops/setup-query-api-venv.sh
+bash ops/setup-query-api-venv.sh
 ```
 
-The bootstrap script defaults to the Tsinghua pip mirror and recreates `/root/htops/api/.venv`.
+The bootstrap script defaults to the Tsinghua pip mirror and recreates `api/.venv`.
 
 3. Start or restart the three standalone services:
 
@@ -67,7 +64,6 @@ systemctl is-active htops-bridge.service
 5. Run the standalone CLI:
 
 ```bash
-cd /root/htops
 pnpm cli -- hetang status
 ```
 
@@ -79,13 +75,13 @@ Outbound delivery is no longer hard-coded to OpenClaw.
   Use a different Node entry that supports `message send`.
 - `HETANG_MESSAGE_SEND_BIN=my-gateway`
   Use a different binary name for CLI-style fallback sends.
-- Default standalone deployment now uses `/root/htops/ops/hermes-send`, so htops only knows the stable `message send` CLI contract and no longer needs to point at OpenClaw directly.
+- Default standalone deployment now uses `ops/hermes-send`, so htops only knows the stable `message send` CLI contract and no longer needs to point at OpenClaw directly.
 
 If neither is set, Hetang only reuses the current gateway entry when it is already running inside a compatible `dist/index.js` host. Otherwise it fails fast and asks for an explicit adapter configuration.
 
 ## Codex Enhancement Pack
 
-The repository now ships a project-local Codex enhancement pack so the best next-step Codex upgrades are visible and runnable from inside `/root/htops`.
+The repository now ships a project-local Codex enhancement pack so the best next-step Codex upgrades are visible and runnable from inside the repo.
 
 Primary goals:
 
@@ -96,7 +92,6 @@ Primary goals:
 Use:
 
 ```bash
-cd /root/htops
 npm run codex:doctor
 npm run codex:bootstrap
 ```
@@ -104,30 +99,26 @@ npm run codex:bootstrap
 If the host already has Codex CLI and you want to apply the Exa MCP upgrade directly:
 
 ```bash
-cd /root/htops
 npm run codex:bootstrap -- --apply-exa
 ```
 
 Long-lived guidance lives in:
 
-- `/root/htops/docs/codex-enhancement-pack.md`
-- `/root/htops/docs/codex-workflow-layer.md`
-- `/root/htops/docs/plans/2026-04-13-codex-enhancement-pack-design.md`
-- `/root/htops/docs/plans/2026-04-13-codex-enhancement-pack-plan.md`
+- `docs/codex-enhancement-pack.md`
+- `docs/codex-workflow-layer.md`
 
 The repo also now carries a low-risk workflow layer inspired by `oh-my-codex`:
 
 ```bash
-cd /root/htops
 npm run codex:workflow:doctor
 ```
 
 Key files:
 
-- `/root/htops/AGENTS.md`
-- `/root/htops/.omx/README.md`
-- `/root/htops/.omx/commands/`
-- `/root/htops/.omx/templates/`
+- `AGENTS.md`
+- `.omx/README.md`
+- `.omx/commands/`
+- `.omx/templates/`
 
 ## Hermes Bridge
 
@@ -153,7 +144,6 @@ Runtime env knobs:
 Start the bridge directly:
 
 ```bash
-cd /root/htops
 pnpm bridge
 ```
 
@@ -174,28 +164,28 @@ The intended split is:
 
 The plugin now expects `database.url` instead of a local SQLite file. A Docker Compose deployment is included so the first rollout can run against one local PostgreSQL instance with a bind-mounted host directory.
 
-1. Copy `/root/htops/.env.postgres.example` to `/root/htops/.env.postgres`.
+1. Copy `.env.postgres.example` to `.env.postgres`.
 2. Replace `HETANG_PG_PASSWORD` with a random password that is at least 24 characters long.
 3. Create the local data directory:
 
 ```bash
-mkdir -p /root/htops/data/postgres
-chmod 700 /root/htops/data/postgres
+mkdir -p data/postgres
+chmod 700 data/postgres
 ```
 
 4. Start PostgreSQL:
 
 ```bash
 docker compose \
-  --env-file /root/htops/.env.postgres \
-  -f /root/htops/docker-compose.postgres.yml \
+  --env-file .env.postgres \
+  -f docker-compose.postgres.yml \
   up -d
 ```
 
 5. Export the plugin database URL into the OpenClaw environment:
 
 ```bash
-export HETANG_DATABASE_URL="$(rg '^HETANG_DATABASE_URL=' /root/htops/.env.postgres -N | cut -d= -f2-)"
+export HETANG_DATABASE_URL="$(rg '^HETANG_DATABASE_URL=' .env.postgres -N | cut -d= -f2-)"
 ```
 
 6. Set the plugin config to use the environment variable:
@@ -212,7 +202,7 @@ export HETANG_DATABASE_URL="$(rg '^HETANG_DATABASE_URL=' /root/htops/.env.postgr
 
 - Use a dedicated application account such as `hetang_app`.
 - Do not commit the real `.env.postgres` file.
-- Keep the bind-mounted `/root/htops/data/postgres` directory on a disk that is included in your host backup plan.
+- Keep the bind-mounted `data/postgres` directory on a disk that is included in your host backup plan.
 - The bundled Docker Compose file enables `scram-sha-256` authentication for new passwords.
 
 ## Operations Shortcuts
@@ -234,8 +224,8 @@ Current analysis-related Control Tower keys:
 
 ## WeCom Access Roster
 
-- Public repos keep a sanitized template at `/root/htops/access/wecom-access-roster.v1.example.json`.
-- Local deployments should copy it to `/root/htops/access/wecom-access-roster.v1.json` and replace the placeholder people, scopes, and sender ids with real values.
+- Public repos keep a sanitized template at `access/wecom-access-roster.v1.example.json`.
+- Local deployments should copy it to `access/wecom-access-roster.v1.json` and replace the placeholder people, scopes, and sender ids with real values.
 - `entries` contains bindings that are safe to import immediately.
 - `plannedEntries` contains intended permissions that still need the real WeCom `senderId` or a final scope decision.
 - For WeCom inbound messages, the plugin now auto-provisions a binding on first contact when `senderName` matches a unique roster entry with a safe role/scope.
@@ -243,9 +233,9 @@ Current analysis-related Control Tower keys:
 - Validate without writing:
 
 ```bash
-cp /root/htops/access/wecom-access-roster.v1.example.json /root/htops/access/wecom-access-roster.v1.json
+cp access/wecom-access-roster.v1.example.json access/wecom-access-roster.v1.json
 pnpm cli -- hetang access import \
-  --file /root/htops/access/wecom-access-roster.v1.json \
+  --file access/wecom-access-roster.v1.json \
   --dry-run
 ```
 

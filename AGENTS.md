@@ -1,6 +1,6 @@
 # AGENTS
 
-Project scope: `/root/htops`
+Project scope: repository root
 
 ## Mission
 

@@ -20,7 +20,7 @@ function printUsage(): void {
   console.log(
     [
       "Usage:",
-      "  node --import tsx /root/htops/scripts/backfill-customer-history.ts --start YYYY-MM-DD --end YYYY-MM-DD [--org ORG_ID] [--catalog-lookback-days 365] [--intelligence-chunk-days 14]",
+      "  node --import tsx scripts/backfill-customer-history.ts --start YYYY-MM-DD --end YYYY-MM-DD [--org ORG_ID] [--catalog-lookback-days 365] [--intelligence-chunk-days 14]",
     ].join("\n"),
   );
 }

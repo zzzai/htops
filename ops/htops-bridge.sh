@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="${HETANG_ROOT_DIR:-/root/htops}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="${HETANG_ROOT_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 RUNTIME_ENV_FILE="${HETANG_RUNTIME_ENV_FILE:-${ROOT_DIR}/.env.runtime}"
 LOG_FILE="${HETANG_BRIDGE_LOG:-/tmp/htops-bridge.log}"
 LOCK_FILE="${HETANG_BRIDGE_LOCK:-/tmp/htops-bridge.lock}"

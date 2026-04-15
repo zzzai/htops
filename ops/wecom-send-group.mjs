@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import AiBot from "@wecom/aibot-node-sdk/dist/index.esm.js";
 
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_HERMES_WECOM_BOT_ID_FILE = "/root/.hermes/credentials/wecom-hetang-bot-id.txt";
 const DEFAULT_HERMES_WECOM_SECRET_FILE = "/root/.hermes/credentials/wecom-hetang-bot-secret.txt";
 
@@ -25,7 +28,8 @@ function readTrimmedFile(filePath) {
 }
 
 function loadRuntimeEnv() {
-  const envPath = process.env.HETANG_RUNTIME_ENV_FILE?.trim() || "/root/htops/.env.runtime";
+  const envPath =
+    process.env.HETANG_RUNTIME_ENV_FILE?.trim() || path.join(PROJECT_ROOT, ".env.runtime");
   if (!fs.existsSync(envPath)) {
     return;
   }

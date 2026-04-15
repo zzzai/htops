@@ -18,7 +18,7 @@ function printUsage(): void {
   console.log(
     [
       "Usage:",
-      "  node --import tsx /root/htops/scripts/backfill-and-rebuild.ts --start YYYY-MM-DD --end YYYY-MM-DD [--org ORG_ID] [--skip-backfill] [--skip-rebuild]",
+      "  node --import tsx scripts/backfill-and-rebuild.ts --start YYYY-MM-DD --end YYYY-MM-DD [--org ORG_ID] [--skip-backfill] [--skip-rebuild]",
     ].join("\n"),
   );
 }

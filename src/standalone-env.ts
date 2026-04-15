@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { resolveHetangOpsConfig } from "./config.js";
 import type { HetangOpsConfig } from "./types.js";
 
-export const DEFAULT_HTOPS_ROOT_DIR = "/root/htops";
+export const DEFAULT_HTOPS_ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const DEFAULT_HTOPS_CONFIG_PATH = path.join(DEFAULT_HTOPS_ROOT_DIR, "htops.json");
 export const DEFAULT_HTOPS_STATE_DIR = path.join(os.homedir(), ".htops");
 export const DEFAULT_HTOPS_RUNTIME_ENV_PATH = path.join(DEFAULT_HTOPS_ROOT_DIR, ".env.runtime");

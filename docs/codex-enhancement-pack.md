@@ -30,7 +30,6 @@ This repository now carries a project-local Codex enhancement pack. The goal is 
 ## Recommended Commands
 
 ```bash
-cd /root/htops
 npm run codex:doctor
 npm run codex:bootstrap
 npm run codex:workflow:doctor
@@ -39,7 +38,6 @@ npm run codex:workflow:doctor
 If you want to install Exa MCP on the host:
 
 ```bash
-cd /root/htops
 npm run codex:bootstrap -- --apply-exa
 ```
 

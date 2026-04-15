@@ -7,12 +7,12 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-WorkingDirectory=/root/htops
-Environment=HOME=/root
-Environment=PATH=/root/.volta/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=HETANG_ROOT_DIR=/root/htops
-EnvironmentFile=-/root/htops/.env.runtime
-ExecStart=/usr/bin/env bash /root/htops/ops/hermes-gateway.sh
+WorkingDirectory=%h/htops
+Environment=HOME=%h
+Environment=PATH=%h/.volta/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HETANG_ROOT_DIR=%h/htops
+EnvironmentFile=-%h/htops/.env.runtime
+ExecStart=/usr/bin/env bash %h/htops/ops/hermes-gateway.sh
 Restart=always
 RestartSec=5
 TimeoutStopSec=20

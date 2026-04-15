@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { resolveStandaloneRootDir } from "./standalone-env.js";
 import type { HetangNotificationTarget } from "./types.js";
 import { resolveWeComTargetAlias } from "./wecom-target-directory.js";
 
@@ -78,7 +79,7 @@ function resolveHetangProjectRoot(): string {
   if (configuredRoot) {
     return configuredRoot;
   }
-  return "/root/htops";
+  return resolveStandaloneRootDir();
 }
 
 function resolveConfiguredWeComSenderScript(): string {
