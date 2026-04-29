@@ -1,14 +1,22 @@
 # Hetang Ops
 
-> Fast enough for realtime chat. Deterministic enough for business truth. Narrow enough to evolve safely.
+> Sync business facts locally. Understand business questions. Answer and act through controlled paths.
 
-Hetang Ops is an AI-native operating intelligence infrastructure for physical-store operations. It does not treat AI as a chat wrapper around reports. It treats AI as a bounded operating layer on top of a deterministic business-truth core: business facts are synchronized into PostgreSQL, transformed into a local serving layer, and then exposed through semantic understanding, capability routing, async analysis, and business-facing decision surfaces.
+Hetang Ops is the local operating kernel for Hetang stores.
 
-In practical terms, the system is built around one thesis:
+In simple terms, it does four things:
+
+1. Pull business facts from upstream systems
+2. Store them in local PostgreSQL as the source of truth
+3. Understand natural-language business questions
+4. Return answers, reports, and action suggestions through safe, auditable paths
+
+It is not just a report generator, and it is not a generic chatbot.
+Its job is to turn store data into a controllable operating system for HQ, store managers, and customer-growth workflows.
+
+The core idea is:
 
 `Deterministic business truth + semantic routing + bounded AI agents + execution feedback loop`
-
-The goal is not to generate prettier text. The goal is to turn raw operating data into a controllable decision engine for HQ and store execution.
 
 ## Project Thesis
 
