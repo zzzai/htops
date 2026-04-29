@@ -1,9 +1,6 @@
 import { Pool } from "pg";
-import { rebuildCustomerIntelligenceForDateRange } from "../src/customer-intelligence.js";
-import { rebuildMemberDailySnapshotsForDateRange } from "../src/customer-history-backfill.js";
 import { resolveHistoryCatchupOrgIds, resolveHistoryCatchupRange } from "../src/history-catchup.js";
-import { rebuildMemberReactivationFeaturesForDateRange } from "../src/reactivation-features.js";
-import { rebuildMemberReactivationStrategiesForDateRange } from "../src/reactivation-strategy.js";
+import { runLocalCustomerHistoryCatchup } from "../src/rebuild-customer-history-local-script.js";
 import { loadStandaloneHetangConfig, loadStandaloneRuntimeEnv } from "../src/standalone-env.js";
 import { HetangOpsStore } from "../src/store.js";
 
@@ -116,55 +113,19 @@ async function main(): Promise<void> {
   try {
     await store.initialize();
     await store.ensureAnalyticsViewsReady();
-    console.log(
-      `Starting local customer history catchup for ${orgIds.length} store(s): ${range.startBizDate}..${range.endBizDate}`,
-    );
-
-    for (const orgId of orgIds) {
-      const storeName = config.stores.find((entry) => entry.orgId === orgId)?.storeName ?? orgId;
-      const snapshotCount = await rebuildMemberDailySnapshotsForDateRange({
-        store,
-        orgId,
-        startBizDate: range.startBizDate,
-        endBizDate: range.endBizDate,
-      });
-      console.log(`[${storeName}] member snapshots rebuilt for ${snapshotCount} days`);
-
-      const intelligenceCount = await rebuildCustomerIntelligenceForDateRange({
-        store,
-        orgId,
-        startBizDate: range.startBizDate,
-        endBizDate: range.endBizDate,
-        refreshViews: false,
-        chunkDays: options.intelligenceChunkDays,
-      });
-      console.log(`[${storeName}] customer intelligence rebuilt for ${intelligenceCount} days`);
-
-      const reactivationFeatureCount = await rebuildMemberReactivationFeaturesForDateRange({
-        store,
-        orgId,
-        startBizDate: range.startBizDate,
-        endBizDate: range.endBizDate,
-        refreshViews: false,
-      });
-      console.log(
-        `[${storeName}] member reactivation features rebuilt for ${reactivationFeatureCount} days`,
-      );
-
-      const reactivationStrategyCount = await rebuildMemberReactivationStrategiesForDateRange({
-        store,
-        orgId,
-        startBizDate: range.startBizDate,
-        endBizDate: range.endBizDate,
-        refreshViews: false,
-      });
-      console.log(
-        `[${storeName}] member reactivation strategies rebuilt for ${reactivationStrategyCount} days`,
-      );
-    }
-
-    await store.forceRebuildAnalyticsViews();
-    console.log("Local customer history catchup complete");
+    await runLocalCustomerHistoryCatchup({
+      store,
+      stores: config.stores.map((entry) => ({
+        orgId: entry.orgId,
+        storeName: entry.storeName,
+        roomCount: entry.roomCount,
+        operatingHoursPerDay: entry.operatingHoursPerDay,
+      })),
+      orgIds,
+      range,
+      intelligenceChunkDays: options.intelligenceChunkDays,
+      log: (line) => console.log(line),
+    });
   } finally {
     await store.close();
     await pool.end();

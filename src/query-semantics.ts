@@ -1,4 +1,5 @@
 import { resolveMetricIntent, type HetangMetricIntentResolution } from "./metric-query.js";
+import { resolveMatchedStores } from "./store-aliases.js";
 import type { HetangOpsConfig } from "./types.js";
 
 export type HetangSemanticObject =
@@ -43,6 +44,58 @@ const SEMANTIC_EXPANSION_RULES: Array<{
   },
   {
     pattern:
+      /(盘子哪里不对|盘子出什么问题了|盘子卡在哪|盘子到底卡在哪|整体哪里不对|整体怎么回事|整体卡在哪|整体到底卡在哪|经营哪块有毛病|经营哪里有毛病)/u,
+    inject: ["经营诊断", "经营情况", "异常"],
+  },
+  {
+    pattern:
+      /(((近|最近|过去).{0,8}(天|日|周|月)).{0,12}(到底)?卡在哪|((盘子|整体|经营|五店|总部).{0,12}(到底)?卡在哪))/u,
+    inject: ["经营诊断", "经营情况", "异常"],
+  },
+  {
+    pattern: /((帮我)?捋一下问题|((帮我)?做个诊断))/u,
+    inject: ["经营诊断", "经营情况", "异常"],
+  },
+  {
+    pattern:
+      /((营收|营业额|营业收入|客流|客数|消费人数|钟效|客单价|客单|团购|耗卡|充值).*(涨还是掉|升还是降|在涨还是在掉|在升还是在降|有没有在掉|有没有往下掉)|((涨还是掉|升还是降|在涨还是在掉|在升还是在降).*(营收|营业额|营业收入|客流|客数|消费人数|钟效|客单价|客单|团购|耗卡|充值)))/u,
+    inject: ["趋势", "变化"],
+  },
+  {
+    pattern:
+      /((营收|营业额|营业收入|客流|客数|消费人数|钟效|客单价|客单|团购|耗卡|充值).*(走弱了吗|走弱了没|回落了吗|回落了没|下滑了吗|下滑了没|下跌了吗|下跌了没|走低了吗|走低了没|承压吗|变弱了吗|变差了吗)|((走弱了吗|走弱了没|回落了吗|回落了没|下滑了吗|下滑了没|下跌了吗|下跌了没|走低了吗|走低了没|承压吗|变弱了吗|变差了吗).*(营收|营业额|营业收入|客流|客数|消费人数|钟效|客单价|客单|团购|耗卡|充值)))/u,
+    inject: ["趋势", "变化"],
+  },
+  {
+    pattern:
+      /((营收|营业额|营业收入|客流|客数|消费人数|钟效|客单价|客单|团购|耗卡|充值).*(回暖了吗|回暖了没|走高了吗|走高了没|拉升了吗|拉升了没|变强了吗|变好了没|变好了吗)|((回暖了吗|回暖了没|走高了吗|走高了没|拉升了吗|拉升了没|变强了吗|变好了没|变好了吗).*(营收|营业额|营业收入|客流|客数|消费人数|钟效|客单价|客单|团购|耗卡|充值)))/u,
+    inject: ["趋势", "变化"],
+  },
+  {
+    pattern:
+      /((储值).*(涨还是掉|升还是降|在涨还是在掉|在升还是在降|有没有在掉|有没有往下掉)|((涨还是掉|升还是降|在涨还是在掉|在升还是在降).*(储值)))/u,
+    inject: ["充值总额", "趋势", "变化"],
+  },
+  {
+    pattern:
+      /((储值).*(走弱了吗|走弱了没|回落了吗|回落了没|下滑了吗|下滑了没|下跌了吗|下跌了没|走低了吗|走低了没|承压吗|变弱了吗|变差了吗)|((走弱了吗|走弱了没|回落了吗|回落了没|下滑了吗|下滑了没|下跌了吗|下跌了没|走低了吗|走低了没|承压吗|变弱了吗|变差了吗).*(储值)))/u,
+    inject: ["充值总额", "趋势", "变化"],
+  },
+  {
+    pattern:
+      /((储值).*(回暖了吗|回暖了没|走高了吗|走高了没|拉升了吗|拉升了没|变强了吗|变好了没|变好了吗)|((回暖了吗|回暖了没|走高了吗|走高了没|拉升了吗|拉升了没|变强了吗|变好了没|变好了吗).*(储值)))/u,
+    inject: ["充值总额", "趋势", "变化"],
+  },
+  {
+    pattern: /(哪里最危险|哪块最危险|哪方面最危险|最危险的是哪里|哪里风险最大|哪块风险最大|哪方面风险最大)/u,
+    inject: ["风险", "经营情况"],
+  },
+  {
+    pattern: /(哪块最?扛不住|哪项最?扛不住|哪块最?拖后腿了?|哪项最?拖后腿了?|最扛不住的是哪块|最拖后腿的是哪项)/u,
+    inject: ["风险", "经营情况"],
+  },
+  {
+    pattern:
       /(团购客接没接住|团购接没接住|团购客有没有接住|团购有没有接住|团购客接住没有|团购接住没有|团购接住了没|承接偏弱|二转怎么样|二次转化怎么样)/u,
     inject: ["7天复到店率", "7天储值转化率", "团购首单客转高价值会员率"],
   },
@@ -83,6 +136,63 @@ const SEMANTIC_EXPANSION_RULES: Array<{
       /(先抓复购还是储值|先抓储值还是复购|复购还是储值先抓哪个|复购还是续费先抓哪个|该先抓复购还是储值|该先抓储值还是复购)/u,
     inject: ["建议", "会员", "充值", "耗卡"],
   },
+  {
+    pattern: /(生意好不好|生意行不行|生意还行吗)/u,
+    inject: ["经营情况"],
+  },
+  {
+    pattern:
+      /(客人跟得怎么样|客人跟进怎么样|客户跟得怎么样|客户跟进怎么样|客人跟进情况|客户跟进情况)/u,
+    inject: ["顾客", "跟进", "经营情况"],
+  },
+  {
+    pattern: /(技师状态怎么样|技师状态如何|技师表现怎么样|技师表现如何)/u,
+    inject: ["技师", "经营情况"],
+  },
+  {
+    pattern: /(哪个技师最能赚|谁最赚钱|哪个技师赚钱最多|谁赚钱最多)/u,
+    inject: ["技师", "排行", "服务营收"],
+  },
+  {
+    pattern: /(人效最高的技师是谁|哪个技师人效最高)/u,
+    inject: ["技师", "排行", "钟效"],
+  },
+  {
+    pattern: /(帮我看看|帮我瞧瞧|帮忙看看|帮忙瞧瞧)/u,
+    inject: ["经营情况"],
+  },
+  {
+    pattern: /(复盘一下|盘一下|盘一盘)/u,
+    inject: ["经营复盘", "经营情况"],
+  },
+  {
+    pattern: /(哪些会员快跑了|哪些老客最近突然不来了|很久没来了的客人|很久没来的客人|客人很久没来了|客户很久没来了|顾客很久没来了)/u,
+    inject: ["沉睡会员", "沉默会员", "唤回"],
+  },
+  {
+    pattern:
+      /(谁充了钱还没来过|充了钱还没来过的客人有哪些|充了钱还没来过的会员有哪些|充值了还没来过|充卡了还没来过|充了值还没来过|充了钱还没来消费过)/u,
+    inject: ["充值未到店会员", "待唤回会员", "会员", "唤回"],
+  },
+  {
+    pattern:
+      /(上次发的券有多少人用了|还有多少券快过期了没用|领了券但没用的有多少|多少券快过期了还没用|券用了没|券核销得怎么样)/u,
+    inject: ["优惠券", "会员", "营销"],
+  },
+  {
+    pattern:
+      /(今天卖出什么副项了|今天卖了什么副项|副项卖了几单|茶饮卖了几单|饮品卖了几单|精油卖了几单|今天什么副项卖出去了)/u,
+    inject: ["推销营收", "副项"],
+  },
+  {
+    pattern:
+      /(谁推销做得好|谁今天推销做得好|哪个技师今天推销做得好|谁副项卖得最好|谁副项卖得最多)/u,
+    inject: ["技师", "排行", "推销营收"],
+  },
+  {
+    pattern: /(美团来的客人回头了吗|抖音来的客人回头了吗|团购客人回头了吗|团购来的客人回头了吗)/u,
+    inject: ["7天复到店率", "团购"],
+  },
 ];
 
 function normalizeText(value: string): string {
@@ -104,40 +214,7 @@ export function normalizeHetangSemanticText(text: string): string {
 }
 
 function resolveMatchedOrgIds(config: HetangOpsConfig, text: string): string[] {
-  const normalized = normalizeText(text);
-  const matches = config.stores
-    .map((store) => {
-      const aliases = [store.storeName, ...store.rawAliases].filter(Boolean);
-      const found = aliases
-        .map((alias) => ({
-          alias,
-          position: normalized.indexOf(normalizeText(alias)),
-        }))
-        .filter((entry) => entry.position >= 0)
-        .sort(
-          (left, right) => left.position - right.position || right.alias.length - left.alias.length,
-        )[0];
-      return found
-        ? {
-            orgId: store.orgId,
-            position: found.position,
-            length: found.alias.length,
-          }
-        : null;
-    })
-    .filter((entry) => entry !== null)
-    .sort((left, right) => left.position - right.position || right.length - left.length);
-
-  const seen = new Set<string>();
-  const ordered: string[] = [];
-  for (const match of matches) {
-    if (seen.has(match.orgId)) {
-      continue;
-    }
-    seen.add(match.orgId);
-    ordered.push(match.orgId);
-  }
-  return ordered;
+  return resolveMatchedStores(config, text).map((match) => match.orgId);
 }
 
 export type HetangQuerySemanticContext = {
@@ -167,6 +244,7 @@ export type HetangQuerySemanticContext = {
   mentionsMemberMarketingKeyword: boolean;
   mentionsRechargeAttributionKeyword: boolean;
   mentionsTechProfileKeyword: boolean;
+  mentionsTechCurrentKeyword: boolean;
   mentionsHqPortfolioKeyword: boolean;
   customerSegmentShouldYieldToMetric: boolean;
   routeSignals: {
@@ -198,22 +276,22 @@ export function resolveHetangQuerySemanticContext(params: {
   const metrics = resolveMetricIntent(semanticText);
   const explicitOrgIds = resolveMatchedOrgIds(params.config, rawText);
   const allStoresRequested =
-    /(五店|5店|全部门店|所有门店|各店|所有店|全部店|五家店|五个店|哪家店|哪一家店|哪个店|哪家门店|哪一家门店|哪个门店)/u.test(
+    /(五店|5店|5个店|5家店|全部门店|所有门店|各店|所有店|全部店|五家店|五个店|哪家店|哪一家店|哪个店|哪家门店|哪一家门店|哪个门店)/u.test(
       rawText,
     );
   const text = semanticText;
   const mentionsRankingKeyword =
     /(排名|排行|top|TOP|最高|最低|最多|最少|倒数|最好|最差|末位)/u.test(text);
   const mentionsCompareKeyword =
-    /(对比|比较|相比|对照|差异|vs|VS|比昨天|比昨日|比上周|比上月|较昨天|较昨日|较上周|较上月|环比|比前\d+(?:天|日|周|月)|较前\d+(?:天|日|周|月)|比前[一二三四五六七八九十]+(?:天|日|周|月)|较前[一二三四五六七八九十]+(?:天|日|周|月)|(?:谁|哪家|哪个店).{0,8}更(?:高|低|好|差|强|弱))/u.test(
+    /(对比|比较|相比|对照|差异|vs|VS|比昨天|比昨日|比上周|比上月|较昨天|较昨日|较上周|较上月|环比|比前\d+(?:天|日|周|月)|较前\d+(?:天|日|周|月)|比前[一二三四五六七八九十]+(?:天|日|周|月)|较前[一二三四五六七八九十]+(?:天|日|周|月)|(?:和|跟)(?:昨天|昨日|上周|上月|前\d+(?:天|日|周|月)|前[一二三四五六七八九十]+(?:天|日|周|月))比|(?:谁|哪家|哪个店).{0,8}更(?:高|低|好|差|强|弱))/u.test(
       text,
     );
   const mentionsAnomalyKeyword = /(异常|原因|为什么|为何|归因|怎么回事|下滑原因|波动原因)/u.test(
     text,
   );
-  const mentionsRiskKeyword = /(风险|预警|告警|红线|危险|最危险)/u.test(text);
+  const mentionsRiskKeyword = /(风险|预警|告警|红线|危险|最危险|扛不住|拖后腿)/u.test(text);
   const mentionsAdviceKeyword =
-    /(建议|怎么办|怎么做|该怎么抓|怎么抓经营|怎么抓业绩|怎么抓门店|咋抓经营|动作|优化|提升|先抓|优先抓|优先做|先做|先盯|先管|该抓|抓什么|先救)/u.test(
+    /(建议|怎么办|怎么做|该怎么抓|怎么抓经营|怎么抓业绩|怎么抓门店|咋抓经营|动作|优化|提升|先抓|优先抓|优先做|先做|先盯|先管|该抓|抓什么|先救|先补|补什么)/u.test(
       text,
     );
   const mentionsReportKeyword =
@@ -222,7 +300,7 @@ export function resolveHetangQuerySemanticContext(params: {
     );
   const mentionsTrendKeyword = /(趋势|走势|变化|波动|环比|同比)/u.test(text);
   const mentionsCustomerSegmentKeyword =
-    /(重要价值(?:会员|客户|顾客)|高价值(?:会员|客户|顾客)|重要唤回(?:会员|客户|顾客)|重要召回(?:会员|客户|顾客)|高价值待唤回|高价值沉睡(?:会员|客户|顾客)|待唤回(?:会员|客户|顾客)|待召回(?:会员|客户|顾客)|潜力发展(?:会员|客户|顾客)|潜力成长|潜力(?:会员|客户|顾客)|团购留存(?:候选)?|活跃(?:会员|客户|顾客)|(?:沉睡|睡眠|沉默)(?:会员|客户|顾客)|(?:标准|普通|常规)(?:会员|客户|顾客)|标签|客群|分层|层级|(?:最需要|最值得|值得|优先|重点|最该).{0,6}(?:跟进|唤回|召回).*(?:会员|客户|顾客)|(?:跟进|唤回|召回)(?:名单|对象).*(?:会员|客户|顾客)|(?:会员|客户|顾客).{0,12}(?:最需要|最值得|值得|优先|重点|最该).{0,6}(?:跟进|唤回|召回)|(?:会员|客户|顾客).*(?:跟进|唤回|召回)名单)/u.test(
+    /(重要价值(?:会员|客户|顾客|客人)|高价值(?:会员|客户|顾客|客人)|重要唤回(?:会员|客户|顾客|客人)|重要召回(?:会员|客户|顾客|客人)|高价值待唤回|高价值沉睡(?:会员|客户|顾客|客人)|待唤回(?:会员|客户|顾客|客人)|待召回(?:会员|客户|顾客|客人)|潜力发展(?:会员|客户|顾客|客人)|潜力成长|潜力(?:会员|客户|顾客|客人)|团购留存(?:候选)?|活跃(?:会员|客户|顾客|客人)|(?:沉睡|睡眠|沉默)(?:会员|客户|顾客|客人)|(?:标准|普通|常规)(?:会员|客户|顾客|客人)|标签|客群|分层|层级|(?:最需要|最值得|值得|优先|重点|最该).{0,6}(?:跟进|唤回|召回).*(?:会员|客户|顾客|客人)|(?:跟进|唤回|召回)(?:名单|对象).*(?:会员|客户|顾客|客人)|(?:会员|客户|顾客|客人).{0,12}(?:最需要|最值得|值得|优先|重点|最该).{0,6}(?:跟进|唤回|召回)|(?:会员|客户|顾客|客人).*(?:跟进|唤回|召回)名单)/u.test(
       text,
     );
   const mentionsCustomerSegmentListStyle =
@@ -271,6 +349,10 @@ export function resolveHetangQuerySemanticContext(params: {
     /((技师|老师).*(画像|档案|侧写)|((画像|档案|侧写).*(技师|老师))|((技师|老师).*(表现|情况|分析)))/u.test(
       text,
     );
+  const mentionsTechCurrentKeyword =
+    /(现在几个人在上钟|当前几个人在上钟|还有几个技师是空的|还有几个技师是空闲的|谁现在没事干|谁现在有空|哪些技师现在有空|哪些技师现在有空可以接客|现在有空的技师有哪些)/u.test(
+      text,
+    );
   const customerSegmentShouldYieldToMetric =
     metrics.supported.some((metric) =>
       [
@@ -284,7 +366,7 @@ export function resolveHetangQuerySemanticContext(params: {
     /(率|占比|比例|转化|指标)/u.test(text) ||
     mentionsSilentMemberMetric;
   const rawHqPortfolioKeyword =
-    /(整体怎么样|整体情况|整体表现|哪家.*拉升|哪家.*危险|哪家.*最差|哪家.*最好|哪家.*掉|总部.*先抓|总部.*重点|总部.*关注|下周.*先抓|下周.*重点|下周.*关注|先盯什么|先抓什么|先管什么|全局|全盘|大盘|经营复盘|经营分析|经营诊断|深度复盘|深度分析)/u.test(
+    /(整体怎么样|整体情况|整体表现|哪家.*拉升|哪家.*危险|哪家.*最差|哪家.*最好|哪家.*最低|哪家.*最高|哪家.*最多|哪家.*最少|哪家.*掉|哪家.*拖后腿|(?:哪家|哪个(?:门店|店)|哪一个(?:门店|店)|哪一家(?:门店|店)).*(?:重点关注|优先关注|重点盯|优先盯|最该盯|风险最大|风险最高|最危险|拖后腿|掉得最厉害|最不稳|最需要总部介入|最需要总部出手)|(?:重点关注|优先关注|重点盯|优先盯).*(?:哪家|哪个(?:门店|店)|哪一个(?:门店|店)|哪一家(?:门店|店))|(?:五店|5店|各店|全部店|所有店|五家店|五个店|总部).*(?:先救哪家|先补哪家|哪家最扛不住|哪项最拖后腿|风险在哪|风险排序|风险雷达)|总部.*先抓|总部.*重点|总部.*关注|下周.*先抓|下周.*重点|下周.*关注|先盯什么|先抓什么|先管什么|全局|全盘|大盘|经营复盘|经营分析|经营诊断|深度复盘|深度分析)/u.test(
       text,
     );
   const mentionsHqPortfolioKeyword =
@@ -313,7 +395,7 @@ export function resolveHetangQuerySemanticContext(params: {
       ? "wait_experience"
       : mentionsRechargeAttributionKeyword
         ? "recharge"
-        : mentionsTechProfileKeyword || /技师|老师/u.test(text)
+        : mentionsTechCurrentKeyword || mentionsTechProfileKeyword || /技师|老师/u.test(text)
           ? "tech"
           : mentionsCustomerSegmentKeyword ||
               mentionsCustomerRelationKeyword ||
@@ -407,6 +489,7 @@ export function resolveHetangQuerySemanticContext(params: {
     mentionsMemberMarketingKeyword,
     mentionsRechargeAttributionKeyword,
     mentionsTechProfileKeyword,
+    mentionsTechCurrentKeyword,
     mentionsHqPortfolioKeyword,
     customerSegmentShouldYieldToMetric,
     routeSignals: {

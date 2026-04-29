@@ -13,6 +13,7 @@ import type {
   MemberReactivationStrategyRecord,
   RechargeBillRecord,
   StoreManagerDailyKpiRow,
+  HetangStoreExternalContextEntry,
   StoreReview7dRow,
   StoreSummary30dRow,
   TechLeaderboardRow,
@@ -139,13 +140,14 @@ export class HetangQueryReadService {
   }
 
   private resolveMartDerivedStore(store: HetangOpsStore): MartDerivedReadStore {
-    return typeof (store as { getMartDerivedStore?: unknown }).getMartDerivedStore === "function"
-      ? (
-          store as {
-            getMartDerivedStore: () => MartDerivedReadStore;
-          }
-        ).getMartDerivedStore()
-      : (store as unknown as MartDerivedReadStore);
+    if (typeof (store as { getMartDerivedStore?: unknown }).getMartDerivedStore !== "function") {
+      throw new Error("query-read-service requires store.getMartDerivedStore()");
+    }
+    return (
+      store as {
+        getMartDerivedStore: () => MartDerivedReadStore;
+      }
+    ).getMartDerivedStore();
   }
 
   async listTechLeaderboard(params: {
@@ -433,5 +435,13 @@ export class HetangQueryReadService {
       params.startBizDate,
       params.endBizDate,
     );
+  }
+
+  async listStoreExternalContextEntries(params: {
+    orgId: string;
+    snapshotDate?: string;
+  }): Promise<HetangStoreExternalContextEntry[]> {
+    const store = await this.getStore();
+    return await store.listStoreExternalContextEntries(params);
   }
 }

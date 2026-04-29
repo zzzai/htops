@@ -227,6 +227,30 @@ export class HetangAnalysisExecutionService {
       .join("；");
   }
 
+  private summarizePortfolioSnapshot(params: {
+    storeName: string;
+    review7d: StoreReview7dRow | null;
+    summary30d: StoreSummary30dRow | null;
+  }): string | null {
+    if (params.summary30d) {
+      return [
+        `${params.storeName}: 30日营收 ${this.formatCurrency(params.summary30d.revenue30d)}`,
+        `钟效 ${this.formatCurrency(params.summary30d.clockEffect30d).replace(" 元", "")}/钟`,
+        `沉默会员率 ${this.formatPercent(params.summary30d.sleepingMemberRate)}`,
+        `续充压力 ${typeof params.summary30d.renewalPressureIndex30d === "number" ? params.summary30d.renewalPressureIndex30d.toFixed(2) : "N/A"}`,
+      ].join("；");
+    }
+    if (params.review7d) {
+      return [
+        `${params.storeName}: 7日营收 ${this.formatCurrency(params.review7d.revenue7d)}`,
+        `钟效 ${this.formatCurrency(params.review7d.clockEffect7d).replace(" 元", "")}/钟`,
+        `沉默会员率 ${this.formatPercent(params.review7d.sleepingMemberRate)}`,
+        `续充压力 ${typeof params.review7d.renewalPressureIndex30d === "number" ? params.review7d.renewalPressureIndex30d.toFixed(2) : "N/A"}`,
+      ].join("；");
+    }
+    return null;
+  }
+
   async buildAnalysisEvidencePack(job: HetangAnalysisJob): Promise<HetangAnalysisEvidencePack> {
     const binding = await this.resolveAnalysisBinding(job);
     const scopeOrgIds = this.resolveAnalysisScopeOrgIds(job, binding);
@@ -322,17 +346,31 @@ export class HetangAnalysisExecutionService {
       };
     }
 
-    const reports = await Promise.all(
+    const portfolioSnapshots = await Promise.all(
       scopeOrgIds.map(async (orgId) => {
-        const report = await this.deps.queryRuntime.buildReport({
-          orgId,
-          bizDate: job.endBizDate,
-          now: anchoredNow,
-        });
+        const [report, reviewRows, summaryRows] = await Promise.all([
+          this.deps.queryRuntime.buildReport({
+            orgId,
+            bizDate: job.endBizDate,
+            now: anchoredNow,
+          }),
+          this.deps.queryRuntime.listStoreReview7dByDateRange?.({
+            orgId,
+            startBizDate: job.endBizDate,
+            endBizDate: job.endBizDate,
+          }) ?? Promise.resolve([]),
+          this.deps.queryRuntime.listStoreSummary30dByDateRange?.({
+            orgId,
+            startBizDate: job.endBizDate,
+            endBizDate: job.endBizDate,
+          }) ?? Promise.resolve([]),
+        ]);
         return {
           orgId,
           storeName: report.storeName,
-          report,
+          latestReport: report,
+          review7d: reviewRows[0] ?? null,
+          summary30d: summaryRows[0] ?? null,
         };
       }),
     );
@@ -342,14 +380,29 @@ export class HetangAnalysisExecutionService {
       `- 周期: ${job.startBizDate} 至 ${job.endBizDate}（${job.timeFrameLabel}）`,
       `- 问题: ${job.rawText}`,
       "- 最新日报样本:",
-      ...reports
-        .sort((left, right) => right.report.metrics.serviceRevenue - left.report.metrics.serviceRevenue)
+      ...portfolioSnapshots
+        .sort(
+          (left, right) =>
+            right.latestReport.metrics.serviceRevenue - left.latestReport.metrics.serviceRevenue,
+        )
         .slice(0, 5)
         .map(
-          ({ storeName: currentStoreName, report }) =>
-            `  - ${currentStoreName}: 营收 ${this.formatCurrency(report.metrics.serviceRevenue)}；总钟数 ${this.formatCount(report.metrics.totalClockCount)}；钟效 ${this.formatCurrency(report.metrics.clockEffect).replace(" 元", "")}/钟；沉默会员率 ${this.formatPercent(report.metrics.sleepingMemberRate)}`,
+          ({ storeName: currentStoreName, latestReport }) =>
+            `  - ${currentStoreName}: 营收 ${this.formatCurrency(latestReport.metrics.serviceRevenue)}；总钟数 ${this.formatCount(latestReport.metrics.totalClockCount)}；钟效 ${this.formatCurrency(latestReport.metrics.clockEffect).replace(" 元", "")}/钟；沉默会员率 ${this.formatPercent(latestReport.metrics.sleepingMemberRate)}`,
         ),
     ];
+    const stableSnapshotLines = portfolioSnapshots
+      .map((entry) =>
+        this.summarizePortfolioSnapshot({
+          storeName: entry.storeName,
+          review7d: entry.review7d,
+          summary30d: entry.summary30d,
+        }),
+      )
+      .filter((entry): entry is string => Boolean(entry));
+    if (stableSnapshotLines.length > 0) {
+      lines.push("- 稳定摘要样本:", ...stableSnapshotLines.slice(0, 5).map((entry) => `  - ${entry}`));
+    }
 
     return {
       packVersion: "v1",
@@ -362,7 +415,8 @@ export class HetangAnalysisExecutionService {
       endBizDate: job.endBizDate,
       markdown: lines.join("\n"),
       facts: {
-        latestReports: reports.map((entry) => entry.report),
+        latestReports: portfolioSnapshots.map((entry) => entry.latestReport),
+        portfolioSnapshots,
       },
     };
   }

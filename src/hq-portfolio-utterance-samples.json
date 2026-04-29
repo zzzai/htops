@@ -1,0 +1,149 @@
+[
+  {
+    "id": "hq-portfolio-priority-open",
+    "category": "总部优先级",
+    "label": "重点关注门店",
+    "primary": "哪个门店须重点关注",
+    "similars": [
+      "哪家店现在最该盯",
+      "哪个店要优先关注",
+      "哪一家门店更需要重点盯"
+    ],
+    "expectedCapabilityId": "hq_window_ranking_v1",
+    "expectedTimeFrameLabel": "近15天"
+  },
+  {
+    "id": "hq-portfolio-risk-open",
+    "category": "风险排序",
+    "label": "风险最大门店",
+    "primary": "哪个店风险最大",
+    "similars": [
+      "哪家店最危险",
+      "哪个门店风险最高",
+      "哪家店风险最大"
+    ],
+    "expectedCapabilityId": "hq_window_ranking_v1",
+    "expectedTimeFrameLabel": "近15天"
+  },
+  {
+    "id": "hq-portfolio-overview-open",
+    "category": "总部全景",
+    "label": "总部重点关注",
+    "primary": "各店整体情况，总部重点关注哪家",
+    "similars": [
+      "五店整体表现怎么样",
+      "总部现在重点关注哪家店",
+      "现在五店整体盘子怎么样"
+    ],
+    "expectedCapabilityId": "hq_window_ranking_v1",
+    "expectedTimeFrameLabel": "近15天"
+  },
+  {
+    "id": "hq-portfolio-overview-window",
+    "category": "总部全景",
+    "label": "时间窗全景复盘",
+    "primary": "最近30天五个店整体怎么样，哪家最危险，下周总部先抓什么",
+    "similars": [
+      "近30天五店整体怎么样，哪家最危险",
+      "最近30天五店盘子稳不稳，总部先抓什么",
+      "近30天五店整体情况，总部重点关注哪家"
+    ],
+    "expectedCapabilityId": "hq_window_ranking_v1",
+    "expectedTimeFrameLabels": ["最近30天", "近30天"]
+  },
+  {
+    "id": "hq-portfolio-drag-open",
+    "category": "掉队判断",
+    "label": "掉队门店",
+    "primary": "哪个店掉得最厉害",
+    "similars": [
+      "哪家店最近掉下来了",
+      "哪家店最拖后腿",
+      "哪个门店最近最不稳"
+    ],
+    "expectedCapabilityId": "hq_window_ranking_v1",
+    "expectedTimeFrameLabel": "近15天"
+  },
+  {
+    "id": "hq-portfolio-drag-window",
+    "category": "掉队判断",
+    "label": "时间窗掉队门店",
+    "primary": "五店近7天哪家客流掉得最多",
+    "similars": [
+      "近7天五店哪家客流掉得最多",
+      "五店近7天哪家营收拖后腿",
+      "五店里近7天哪家营收最拖后腿",
+      "五店近7天哪家钟效拖后腿",
+      "五店近7天哪家客单价掉得最多"
+    ],
+    "expectedCapabilityId": "hq_window_ranking_v1",
+    "expectedTimeFrameLabel": "近7天"
+  },
+  {
+    "id": "hq-portfolio-metric-worst-window",
+    "category": "指标极值判断",
+    "label": "多店钟效最差",
+    "primary": "五店近7天哪家钟效最差",
+    "similars": [
+      "近7天五店里哪家钟效最差",
+      "五店里近7天哪家钟效最差",
+      "近7天五店哪家钟效最差"
+    ],
+    "expectedCapabilityId": "hq_window_ranking_v1",
+    "expectedTimeFrameLabel": "近7天"
+  },
+  {
+    "id": "hq-portfolio-metric-lowest-window",
+    "category": "指标极值判断",
+    "label": "多店指标最低",
+    "primary": "五店近7天哪家营收最低",
+    "similars": [
+      "五店近7天哪家客流最低",
+      "近7天五店哪家营收最低",
+      "近7天五店哪家客流最低"
+    ],
+    "expectedCapabilityId": "hq_window_ranking_v1",
+    "expectedTimeFrameLabel": "近7天"
+  },
+  {
+    "id": "hq-portfolio-rise-risk-open",
+    "category": "升降对照",
+    "label": "拉升与风险对照",
+    "primary": "哪家店在拉升，哪家店最危险",
+    "similars": [
+      "五店里哪家店在拉升，哪家店最危险",
+      "哪个门店在拉升，哪个门店最危险",
+      "哪家店最近在拉升，哪家店最危险"
+    ],
+    "expectedCapabilityId": "hq_window_ranking_v1",
+    "expectedTimeFrameLabel": "近15天"
+  },
+  {
+    "id": "hq-portfolio-rescue-window",
+    "category": "总部救火",
+    "label": "总部先救哪家",
+    "primary": "五店近15天总部先救哪家",
+    "similars": [
+      "五店近15天先补哪家",
+      "五店近15天哪家最扛不住",
+      "五店近15天哪项最拖后腿"
+    ],
+    "expectedCapabilityId": "hq_window_ranking_v1",
+    "expectedTimeFrameLabel": "近15天"
+  },
+  {
+    "id": "hq-portfolio-diagnosis-window",
+    "category": "总部诊断",
+    "label": "五店轻诊断",
+    "primary": "五店近30天整体哪里不对",
+    "similars": [
+      "五店近30天盘子卡在哪",
+      "五店近30天到底卡在哪",
+      "五店近30天帮我做个诊断",
+      "五店近30天整体怎么回事",
+      "五店近30天帮我捋一下问题"
+    ],
+    "expectedCapabilityId": "hq_window_ranking_v1",
+    "expectedTimeFrameLabel": "近30天"
+  }
+]

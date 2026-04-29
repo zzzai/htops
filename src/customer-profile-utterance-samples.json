@@ -1,0 +1,59 @@
+[
+  {
+    "id": "customer-profile-phone-suffix-basic",
+    "category": "顾客画像",
+    "action": "profile",
+    "label": "尾号基础画像",
+    "primary": "义乌店尾号7500客户画像",
+    "similars": [
+      "义乌店尾号9799客户画像",
+      "义乌店尾号7500顾客画像",
+      "义乌店尾号7500的顾客画像",
+      "义乌店尾号7500什么情况"
+    ],
+    "expectedCapabilityId": "customer_profile_lookup_v1",
+    "expectedOrgIds": ["627150985244677"]
+  },
+  {
+    "id": "customer-profile-phone-suffix-window",
+    "category": "顾客画像",
+    "action": "profile",
+    "label": "近30天尾号画像",
+    "primary": "义乌店近30天尾号7500客户画像",
+    "similars": [
+      "义乌店近30天尾号7500顾客画像",
+      "义乌店近30天看尾号7500客户画像"
+    ],
+    "expectedCapabilityId": "customer_profile_lookup_v1",
+    "expectedOrgIds": ["627150985244677"]
+  },
+  {
+    "id": "customer-profile-phone-suffix-wording",
+    "category": "顾客画像",
+    "action": "profile",
+    "label": "手机尾号画像",
+    "primary": "义乌店手机尾号7500的客户画像",
+    "similars": [
+      "义乌店手机号后四位7500客户画像",
+      "义乌店 尾号 7500 客户画像",
+      "义乌店 手机尾号 7500 的 顾客画像",
+      "义乌店 手机尾号 9799 的 顾客画像",
+      "义乌店手机尾号7500什么情况"
+    ],
+    "expectedCapabilityId": "customer_profile_lookup_v1",
+    "expectedOrgIds": ["627150985244677"]
+  },
+  {
+    "id": "customer-profile-phone-suffix-alt-store",
+    "category": "顾客画像",
+    "action": "profile",
+    "label": "跨店尾号画像",
+    "primary": "迎宾店尾号9775客户画像",
+    "similars": [
+      "迎宾店尾号9775顾客画像",
+      "迎宾店手机尾号9775客户画像"
+    ],
+    "expectedCapabilityId": "customer_profile_lookup_v1",
+    "expectedOrgIds": ["627149864218629"]
+  }
+]

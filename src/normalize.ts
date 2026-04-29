@@ -97,20 +97,21 @@ export function normalizeMemberCardRows(
       const cardOrgId = text(entry.OrgId);
       return !cardOrgId || cardOrgId === orgId;
     })
-    .map((entry) => {
+    .flatMap((entry) => {
       const cardId = text(entry.Id);
       if (!cardId) {
-        return null;
+        return [];
       }
-      return {
-        orgId,
-        memberId,
-        cardId,
-        cardNo: text(entry.CardNo),
-        rawJson: JSON.stringify(entry),
-      };
-    })
-    .filter((entry): entry is MemberCardCurrentRecord => Boolean(entry));
+      return [
+        {
+          orgId,
+          memberId,
+          cardId,
+          cardNo: text(entry.CardNo),
+          rawJson: JSON.stringify(entry),
+        } satisfies MemberCardCurrentRecord,
+      ];
+    });
 }
 
 export function normalizeConsumeBillRow(

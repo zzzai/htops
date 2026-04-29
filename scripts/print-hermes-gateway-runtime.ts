@@ -1,4 +1,9 @@
-import { buildHermesGatewayRuntimeSummary } from "../src/gateway-runtime-policy.js";
+import fs from "node:fs/promises";
+
+import {
+  buildHermesGatewayRuntimeSummary,
+  extractHermesGatewayRuntimeConfigSummary,
+} from "../src/gateway-runtime-policy.js";
 import { loadStandaloneRuntimeEnv, resolveStandaloneRootDir } from "../src/standalone-env.js";
 
 async function main(): Promise<void> {
@@ -17,12 +22,23 @@ async function main(): Promise<void> {
     : process.env.HETANG_WECOM_FORCE_PROACTIVE_REPLY?.trim() === "true"
       ? "proactive-send"
       : "passive-text";
+  const runtimeConfigPath = `${runtimeHome}/config.yaml`;
+  let runtimeConfig = undefined;
+  try {
+    runtimeConfig = extractHermesGatewayRuntimeConfigSummary(
+      await fs.readFile(runtimeConfigPath, "utf8"),
+    );
+  } catch {
+    runtimeConfig = undefined;
+  }
 
   for (const line of buildHermesGatewayRuntimeSummary({
     runtimeHome,
     bridgeUrl,
     botId,
     wecomReplyMode,
+    runtimeConfigPath,
+    runtimeConfig,
   })) {
     console.log(line);
   }

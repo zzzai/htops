@@ -9,10 +9,17 @@ import {
 } from "./metric-query.js";
 import type { QueryPlan } from "./query-plan.js";
 import type { HetangQueryIntent, HetangQueryTimeFrame } from "./query-intent.js";
+import {
+  isExecutiveAnalysisLens,
+  resolveAnalysisSignalLabel,
+  type QueryAnalysisLens,
+} from "./analysis-lens.js";
+import type { StoreExternalContextAiPayload } from "./store-external-context.js";
 import type {
   DailyStoreAlert,
   DailyStoreMetrics,
   DailyStoreReport,
+  EnvironmentContextSnapshot,
   HetangOpsConfig,
   StoreManagerDailyKpiRow,
   TechLeaderboardRow,
@@ -26,6 +33,98 @@ type StoreWindowSummary = {
   metrics: DailyStoreMetrics;
   complete: boolean;
 };
+
+type AnalysisEnvironmentContext = Pick<
+  EnvironmentContextSnapshot,
+  | "bizDate"
+  | "seasonTag"
+  | "solarTerm"
+  | "holidayTag"
+  | "weatherTag"
+  | "temperatureBand"
+  | "postDinnerLeisureBias"
+  | "eveningOutingLikelihood"
+  | "badWeatherTouchPenalty"
+  | "narrativePolicy"
+>;
+
+function readStoreExternalContextText(
+  source: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = source[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readStoreExternalContextNumber(
+  source: Record<string, unknown>,
+  key: string,
+): number | null {
+  const value = source[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function formatChineseCountInWan(value: number): string {
+  if (value >= 10_000) {
+    return `${round(value / 10_000, 2).toFixed(2)}万`;
+  }
+  return `${round(value, 0).toFixed(0)}`;
+}
+
+function formatSolarTermLabel(solarTerm: EnvironmentContextSnapshot["solarTerm"]): string | null {
+  switch (solarTerm) {
+    case "xiaohan":
+      return "小寒";
+    case "dahan":
+      return "大寒";
+    case "lichun":
+      return "立春";
+    case "yushui":
+      return "雨水";
+    case "jingzhe":
+      return "惊蛰";
+    case "chunfen":
+      return "春分";
+    case "qingming":
+      return "清明";
+    case "guyu":
+      return "谷雨";
+    case "lixia":
+      return "立夏";
+    case "xiaoman":
+      return "小满";
+    case "mangzhong":
+      return "芒种";
+    case "xiazhi":
+      return "夏至";
+    case "xiaoshu":
+      return "小暑";
+    case "dashu":
+      return "大暑";
+    case "liqiu":
+      return "立秋";
+    case "chushu":
+      return "处暑";
+    case "bailu":
+      return "白露";
+    case "qiufen":
+      return "秋分";
+    case "hanlu":
+      return "寒露";
+    case "shuangjiang":
+      return "霜降";
+    case "lidong":
+      return "立冬";
+    case "xiaoxue":
+      return "小雪";
+    case "daxue":
+      return "大雪";
+    case "dongzhi":
+      return "冬至";
+    default:
+      return null;
+  }
+}
 
 export function round(value: number, digits = 2): number {
   const factor = 10 ** digits;
@@ -61,6 +160,499 @@ export function formatCount(value: number, digits = 1): string {
   return round(value, digits).toFixed(digits);
 }
 
+function resolveServingRiskReasons(row: Record<string, unknown>): string[] {
+  const sleepingMemberRate = Number(row.sleeping_member_rate ?? NaN);
+  const renewalPressureIndex30d = Number(row.renewal_pressure_index_30d ?? NaN);
+  const memberRepurchaseRate7d = Number(row.member_repurchase_rate_7d ?? NaN);
+  const candidates: Array<{ contribution: number; text: string }> = [];
+
+  if (Number.isFinite(sleepingMemberRate)) {
+    candidates.push({
+      contribution: Math.max(sleepingMemberRate, 0) * 100,
+      text: `沉默会员率 ${formatPercentValue(sleepingMemberRate)}`,
+    });
+  }
+  if (Number.isFinite(memberRepurchaseRate7d)) {
+    candidates.push({
+      contribution: Math.max(1 - memberRepurchaseRate7d, 0) * 40,
+      text: `会员7日复购率 ${formatPercentValue(memberRepurchaseRate7d)}`,
+    });
+  }
+  if (Number.isFinite(renewalPressureIndex30d) && renewalPressureIndex30d > 1) {
+    candidates.push({
+      contribution: (renewalPressureIndex30d - 1) * 30,
+      text: `续费压力 ${round(renewalPressureIndex30d, 2).toFixed(2)}`,
+    });
+  }
+
+  return candidates
+    .sort((left, right) => right.contribution - left.contribution)
+    .slice(0, 2)
+    .map((entry) => entry.text);
+}
+
+function resolveServingRiskTopActionKind(
+  row: Record<string, unknown>,
+): "sleeping" | "repurchase" | "renewal" | "generic" {
+  const sleepingMemberRate = Number(row.sleeping_member_rate ?? NaN);
+  const renewalPressureIndex30d = Number(row.renewal_pressure_index_30d ?? NaN);
+  const memberRepurchaseRate7d = Number(row.member_repurchase_rate_7d ?? NaN);
+
+  if (Number.isFinite(sleepingMemberRate) && sleepingMemberRate >= 0.15) {
+    return "sleeping";
+  }
+  if (Number.isFinite(memberRepurchaseRate7d) && memberRepurchaseRate7d < 0.45) {
+    return "repurchase";
+  }
+  if (Number.isFinite(renewalPressureIndex30d) && renewalPressureIndex30d >= 1.5) {
+    return "renewal";
+  }
+  return "generic";
+}
+
+function resolveServingRiskTopAction(row: Record<string, unknown>, storeName: string): string {
+  switch (resolveServingRiskTopActionKind(row)) {
+    case "sleeping":
+      return `把 ${storeName} 沉默会员召回列成今日动作单，别让老会员盘继续变冷。`;
+    case "repurchase":
+      return `拉出 ${storeName} 上周到店会员名单，按熟客技师和储值层级做二次邀约。`;
+    case "renewal":
+      return `同步盯 ${storeName} 续费名单、耗卡节奏和到店唤醒，不要只看冲储金额。`;
+    default:
+      return `先对 ${storeName} 做一次周度经营复盘，确认当前风险是否只是短期波动。`;
+  }
+}
+
+function renderChineseStoreCount(count: number): string {
+  switch (count) {
+    case 0:
+      return "零";
+    case 1:
+      return "一";
+    case 2:
+      return "两";
+    case 3:
+      return "三";
+    case 4:
+      return "四";
+    case 5:
+      return "五";
+    case 6:
+      return "六";
+    case 7:
+      return "七";
+    case 8:
+      return "八";
+    case 9:
+      return "九";
+    case 10:
+      return "十";
+    default:
+      return String(count);
+  }
+}
+
+function resolvePortfolioCohortLabel(params: {
+  focusRows: Record<string, unknown>[];
+  allRows: Record<string, unknown>[];
+  resolveStoreName: (row: Record<string, unknown>) => string;
+}): string | null {
+  if (params.focusRows.length === 0) {
+    return null;
+  }
+  if (params.focusRows.length === 1) {
+    return params.resolveStoreName(params.focusRows[0] ?? {});
+  }
+
+  const focusOrgIds = new Set(
+    params.focusRows
+      .map((row) => String(row.org_id ?? row.store_name ?? ""))
+      .filter((value) => value.length > 0),
+  );
+  if (params.focusRows.length === params.allRows.length) {
+    return `${renderChineseStoreCount(params.focusRows.length)}店都`;
+  }
+  if (params.allRows.length - params.focusRows.length === 1) {
+    const excludedRow = params.allRows.find(
+      (row) => !focusOrgIds.has(String(row.org_id ?? row.store_name ?? "")),
+    );
+    if (excludedRow) {
+      return `除${params.resolveStoreName(excludedRow)}外，其余${params.focusRows.length}店`;
+    }
+  }
+  if (params.focusRows.length <= 3) {
+    return params.focusRows.map((row) => params.resolveStoreName(row)).join("、");
+  }
+  const names = params.focusRows.slice(0, 3).map((row) => params.resolveStoreName(row));
+  return `${names.join("、")}等${params.focusRows.length}店`;
+}
+
+function renderPortfolioFocusSentence(params: {
+  subject: string | null;
+  finding: string;
+  action: string;
+}): string | null {
+  if (!params.subject) {
+    return null;
+  }
+  const needsTightJoin = params.subject.includes("都") || params.subject.startsWith("除");
+  return `${params.subject}${needsTightJoin ? "" : " "}${params.finding}，${params.action}`;
+}
+
+function renderPortfolioSignalPhrase(params: {
+  subject: string | null;
+  finding: string;
+}): string | null {
+  if (!params.subject) {
+    return null;
+  }
+  if (params.subject.includes("都")) {
+    return `${params.subject}存在${params.finding}问题`;
+  }
+  const needsTightJoin = params.subject.startsWith("除");
+  return `${params.subject}${needsTightJoin ? "" : " "}${params.finding}`;
+}
+
+function isHqPortfolioScope(plan: QueryPlan): boolean {
+  return (
+    plan.scope.access_scope_kind === "hq" &&
+    (plan.scope.scope_kind === "multi" || plan.scope.scope_kind === "all")
+  );
+}
+
+function isBroadPortfolioRankingAsk(plan: QueryPlan, metric: string): boolean {
+  if (plan.action !== "ranking" || metric !== "serviceRevenue") {
+    return false;
+  }
+  if (!isHqPortfolioScope(plan)) {
+    return false;
+  }
+  const text = plan.planner_meta.normalized_question;
+  const hasBroadSignal = /(情况|整体|怎么样|如何|总览|全景|重点关注|先抓)/u.test(text);
+  const hasNarrowSignal = /(排名|排行|最高|最低|top|倒数|最危险|风险排序)/iu.test(text);
+  return hasBroadSignal && !hasNarrowSignal;
+}
+
+function isBroadPortfolioRiskFocusAsk(plan: QueryPlan, metric: string): boolean {
+  if (plan.action !== "ranking" || metric !== "riskScore") {
+    return false;
+  }
+  if (!isHqPortfolioScope(plan)) {
+    return false;
+  }
+  const text = plan.planner_meta.normalized_question;
+  const hasBroadSignal =
+    /(重点看什么|该看什么|先看什么|看什么指标|重点抓什么|该抓什么|先抓什么|重点盯什么|先盯什么|盯什么)/u.test(
+      text,
+    );
+  const hasNarrowSignal =
+    /(哪家|哪个|哪几个|排名|排行|最高|最低|top|倒数|最危险|风险排序|重点关注|须重点关注|需要重点关注)/iu.test(
+      text,
+    );
+  return hasBroadSignal && !hasNarrowSignal;
+}
+
+function renderBroadPortfolioRevenueRanking(params: {
+  rows: Record<string, unknown>[];
+  plan: QueryPlan;
+  config: HetangOpsConfig;
+}): string | null {
+  if (params.rows.length === 0) {
+    return null;
+  }
+  const rowsByRevenue = [...params.rows].sort((left, right) => {
+    const leftRevenue = coerceFiniteNumber(left.service_revenue) ?? Number.NEGATIVE_INFINITY;
+    const rightRevenue = coerceFiniteNumber(right.service_revenue) ?? Number.NEGATIVE_INFINITY;
+    return rightRevenue - leftRevenue;
+  });
+  const totalRevenue = rowsByRevenue.reduce(
+    (sum, row) => sum + (coerceFiniteNumber(row.service_revenue) ?? 0),
+    0,
+  );
+  const topRevenueRow = rowsByRevenue[0] ?? null;
+  const bottomRevenueRow = rowsByRevenue.at(-1) ?? null;
+  const headTailGap =
+    topRevenueRow && bottomRevenueRow
+      ? Math.max(
+          0,
+          (coerceFiniteNumber(topRevenueRow.service_revenue) ?? 0) -
+            (coerceFiniteNumber(bottomRevenueRow.service_revenue) ?? 0),
+        )
+      : 0;
+  const focusRow = bottomRevenueRow;
+  const countLabel = `${params.rows.length}店`;
+  const windowLabel =
+    params.plan.time.mode === "window"
+      ? `近${params.plan.time.window_days ?? params.rows[0]?.window_days ?? ""}天`
+      : String(params.rows[0]?.biz_date ?? params.plan.time.biz_date ?? "当前");
+  const resolveStoreName = (row: Record<string, unknown>): string =>
+    params.config.stores.find((entry) => entry.orgId === row.org_id)?.storeName ??
+    String(row.store_name ?? row.org_id ?? "门店");
+  const lines = [`${countLabel} ${windowLabel} 营收总览`];
+  lines.push(
+    `- 总营收 ${formatCurrency(totalRevenue)}；最高 ${resolveStoreName(topRevenueRow ?? {})} ${formatCurrency(
+      coerceFiniteNumber(topRevenueRow?.service_revenue) ?? 0,
+    )}；最低 ${resolveStoreName(bottomRevenueRow ?? {})} ${formatCurrency(
+      coerceFiniteNumber(bottomRevenueRow?.service_revenue) ?? 0,
+    )}；头尾差 ${formatCurrency(headTailGap)}。`,
+  );
+  lines.push("营收排名");
+  rowsByRevenue.forEach((row, index) => {
+    lines.push(
+      `${index + 1}. ${resolveStoreName(row)} ${formatCurrency(coerceFiniteNumber(row.service_revenue) ?? 0)}`,
+    );
+  });
+  if (focusRow) {
+    const focusStoreName = resolveStoreName(focusRow);
+    lines.push(`最该关注：${focusStoreName}`);
+    lines.push(`- 原因：近7天营收最低，较头部门店少 ${formatCurrency(headTailGap)}。`);
+    lines.push(`- 下周动作：先盯 ${focusStoreName} 的客流承接和客单放大，优先把营收缺口补回来。`);
+  }
+  return lines.join("\n");
+}
+
+function renderBroadPortfolioRiskFocus(params: {
+  rows: Record<string, unknown>[];
+  plan: QueryPlan;
+  config: HetangOpsConfig;
+}): string | null {
+  if (params.rows.length === 0) {
+    return null;
+  }
+
+  const rowsByRisk = [...params.rows].sort((left, right) => {
+    const leftRisk = coerceFiniteNumber(left.risk_score ?? left.metric_value) ?? Number.NEGATIVE_INFINITY;
+    const rightRisk = coerceFiniteNumber(right.risk_score ?? right.metric_value) ?? Number.NEGATIVE_INFINITY;
+    return rightRisk - leftRisk;
+  });
+  const resolveStoreName = (row: Record<string, unknown>): string =>
+    params.config.stores.find((entry) => entry.orgId === row.org_id)?.storeName ??
+    String(row.store_name ?? row.org_id ?? "门店");
+  const countLabel = `${params.rows.length}店`;
+  const windowLabel =
+    params.plan.time.mode === "window"
+      ? `近${params.plan.time.window_days ?? params.rows[0]?.window_days ?? ""}天`
+      : String(params.rows[0]?.biz_date ?? params.plan.time.biz_date ?? "当前");
+  const topRiskRow = rowsByRisk[0] ?? null;
+  const secondRiskRow = rowsByRisk[1] ?? null;
+  const lowRepurchaseRows = rowsByRisk.filter((row) => {
+    const value = coerceFiniteNumber(row.member_repurchase_rate_7d);
+    return value !== null && value < 0.45;
+  });
+  const highSleepingRows = rowsByRisk.filter((row) => {
+    const value = coerceFiniteNumber(row.sleeping_member_rate);
+    return value !== null && value >= 0.15;
+  });
+  const highRenewalRows = rowsByRisk.filter((row) => {
+    const value = coerceFiniteNumber(row.renewal_pressure_index_30d);
+    return value !== null && value >= 1.2;
+  });
+  const topActionKind = topRiskRow ? resolveServingRiskTopActionKind(topRiskRow) : "generic";
+  const lowRepurchaseActionRows =
+    topActionKind === "repurchase"
+      ? lowRepurchaseRows.filter((row) => row !== topRiskRow)
+      : lowRepurchaseRows;
+  const highSleepingActionRows =
+    topActionKind === "sleeping" ? highSleepingRows.filter((row) => row !== topRiskRow) : highSleepingRows;
+  const highRenewalActionRows =
+    topActionKind === "renewal" ? highRenewalRows.filter((row) => row !== topRiskRow) : highRenewalRows;
+  const sharedSignals: string[] = [];
+  if (lowRepurchaseRows.length > 0) {
+    const signal = renderPortfolioSignalPhrase({
+      subject: resolvePortfolioCohortLabel({
+        focusRows: lowRepurchaseRows,
+        allRows: rowsByRisk,
+        resolveStoreName,
+      }),
+      finding: "会员7日复购偏弱",
+    });
+    if (signal) {
+      sharedSignals.push(signal);
+    }
+  }
+  if (highSleepingRows.length > 0) {
+    const signal = renderPortfolioSignalPhrase({
+      subject: resolvePortfolioCohortLabel({
+        focusRows: highSleepingRows,
+        allRows: rowsByRisk,
+        resolveStoreName,
+      }),
+      finding: "沉默会员占比偏高",
+    });
+    if (signal) {
+      sharedSignals.push(signal);
+    }
+  }
+  if (highRenewalRows.length > 0) {
+    const signal = renderPortfolioSignalPhrase({
+      subject: resolvePortfolioCohortLabel({
+        focusRows: highRenewalRows,
+        allRows: rowsByRisk,
+        resolveStoreName,
+      }),
+      finding: "续费压力偏高",
+    });
+    if (signal) {
+      sharedSignals.push(signal);
+    }
+  }
+
+  const focusItems: string[] = [];
+  if (topRiskRow) {
+    focusItems.push(resolveServingRiskTopAction(topRiskRow, resolveStoreName(topRiskRow)));
+  }
+  const lowRepurchaseFocusItem = renderPortfolioFocusSentence({
+    subject: resolvePortfolioCohortLabel({
+      focusRows: lowRepurchaseActionRows,
+      allRows: rowsByRisk,
+      resolveStoreName,
+    }),
+    finding: "会员回流偏弱",
+    action: "今天统一复盘上周到店会员名单，优先补齐未二次邀约客户。",
+  });
+  if (lowRepurchaseFocusItem) {
+    focusItems.push(lowRepurchaseFocusItem);
+  }
+  const highSleepingFocusItem = renderPortfolioFocusSentence({
+    subject: resolvePortfolioCohortLabel({
+      focusRows: highSleepingActionRows,
+      allRows: rowsByRisk,
+      resolveStoreName,
+    }),
+    finding: "沉默会员占比偏高",
+    action: "优先拉出高价值沉默会员名单，今天先做召回。",
+  });
+  if (highSleepingFocusItem) {
+    focusItems.push(highSleepingFocusItem);
+  }
+  const highRenewalFocusItem = renderPortfolioFocusSentence({
+    subject: resolvePortfolioCohortLabel({
+      focusRows: highRenewalActionRows,
+      allRows: rowsByRisk,
+      resolveStoreName,
+    }),
+    finding: "续费压力偏高",
+    action: "同步盯续费名单、耗卡节奏和到店唤醒，别只看冲储金额。",
+  });
+  if (highRenewalFocusItem) {
+    focusItems.push(highRenewalFocusItem);
+  }
+  if (focusItems.length === 0) {
+    focusItems.push("先盯头尾门店差异，确认问题是留存、续费还是短期波动。");
+  }
+
+  const averageTicketRows = rowsByRisk
+    .map((row) => ({
+      row,
+      averageTicket: coerceFiniteNumber(row.average_ticket),
+    }))
+    .filter(
+      (
+        entry,
+      ): entry is {
+        row: Record<string, unknown>;
+        averageTicket: number;
+      } => entry.averageTicket !== null,
+    )
+    .sort((left, right) => right.averageTicket - left.averageTicket);
+  const highestAverageTicket = averageTicketRows[0] ?? null;
+  const lowestAverageTicket = averageTicketRows.at(-1) ?? null;
+  const analysisLens = params.plan.analysis;
+  const usesExecutiveLens =
+    isExecutiveAnalysisLens(analysisLens) &&
+    analysisLens.framework_id === "hq_growth_priority_v1";
+  const executiveLens = usesExecutiveLens ? analysisLens : null;
+  const lines = [`${countLabel} ${windowLabel} 当前重点看什么`];
+  lines.push(`一、${executiveLens?.section_labels.summary ?? "结论摘要"}`);
+  if (topRiskRow) {
+    const topStoreName = resolveStoreName(topRiskRow);
+    const topRiskScore = (coerceFiniteNumber(topRiskRow.risk_score ?? topRiskRow.metric_value) ?? 0)
+      .toFixed(1);
+    const topReasons = resolveServingRiskReasons(topRiskRow);
+    const summaryParts = [
+      `当前先盯 ${topStoreName}（风险分 ${topRiskScore}${topReasons.length > 0 ? `，${topReasons.join("、")}` : ""}）`,
+    ];
+    if (secondRiskRow) {
+      const secondStoreName = resolveStoreName(secondRiskRow);
+      const secondRiskScore = (
+        coerceFiniteNumber(secondRiskRow.risk_score ?? secondRiskRow.metric_value) ?? 0
+      ).toFixed(1);
+      summaryParts.push(`第二关注 ${secondStoreName}（风险分 ${secondRiskScore}）`);
+    }
+    lines.push(`- ${summaryParts.join("；")}。`);
+  }
+  if (sharedSignals.length > 0) {
+    lines.push(`- 共性信号：${sharedSignals.join("；")}。`);
+  }
+  if (executiveLens) {
+    lines.push(`二、${executiveLens.section_labels.signals}`);
+    lines.push(
+      `1. ${resolveAnalysisSignalLabel(executiveLens, "retention", "先看留存")}：${
+        renderPortfolioSignalPhrase({
+          subject: resolvePortfolioCohortLabel({
+            focusRows: lowRepurchaseRows,
+            allRows: rowsByRisk,
+            resolveStoreName,
+          }),
+          finding: "会员7日复购偏弱",
+        }) ?? "当前未识别出明显留存异常。"
+      }。`,
+    );
+    lines.push(
+      `2. ${resolveAnalysisSignalLabel(executiveLens, "member_asset_health", "再看会员资产")}：${
+        renderPortfolioSignalPhrase({
+          subject: resolvePortfolioCohortLabel({
+            focusRows: [...new Set([...highSleepingRows, ...highRenewalRows])],
+            allRows: rowsByRisk,
+            resolveStoreName,
+          }),
+          finding:
+            highSleepingRows.length > 0 && highRenewalRows.length > 0
+              ? "沉默会员占比偏高且续费压力偏高"
+              : highSleepingRows.length > 0
+                ? "沉默会员占比偏高"
+                : highRenewalRows.length > 0
+                  ? "续费压力偏高"
+                  : "当前会员资产信号整体平稳"
+        }) ?? "当前会员资产信号整体平稳"
+      }。`,
+    );
+    if (highestAverageTicket && lowestAverageTicket) {
+      lines.push(
+        `3. ${resolveAnalysisSignalLabel(executiveLens, "unit_economics", "再看单客价值")}：${resolveStoreName(highestAverageTicket.row)} 客单价 ${formatCurrency(highestAverageTicket.averageTicket)} 最高，${resolveStoreName(lowestAverageTicket.row)} ${formatCurrency(lowestAverageTicket.averageTicket)} 最低；当前主矛盾仍是留存和会员资产，不只是客单价。`,
+      );
+    } else {
+      lines.push(
+        `3. ${resolveAnalysisSignalLabel(executiveLens, "unit_economics", "再看单客价值")}：当前快答缺少稳定的单客价值对比样本。`,
+      );
+    }
+    lines.push(
+      `4. ${resolveAnalysisSignalLabel(executiveLens, "conversion", "最后看拉新质量")}：当前快答未带出新客转化/团购承接链路，如要判断 CMO 侧拉新质量，需要继续下钻。`,
+    );
+    lines.push(`三、${executiveLens.section_labels.actions}`);
+  } else {
+    lines.push("二、重点事项");
+  }
+  focusItems.slice(0, 3).forEach((item, index) => {
+    lines.push(`${index + 1}. ${item}`);
+  });
+  lines.push(`${
+    executiveLens ? `四、${executiveLens.section_labels.ranking}` : "三、风险排序"
+  }`);
+  rowsByRisk.forEach((row, index) => {
+    const storeName = resolveStoreName(row);
+    const riskScore = (
+      coerceFiniteNumber(row.risk_score ?? row.metric_value) ?? 0
+    ).toFixed(1);
+    lines.push(`${index + 1}. ${storeName} | 风险分 ${riskScore}`);
+    const reasons = resolveServingRiskReasons(row);
+    if (reasons.length > 0) {
+      lines.push(`   原因：${reasons.join("、")}`);
+    }
+  });
+  return lines.join("\n");
+}
+
 export function formatMetricDelta(
   metricKey: HetangSupportedMetricKey,
   delta: number | null,
@@ -71,6 +663,7 @@ export function formatMetricDelta(
   switch (metricKey) {
     case "serviceRevenue":
     case "averageTicket":
+    case "orderAverageAmount":
     case "memberPaymentAmount":
     case "cashPaymentAmount":
     case "wechatPaymentAmount":
@@ -104,6 +697,8 @@ function resolveServingMetricLabel(metric: string): string {
       return "服务营收";
     case "serviceOrderCount":
       return "服务单数";
+    case "orderAverageAmount":
+      return "单均金额";
     case "customerCount":
       return "消费人数";
     case "totalClockCount":
@@ -125,6 +720,37 @@ function resolveServingMetricLabel(metric: string): string {
   }
 }
 
+function coerceFiniteNumber(value: unknown): number | null {
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function deriveClockCountsFromServingSummaryRow(row: Record<string, unknown>): {
+  pointClockCount: number | null;
+  addClockCount: number | null;
+} | null {
+  const totalClocks = coerceFiniteNumber(row.total_clocks);
+  const addClockRate = coerceFiniteNumber(row.add_clock_rate);
+  if (totalClocks === null || totalClocks <= 0 || addClockRate === null || addClockRate < 0) {
+    return null;
+  }
+
+  const upClockCount = totalClocks / (1 + addClockRate);
+  if (!Number.isFinite(upClockCount) || upClockCount <= 0) {
+    return null;
+  }
+
+  const pointClockRate = coerceFiniteNumber(row.point_clock_rate);
+  const pointClockCount =
+    pointClockRate === null || pointClockRate < 0 ? null : Math.max(Math.round(upClockCount * pointClockRate), 0);
+  const addClockCount = Math.max(Math.round(totalClocks - upClockCount), 0);
+
+  return {
+    pointClockCount,
+    addClockCount,
+  };
+}
+
 export function renderServingQueryResult(params: {
   rows: Record<string, unknown>[];
   plan: QueryPlan;
@@ -138,6 +764,8 @@ export function renderServingQueryResult(params: {
         return row.metric_value ?? row.service_revenue;
       case "serviceOrderCount":
         return row.metric_value ?? row.service_order_count;
+      case "orderAverageAmount":
+        return row.metric_value ?? row.order_average_amount;
       case "customerCount":
         return row.metric_value ?? row.customer_count;
       case "averageTicket":
@@ -164,6 +792,8 @@ export function renderServingQueryResult(params: {
         return row.baseline_metric_value ?? row.baseline_service_revenue;
       case "serviceOrderCount":
         return row.baseline_metric_value ?? row.baseline_service_order_count;
+      case "orderAverageAmount":
+        return row.baseline_metric_value ?? row.baseline_order_average_amount;
       case "customerCount":
         return row.baseline_metric_value ?? row.baseline_customer_count;
       case "averageTicket":
@@ -275,12 +905,15 @@ export function renderServingQueryResult(params: {
     }
 
     if (params.plan.action === "ranking") {
-      if (params.rows.length === 0) {
-        return null;
-      }
-      const countLabel = `${params.rows.length}店`;
-      const windowLabel =
-        params.plan.time.mode === "window"
+    if (params.rows.length === 0) {
+      return null;
+    }
+    if (isBroadPortfolioRankingAsk(params.plan, metric)) {
+      return renderBroadPortfolioRevenueRanking(params);
+    }
+    const countLabel = `${params.rows.length}店`;
+    const windowLabel =
+      params.plan.time.mode === "window"
           ? `近${params.plan.time.window_days ?? params.rows[0]?.window_days ?? ""}天`
           : String(params.rows[0]?.biz_date ?? params.plan.time.biz_date ?? "当前");
       const lines = [`${countLabel} ${windowLabel} ${resolveRankingTitle()}`];
@@ -289,6 +922,12 @@ export function renderServingQueryResult(params: {
         lines.push(
           `${index + 1}. ${storeName} | ${metricLabel} ${renderMetricValue(resolveRowMetricValue(row))}`,
         );
+        if (metric === "riskScore") {
+          const reasons = resolveServingRiskReasons(row);
+          if (reasons.length > 0) {
+            lines.push(`   原因：${reasons.join("、")}`);
+          }
+        }
       });
       return lines.join("\n");
     }
@@ -347,10 +986,20 @@ export function renderServingQueryResult(params: {
           : params.plan.time.mode === "window"
             ? `近${params.plan.time.window_days ?? row.window_days ?? ""}天`
             : params.plan.time.as_of_biz_date ?? "当前";
-      return [
-        `${storeName} ${dateLabel}`,
-        `- ${metricLabel}: ${renderMetricValue(resolveRowMetricValue(row))}`,
-      ].join("\n");
+      const lines = [`${storeName} ${dateLabel}`];
+      if (metric === "pointClockRate" || metric === "addClockRate") {
+        const derivedClockCounts = deriveClockCountsFromServingSummaryRow(row);
+        const pointClockCount = derivedClockCounts?.pointClockCount;
+        const addClockCount = derivedClockCounts?.addClockCount;
+        if (metric === "pointClockRate" && pointClockCount !== null && pointClockCount !== undefined) {
+          lines.push(`- 点钟数量: ${formatCount(pointClockCount, 0)} 个`);
+        }
+        if (metric === "addClockRate" && addClockCount !== null && addClockCount !== undefined) {
+          lines.push(`- 加钟数量: ${formatCount(addClockCount, 0)} 个`);
+        }
+      }
+      lines.push(`- ${metricLabel}: ${renderMetricValue(resolveRowMetricValue(row))}`);
+      return lines.join("\n");
     }
 
     if (params.plan.action === "trend") {
@@ -372,6 +1021,9 @@ export function renderServingQueryResult(params: {
     if (params.rows.length === 0) {
       return null;
     }
+    if (isBroadPortfolioRiskFocusAsk(params.plan, metric)) {
+      return renderBroadPortfolioRiskFocus(params);
+    }
     const countLabel = `${params.rows.length}店`;
     const windowLabel =
       params.plan.time.mode === "window"
@@ -383,6 +1035,15 @@ export function renderServingQueryResult(params: {
       lines.push(
         `${index + 1}. ${storeName} | ${metricLabel} ${renderMetricValue(resolveRowMetricValue(row))}`,
       );
+      if (metric === "riskScore") {
+        const reasons = resolveServingRiskReasons(row);
+        if (reasons.length > 0) {
+          lines.push(`   原因：${reasons.join("、")}`);
+        }
+        if (index === 0) {
+          lines.push(`   总部先盯：${resolveServingRiskTopAction(row, storeName)}`);
+        }
+      }
     });
     return lines.join("\n");
   }
@@ -651,6 +1312,10 @@ export function renderTrendText(params: {
 export function renderRiskAdviceText(params: {
   summary: StoreWindowSummary;
   intent: HetangQueryIntent;
+  analysis?: QueryAnalysisLens;
+  environmentContext?: AnalysisEnvironmentContext;
+  storeExternalContext?: StoreExternalContextAiPayload;
+  worldModelSupplement?: string | null;
 }): string {
   const alertMap = new Map<
     string,
@@ -669,6 +1334,41 @@ export function renderRiskAdviceText(params: {
   }
   const latestSuggestions =
     params.summary.reports[params.summary.reports.length - 1]?.suggestions ?? [];
+  const executiveAnalysis = isExecutiveAnalysisLens(params.analysis) ? params.analysis : null;
+  const usesStoreGrowthLens = executiveAnalysis?.framework_id === "store_growth_diagnosis_v1";
+  const usesStoreOperationsLens =
+    executiveAnalysis?.framework_id === "store_operations_diagnosis_v1";
+  const usesStoreProfitLens = executiveAnalysis?.framework_id === "store_profit_diagnosis_v1";
+  if (usesStoreGrowthLens && executiveAnalysis) {
+    return renderStoreGrowthDiagnosisText({
+      summary: params.summary,
+      analysis: executiveAnalysis,
+      latestSuggestions,
+      environmentContext: params.environmentContext,
+      storeExternalContext: params.storeExternalContext,
+      worldModelSupplement: params.worldModelSupplement,
+    });
+  }
+  if (usesStoreOperationsLens && executiveAnalysis) {
+    return renderStoreOperationsDiagnosisText({
+      summary: params.summary,
+      analysis: executiveAnalysis,
+      latestSuggestions,
+      environmentContext: params.environmentContext,
+      storeExternalContext: params.storeExternalContext,
+      worldModelSupplement: params.worldModelSupplement,
+    });
+  }
+  if (usesStoreProfitLens && executiveAnalysis) {
+    return renderStoreProfitDiagnosisText({
+      summary: params.summary,
+      analysis: executiveAnalysis,
+      latestSuggestions,
+      environmentContext: params.environmentContext,
+      storeExternalContext: params.storeExternalContext,
+      worldModelSupplement: params.worldModelSupplement,
+    });
+  }
   const lines = [`${params.summary.storeName} ${params.summary.frame.label} 风险与建议`];
   lines.push("风险");
   if (alertMap.size === 0) {
@@ -694,6 +1394,719 @@ export function renderRiskAdviceText(params: {
       });
     }
   }
+  const externalContextHint = resolveStoreExternalContextExplanationHint(params.storeExternalContext);
+  if (externalContextHint) {
+    lines.push(externalContextHint);
+  }
+  if (params.worldModelSupplement) {
+    lines.push(...params.worldModelSupplement.split("\n"));
+  }
+  return lines.join("\n");
+}
+
+function resolveEnvironmentExplanationHint(
+  environmentContext: AnalysisEnvironmentContext | undefined,
+): string | null {
+  if (!environmentContext) {
+    return null;
+  }
+  if (environmentContext.narrativePolicy === "suppress") {
+    return null;
+  }
+  const solarTermLabel = formatSolarTermLabel(environmentContext.solarTerm);
+  if (
+    environmentContext.badWeatherTouchPenalty === "medium" ||
+    environmentContext.badWeatherTouchPenalty === "high"
+  ) {
+    return "今天天气偏弱，不适合强推即时到店，更适合先约后续更稳的窗口。";
+  }
+  if (
+    environmentContext.seasonTag === "spring" &&
+    environmentContext.eveningOutingLikelihood === "high" &&
+    environmentContext.postDinnerLeisureBias === "high"
+  ) {
+    if (solarTermLabel) {
+      return `当前临近${solarTermLabel}，春季晚间出行偏活跃，晚饭后和夜场承接更值得优先看。`;
+    }
+    return "当前春季晚间出行偏活跃，晚饭后和夜场承接更值得优先看。";
+  }
+  if (
+    environmentContext.eveningOutingLikelihood === "high" &&
+    environmentContext.postDinnerLeisureBias === "high"
+  ) {
+    return "当前晚间休闲需求偏强，饭后和夜场窗口更值得优先关注。";
+  }
+  return null;
+}
+
+function resolveStoreExternalContextExplanationHint(
+  storeExternalContext: StoreExternalContextAiPayload | undefined,
+): string | null {
+  if (!storeExternalContext) {
+    return null;
+  }
+
+  const serviceHours = readStoreExternalContextText(
+    storeExternalContext.confirmed,
+    "service_hours",
+  );
+  const population3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "market_population_scale_3km",
+  );
+  const catering3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "catering_poi_count_3km",
+  );
+  const hotel3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "hotel_poi_count_3km",
+  );
+  const businessScene = storeExternalContext.researchNotes.find(
+    (entry) =>
+      entry.metricKey === "store_business_scene_inference" && typeof entry.value === "string",
+  );
+  const nightScene = storeExternalContext.researchNotes.find(
+    (entry) =>
+      entry.metricKey === "seasonal_nightlife_pattern" && typeof entry.value === "string",
+  );
+
+  const parts: string[] = [];
+  if (serviceHours) {
+    parts.push(`确认营业时段 ${serviceHours}`);
+  }
+  if (population3km !== null || catering3km !== null || hotel3km !== null) {
+    const estimatedParts: string[] = [];
+    if (population3km !== null) {
+      estimatedParts.push(`周边3km约${formatChineseCountInWan(population3km)}人`);
+    }
+    if (catering3km !== null) {
+      estimatedParts.push(`餐饮${round(catering3km, 0).toFixed(0)}家`);
+    }
+    if (hotel3km !== null) {
+      estimatedParts.push(`酒店${round(hotel3km, 0).toFixed(0)}家`);
+    }
+    if (estimatedParts.length > 0) {
+      parts.push(`第三方估算显示${estimatedParts.join("、")}`);
+    }
+  }
+  if (businessScene && typeof businessScene.value === "string") {
+    parts.push(`研究备注偏向 ${businessScene.value}`);
+  } else if (nightScene && typeof nightScene.value === "string") {
+    parts.push(`研究备注提到 ${nightScene.value}`);
+  }
+
+  if (parts.length === 0) {
+    return null;
+  }
+  return `外部情报补充：${parts.join("；")}。仅作经营解释，不直接改主评分。`;
+}
+
+function formatTurnsPerRoom(value: number | null): string {
+  if (value === null) {
+    return "N/A";
+  }
+  return `${round(value, 2).toFixed(2)} 次/间`;
+}
+
+type StoreOperationsPrimaryDimension =
+  | "execution_efficiency"
+  | "service_conversion"
+  | "capacity_utilization"
+  | "staffing_health";
+
+function resolveStoreOperationsDiagnosisFocus(metrics: DailyStoreMetrics): {
+  summary: string;
+  closing: string;
+  primaryDimension: StoreOperationsPrimaryDimension;
+} {
+  const pointClockRate = metrics.pointClockRate ?? null;
+  const addClockRate = metrics.addClockRate ?? null;
+  const clockEffect = metrics.clockEffect ?? null;
+  const roomOccupancyRate = metrics.roomOccupancyRate ?? null;
+  const roomTurnoverRate = metrics.roomTurnoverRate ?? null;
+  const activeRatio =
+    metrics.onDutyTechCount > 0 ? metrics.activeTechCount / metrics.onDutyTechCount : null;
+
+  if (
+    (pointClockRate !== null && pointClockRate < 0.35) ||
+    (clockEffect !== null && clockEffect < 70)
+  ) {
+    return {
+      summary: "当前先抓点钟承接和前场履约效率。",
+      closing: "先把前场承接接稳，再谈后面的客单和规模放大。",
+      primaryDimension: "execution_efficiency",
+    };
+  }
+  if (addClockRate !== null && addClockRate < 0.22) {
+    return {
+      summary: "当前先抓加钟收口和服务后半程转化。",
+      closing: "先把服务后半程做深，再谈单客价值放大。",
+      primaryDimension: "service_conversion",
+    };
+  }
+  if (
+    (roomOccupancyRate !== null && roomOccupancyRate < 0.68) ||
+    (roomTurnoverRate !== null && roomTurnoverRate < 2.6)
+  ) {
+    return {
+      summary: "当前先抓包间产能和高峰翻房节奏。",
+      closing: "先把高峰产能接顺，别让现场空转和排队同时出现。",
+      primaryDimension: "capacity_utilization",
+    };
+  }
+  if (activeRatio !== null && activeRatio < 0.75) {
+    return {
+      summary: "当前先抓在岗和活跃排班匹配。",
+      closing: "先把排班负荷配平，再看现场承接还能不能提速。",
+      primaryDimension: "staffing_health",
+    };
+  }
+  return {
+    summary: "当前先盯承接节奏和高峰履约稳定性。",
+    closing: "履约盘面暂时可控，但高峰班次还要继续盯。",
+    primaryDimension: "execution_efficiency",
+  };
+}
+
+function resolveStoreOperationsDiagnosisActions(params: {
+  primaryDimension: StoreOperationsPrimaryDimension;
+  latestSuggestions: string[];
+}): string[] {
+  if (params.latestSuggestions.length > 0) {
+    return params.latestSuggestions.slice(0, 3);
+  }
+  switch (params.primaryDimension) {
+    case "execution_efficiency":
+      return [
+        "今天先把晚场高峰的承接链路拆开看，确认前台分配和技师接单有没有卡点。",
+        "高峰班次优先把点钟强、承接稳的技师顶上去，别把强承接的人放在低峰。",
+        "前台统一补一句项目承接话术，先减少有客无承接的流失。",
+      ];
+    case "service_conversion":
+      return [
+        "今天先复盘服务后半程的加钟收口，先把加钟强的技师排在高峰班次。",
+        "前台和技师统一补一句升级服务话术，别让基础单直接结束。",
+        "先盯高价值会员和高意向客的加项转化，避免忙但不深。",
+      ];
+    case "capacity_utilization":
+      return [
+        "今天先按班次看包间空置和翻房慢点位，优先补高峰时段周转。",
+        "房间清场和候钟衔接要有人盯，别让上一单结束后空档过长。",
+        "先把高峰可承接能力拉起来，再决定要不要继续加客流。",
+      ];
+    default:
+      return [
+        "今天先核对在岗和活跃技师差额，确认有没有排班虚高或出勤偏弱。",
+        "高峰班次优先补足承接稳的技师，低峰班次再做弹性安排。",
+        "先把班表和真实接单能力对齐，别让现场排队和空班同时存在。",
+      ];
+  }
+}
+
+function renderStoreOperationsDiagnosisText(params: {
+  summary: StoreWindowSummary;
+  analysis: QueryAnalysisLens;
+  latestSuggestions: string[];
+  environmentContext?: AnalysisEnvironmentContext;
+  storeExternalContext?: StoreExternalContextAiPayload;
+  worldModelSupplement?: string | null;
+}): string {
+  const metrics = params.summary.metrics;
+  const focus = resolveStoreOperationsDiagnosisFocus(metrics);
+  const actions = resolveStoreOperationsDiagnosisActions({
+    primaryDimension: focus.primaryDimension,
+    latestSuggestions: params.latestSuggestions,
+  });
+  const pointClockRate = metrics.pointClockRate ?? null;
+  const addClockRate = metrics.addClockRate ?? null;
+  const clockEffect = metrics.clockEffect ?? null;
+  const roomOccupancyRate = metrics.roomOccupancyRate ?? null;
+  const roomTurnoverRate = metrics.roomTurnoverRate ?? null;
+  const activeRatio =
+    metrics.onDutyTechCount > 0 ? metrics.activeTechCount / metrics.onDutyTechCount : null;
+  const lines = [`${params.summary.storeName} ${params.summary.frame.label} 当前重点看什么`];
+
+  lines.push(`一、${params.analysis.section_labels.summary}`);
+  lines.push(`- ${focus.summary}`);
+  lines.push(`- ${focus.closing}`);
+  const environmentHint = resolveEnvironmentExplanationHint(params.environmentContext);
+  if (environmentHint) {
+    lines.push(`- ${environmentHint}`);
+  }
+  const externalContextHint = resolveStoreExternalContextExplanationHint(params.storeExternalContext);
+  if (externalContextHint) {
+    lines.push(`- ${externalContextHint}`);
+  }
+  if (params.worldModelSupplement) {
+    lines.push(...params.worldModelSupplement.split("\n").map((line) => `- ${line}`));
+  }
+
+  lines.push(`二、${params.analysis.section_labels.signals}`);
+  lines.push(
+    `1. ${resolveAnalysisSignalLabel(params.analysis, "execution_efficiency", "先看承接效率")}：点钟率 ${formatPercentValue(
+      pointClockRate,
+    )}，钟效 ${
+      clockEffect === null ? "N/A" : `${round(clockEffect, 1).toFixed(1)}`
+    }，${
+      (pointClockRate ?? 1) < 0.35 || (clockEffect ?? Infinity) < 70
+        ? "前场承接已经偏弱。"
+        : "前场承接暂时还算稳。"
+    }`,
+  );
+  lines.push(
+    `2. ${resolveAnalysisSignalLabel(params.analysis, "service_conversion", "再看二次成交")}：加钟率 ${formatPercentValue(
+      addClockRate,
+    )}，客单价 ${formatCurrency(metrics.averageTicket ?? 0)}，${
+      (addClockRate ?? 1) < 0.22
+        ? "服务后半程的收口还没接住。"
+        : "服务后半程转化暂时可控。"
+    }`,
+  );
+  lines.push(
+    `3. ${resolveAnalysisSignalLabel(params.analysis, "capacity_utilization", "再看产能利用")}：包间上座率 ${formatPercentValue(
+      roomOccupancyRate,
+    )}，翻房率 ${formatTurnsPerRoom(roomTurnoverRate)}，${
+      (roomOccupancyRate ?? 1) < 0.68 || (roomTurnoverRate ?? Infinity) < 2.6
+        ? "产能利用还有明显空档。"
+        : "包间产能整体还算顺。"
+    }`,
+  );
+  lines.push(
+    `4. ${resolveAnalysisSignalLabel(params.analysis, "staffing_health", "最后看排班负荷")}：在岗技师 ${round(
+      metrics.onDutyTechCount ?? 0,
+      1,
+    ).toFixed(1)} 人，活跃技师 ${round(metrics.activeTechCount ?? 0, 1).toFixed(1)} 人，活跃占比 ${formatPercentValue(
+      activeRatio,
+    )}，${
+      activeRatio !== null && activeRatio < 0.75
+        ? "班表和真实承接能力还有偏差。"
+        : "排班负荷暂时没有明显失衡。"
+    }`,
+  );
+
+  lines.push(`三、${params.analysis.section_labels.actions}`);
+  actions.forEach((action, index) => {
+    lines.push(`${index + 1}. ${action}`);
+  });
+
+  lines.push(`四、${params.analysis.section_labels.ranking}`);
+  lines.push(
+    `- 当前第一优先级是${
+      focus.primaryDimension === "execution_efficiency"
+        ? "承接效率"
+        : focus.primaryDimension === "service_conversion"
+          ? "二次成交"
+          : focus.primaryDimension === "capacity_utilization"
+            ? "产能利用"
+            : "排班负荷"
+    }，不要把现场问题平均摊到所有环节。`,
+  );
+  return lines.join("\n");
+}
+
+function resolveStoreGrowthDiagnosisFocus(metrics: DailyStoreMetrics): {
+  summary: string;
+  closing: string;
+  primaryDimension: "retention" | "member_asset_health" | "unit_economics" | "conversion";
+} {
+  const repurchaseRate = metrics.memberRepurchaseRate7d ?? null;
+  const repurchaseBase = metrics.memberRepurchaseBaseCustomerCount7d ?? 0;
+  const sleepingRate = metrics.sleepingMemberRate ?? null;
+  const renewalPressure = metrics.renewalPressureIndex30d ?? null;
+  const storedBalanceLifeMonths = metrics.storedBalanceLifeMonths ?? null;
+  const currentStoredBalance = metrics.currentStoredBalance ?? 0;
+  const addClockRate = metrics.addClockRate ?? null;
+  const averageTicket = metrics.averageTicket ?? 0;
+
+  if (
+    (repurchaseBase >= 12 && repurchaseRate !== null && repurchaseRate < 0.45) ||
+    (sleepingRate !== null && sleepingRate >= 0.15)
+  ) {
+    return {
+      summary: "当前先抓老客回流和会员激活。",
+      closing: "先把老客回流接住，再决定后续拉新和续费放大。",
+      primaryDimension: "retention",
+    };
+  }
+  if (
+    (renewalPressure !== null && renewalPressure >= 1.25) ||
+    (storedBalanceLifeMonths !== null && storedBalanceLifeMonths < 3 && currentStoredBalance > 0)
+  ) {
+    return {
+      summary: "当前先抓续费收口和会员资产健康。",
+      closing: "先守住高余额会员和续费节奏，再放大其他动作。",
+      primaryDimension: "member_asset_health",
+    };
+  }
+  if ((addClockRate !== null && addClockRate < 0.28) || averageTicket < 160) {
+    return {
+      summary: "当前先抓单客价值和加钟承接。",
+      closing: "先把每次到店做深，再谈规模扩张。",
+      primaryDimension: "unit_economics",
+    };
+  }
+  return {
+    summary: "当前先盯承接质量和新客转会员链路。",
+    closing: "增长节奏整体可控，但拉新质量还需要继续下钻。",
+    primaryDimension: "conversion",
+  };
+}
+
+function resolveStoreGrowthDiagnosisActions(params: {
+  primaryDimension: "retention" | "member_asset_health" | "unit_economics" | "conversion";
+  latestSuggestions: string[];
+}): string[] {
+  if (params.latestSuggestions.length > 0) {
+    return params.latestSuggestions.slice(0, 3);
+  }
+  switch (params.primaryDimension) {
+    case "retention":
+      return [
+        "今天先把上周到店但本周没回来的老会员拉名单，按高价值/普通两档分开打。",
+        "前台和熟悉技师一起做二次邀约，先把人约回来，再谈续费和开卡。",
+        "今天少发泛优惠券，先把高价值老会员的到店节奏接住。",
+      ];
+    case "member_asset_health":
+      return [
+        "今天先拉高余额且最近7天到过店的会员名单，优先做续费收口。",
+        "前台先拆续费理由和卡型结构，不要平均发力。",
+        "技师端今天重点配合前台把续费价值和到店节奏讲清楚。",
+      ];
+    case "unit_economics":
+      return [
+        "今天先复盘晚场高峰的加钟承接，优先把加钟强的技师放到高峰班次。",
+        "前台和技师统一补一句升级服务的承接话术，别只做基础单。",
+        "先盯高客单会员的加项转化，避免忙但不赚。",
+      ];
+    default:
+      return [
+        "今天先拆最近7天新客承接链路，确认首单后谁在流失。",
+        "前台先拉未复到店的新客名单，按来源和首单类型分层跟进。",
+        "别急着放大投放，先把首单承接和转会员动作补齐。",
+      ];
+  }
+}
+
+function renderStoreGrowthDiagnosisText(params: {
+  summary: StoreWindowSummary;
+  analysis: QueryAnalysisLens;
+  latestSuggestions: string[];
+  environmentContext?: AnalysisEnvironmentContext;
+  storeExternalContext?: StoreExternalContextAiPayload;
+  worldModelSupplement?: string | null;
+}): string {
+  const metrics = params.summary.metrics;
+  const focus = resolveStoreGrowthDiagnosisFocus(metrics);
+  const actions = resolveStoreGrowthDiagnosisActions({
+    primaryDimension: focus.primaryDimension,
+    latestSuggestions: params.latestSuggestions,
+  });
+  const repurchaseRate = metrics.memberRepurchaseRate7d ?? null;
+  const repurchaseBase = metrics.memberRepurchaseBaseCustomerCount7d ?? 0;
+  const repurchaseReturned = metrics.memberRepurchaseReturnedCustomerCount7d ?? 0;
+  const sleepingRate = metrics.sleepingMemberRate ?? null;
+  const renewalPressure = metrics.renewalPressureIndex30d ?? null;
+  const storedBalanceLifeMonths = metrics.storedBalanceLifeMonths ?? null;
+  const addClockRate = metrics.addClockRate ?? null;
+  const averageTicket = metrics.averageTicket ?? 0;
+  const revisitRate = metrics.groupbuy7dRevisitRate ?? null;
+  const storedValueConversionRate = metrics.groupbuy7dStoredValueConversionRate ?? null;
+  const lines = [`${params.summary.storeName} ${params.summary.frame.label} 当前重点看什么`];
+
+  lines.push(`一、${params.analysis.section_labels.summary}`);
+  lines.push(`- ${focus.summary}`);
+  lines.push(`- ${focus.closing}`);
+  const environmentHint = resolveEnvironmentExplanationHint(params.environmentContext);
+  if (environmentHint) {
+    lines.push(`- ${environmentHint}`);
+  }
+  const externalContextHint = resolveStoreExternalContextExplanationHint(params.storeExternalContext);
+  if (externalContextHint) {
+    lines.push(`- ${externalContextHint}`);
+  }
+  if (params.worldModelSupplement) {
+    lines.push(...params.worldModelSupplement.split("\n").map((line) => `- ${line}`));
+  }
+
+  lines.push(`二、${params.analysis.section_labels.signals}`);
+  lines.push(
+    `1. ${resolveAnalysisSignalLabel(params.analysis, "retention", "先看留存")}：会员7日复购率 ${formatPercentWithCounts(
+      repurchaseRate,
+      repurchaseReturned,
+      repurchaseBase,
+    )}，沉默会员占比 ${formatPercentValue(sleepingRate)}，${
+      (repurchaseBase >= 12 && (repurchaseRate ?? 1) < 0.45) || (sleepingRate ?? 0) >= 0.15
+        ? "老客回流已经转弱。"
+        : "老客回流暂时还算稳。"
+    }`,
+  );
+  lines.push(
+    `2. ${resolveAnalysisSignalLabel(params.analysis, "member_asset_health", "再看会员资产")}：续费压力 ${
+      renewalPressure === null ? "N/A" : round(renewalPressure, 2).toFixed(2)
+    }，储值寿命 ${
+      storedBalanceLifeMonths === null ? "N/A" : `${round(storedBalanceLifeMonths, 1).toFixed(1)} 个月`
+    }，${
+      (renewalPressure ?? 0) >= 1.25 || ((storedBalanceLifeMonths ?? Infinity) < 3 && (metrics.currentStoredBalance ?? 0) > 0)
+        ? "续费和耗卡节奏偏紧。"
+        : "会员资产暂时可控。"
+    }`,
+  );
+  lines.push(
+    `3. ${resolveAnalysisSignalLabel(params.analysis, "unit_economics", "再看单客价值")}：客单价 ${formatCurrency(
+      averageTicket,
+    )}，加钟率 ${formatPercentValue(addClockRate)}，${
+      (addClockRate ?? 1) < 0.28 || averageTicket < 160
+        ? "单客价值承接偏弱。"
+        : "单客价值整体还算稳定。"
+    }`,
+  );
+  lines.push(
+    `4. ${resolveAnalysisSignalLabel(params.analysis, "conversion", "最后看拉新质量")}：7天复到店率 ${formatPercentValue(
+      revisitRate,
+    )}，7天储值转化率 ${formatPercentValue(storedValueConversionRate)}，${
+      revisitRate === null && storedValueConversionRate === null
+        ? "当前快答缺少稳定的新客承接样本。"
+        : "如要判断拉新质量，还要继续下钻到渠道和新客分层。"
+    }`,
+  );
+
+  lines.push(`三、${params.analysis.section_labels.actions}`);
+  actions.forEach((action, index) => {
+    lines.push(`${index + 1}. ${action}`);
+  });
+
+  lines.push(`四、${params.analysis.section_labels.ranking}`);
+  lines.push(
+    `- 当前第一优先级是${focus.primaryDimension === "retention"
+      ? "留存"
+      : focus.primaryDimension === "member_asset_health"
+        ? "会员资产"
+        : focus.primaryDimension === "unit_economics"
+          ? "单客价值"
+          : "拉新承接"}，不要把精力平均摊在所有问题上。`,
+  );
+  return lines.join("\n");
+}
+
+type StoreProfitPrimaryDimension =
+  | "profitability"
+  | "break_even_safety"
+  | "cashflow_quality"
+  | "member_asset_health";
+
+function resolveStoreProfitDiagnosisFocus(params: {
+  metrics: DailyStoreMetrics;
+  frameDays: number;
+}): {
+  summary: string;
+  closing: string;
+  primaryDimension: StoreProfitPrimaryDimension;
+  normalizedBreakEvenRevenue: number | null;
+} {
+  const { metrics } = params;
+  const grossMarginRate = metrics.grossMarginRate ?? null;
+  const netMarginRate = metrics.netMarginRate ?? null;
+  const normalizedBreakEvenRevenue =
+    metrics.breakEvenRevenue === null
+      ? null
+      : (metrics.breakEvenRevenue * Math.max(params.frameDays, 1)) / 30;
+  const revenueGap =
+    normalizedBreakEvenRevenue === null ? null : metrics.serviceRevenue - normalizedBreakEvenRevenue;
+  const rechargeCash = metrics.rechargeCash ?? 0;
+  const storedConsumeAmount = metrics.storedConsumeAmount ?? 0;
+  const storedBalanceLifeMonths = metrics.storedBalanceLifeMonths ?? null;
+  const renewalPressure = metrics.renewalPressureIndex30d ?? null;
+
+  if (
+    (grossMarginRate !== null && grossMarginRate < 0.52) ||
+    (netMarginRate !== null && netMarginRate < 0.1)
+  ) {
+    return {
+      summary: "当前先守毛利和净利，不要只看流水。",
+      closing: "先把利润空间守住，再决定后续要不要继续放大客流和活动。",
+      primaryDimension: "profitability",
+      normalizedBreakEvenRevenue,
+    };
+  }
+  if (revenueGap !== null && revenueGap < 0) {
+    return {
+      summary: "当前先补保本安全垫，别让流水看起来有规模却不够安全。",
+      closing: "先把保本缺口补上，再谈利润放大。",
+      primaryDimension: "break_even_safety",
+      normalizedBreakEvenRevenue,
+    };
+  }
+  if (rechargeCash > 0 && storedConsumeAmount > rechargeCash * 1.5) {
+    return {
+      summary: "当前先盯储值现金回流，别让耗卡节奏跑得比现金回流更快。",
+      closing: "先把现金回流稳住，再谈冲储和投放放大。",
+      primaryDimension: "cashflow_quality",
+      normalizedBreakEvenRevenue,
+    };
+  }
+  if (
+    (storedBalanceLifeMonths !== null && storedBalanceLifeMonths < 3) ||
+    (renewalPressure !== null && renewalPressure >= 1.25)
+  ) {
+    return {
+      summary: "当前先守会员资产寿命和续费收口。",
+      closing: "先把高余额会员和续费节奏接住，再谈新增储值。",
+      primaryDimension: "member_asset_health",
+      normalizedBreakEvenRevenue,
+    };
+  }
+  return {
+    summary: "利润结构暂时可控，但利润安全垫还要持续盯。",
+    closing: "利润盘面没有明显失控，但别因为流水平稳就放松利润纪律。",
+    primaryDimension: "profitability",
+    normalizedBreakEvenRevenue,
+  };
+}
+
+function resolveStoreProfitDiagnosisActions(params: {
+  primaryDimension: StoreProfitPrimaryDimension;
+  latestSuggestions: string[];
+}): string[] {
+  if (params.latestSuggestions.length > 0) {
+    return params.latestSuggestions.slice(0, 3);
+  }
+  switch (params.primaryDimension) {
+    case "profitability":
+      return [
+        "今天先把低毛利项目和低毛利引流单拆出来，确认哪些流水在拖利润。",
+        "前台和店长统一补升级服务与加项收口，别只追单量不追利润。",
+        "先守住毛利率和净利率，再决定是否继续放大活动。",
+      ];
+    case "break_even_safety":
+      return [
+        "今天先按班次拆保本缺口，优先补最容易掉到保本线下的时段。",
+        "低峰时段先控低毛利折扣和无效让利，别让保本线继续抬高。",
+        "把高毛利、高复购的项目优先推给高意向客，先把保本安全垫补出来。",
+      ];
+    case "cashflow_quality":
+      return [
+        "今天先核对近7天储值进账和耗卡节奏，确认是不是低价单吃掉了现金回流。",
+        "前台优先盯高余额会员续费和到店唤醒，别只看当天冲储金额。",
+        "现金回流没稳住前，先别继续放大低毛利促销。",
+      ];
+    default:
+      return [
+        "今天先拉高余额且近30天有消费的会员名单，优先做续费收口。",
+        "把续费理由、卡型结构和到店节奏拆开看，别平均发力。",
+        "先把会员资产寿命拉长，再决定冲储动作要不要加码。",
+      ];
+  }
+}
+
+function renderStoreProfitDiagnosisText(params: {
+  summary: StoreWindowSummary;
+  analysis: QueryAnalysisLens;
+  latestSuggestions: string[];
+  environmentContext?: AnalysisEnvironmentContext;
+  storeExternalContext?: StoreExternalContextAiPayload;
+  worldModelSupplement?: string | null;
+}): string {
+  const metrics = params.summary.metrics;
+  const focus = resolveStoreProfitDiagnosisFocus({
+    metrics,
+    frameDays: params.summary.frame.days,
+  });
+  const actions = resolveStoreProfitDiagnosisActions({
+    primaryDimension: focus.primaryDimension,
+    latestSuggestions: params.latestSuggestions,
+  });
+  const grossMarginRate = metrics.grossMarginRate ?? null;
+  const netMarginRate = metrics.netMarginRate ?? null;
+  const rechargeCash = metrics.rechargeCash ?? 0;
+  const rechargeStoredValue = metrics.rechargeStoredValue ?? 0;
+  const storedConsumeAmount = metrics.storedConsumeAmount ?? 0;
+  const storedBalanceLifeMonths = metrics.storedBalanceLifeMonths ?? null;
+  const renewalPressure = metrics.renewalPressureIndex30d ?? null;
+  const revenueGap =
+    focus.normalizedBreakEvenRevenue === null
+      ? null
+      : metrics.serviceRevenue - focus.normalizedBreakEvenRevenue;
+  const lines = [`${params.summary.storeName} ${params.summary.frame.label} 当前重点看什么`];
+
+  lines.push(`一、${params.analysis.section_labels.summary}`);
+  lines.push(`- ${focus.summary}`);
+  lines.push(`- ${focus.closing}`);
+  const environmentHint = resolveEnvironmentExplanationHint(params.environmentContext);
+  if (environmentHint) {
+    lines.push(`- ${environmentHint}`);
+  }
+  const externalContextHint = resolveStoreExternalContextExplanationHint(params.storeExternalContext);
+  if (externalContextHint) {
+    lines.push(`- ${externalContextHint}`);
+  }
+  if (params.worldModelSupplement) {
+    lines.push(...params.worldModelSupplement.split("\n").map((line) => `- ${line}`));
+  }
+
+  lines.push(`二、${params.analysis.section_labels.signals}`);
+  lines.push(
+    `1. ${resolveAnalysisSignalLabel(params.analysis, "profitability", "先看利润空间")}：毛利率 ${formatPercentValue(
+      grossMarginRate,
+    )}，净利率 ${formatPercentValue(netMarginRate)}，${
+      (grossMarginRate ?? 1) < 0.52 || (netMarginRate ?? 1) < 0.1
+        ? "利润空间已经偏薄。"
+        : "利润空间暂时可控。"
+    }`,
+  );
+  lines.push(
+    `2. ${resolveAnalysisSignalLabel(params.analysis, "break_even_safety", "再看保本安全垫")}：同口径保本营收约 ${
+      focus.normalizedBreakEvenRevenue === null
+        ? "N/A"
+        : formatCurrency(focus.normalizedBreakEvenRevenue)
+    }，本期服务营收 ${formatCurrency(metrics.serviceRevenue ?? 0)}，${
+      revenueGap === null
+        ? "当前缺少稳定的保本安全垫判断。"
+        : revenueGap < 0
+          ? "保本安全垫已经偏薄。"
+          : "当前还在保本线之上。"
+    }`,
+  );
+  lines.push(
+    `3. ${resolveAnalysisSignalLabel(params.analysis, "cashflow_quality", "再看储值现金流")}：充值现金 ${formatCurrency(
+      rechargeCash,
+    )}，充值总额 ${formatCurrency(rechargeStoredValue)}，耗卡金额 ${formatCurrency(
+      storedConsumeAmount,
+    )}，${
+      rechargeCash > 0 && storedConsumeAmount > rechargeCash * 1.5
+        ? "耗卡跑得比现金回流更快。"
+        : "现金回流暂时还算稳。"
+    }`,
+  );
+  lines.push(
+    `4. ${resolveAnalysisSignalLabel(params.analysis, "member_asset_health", "最后看会员资产寿命")}：储值寿命 ${
+      storedBalanceLifeMonths === null ? "N/A" : `${round(storedBalanceLifeMonths, 1).toFixed(1)} 个月`
+    }，续费压力 ${
+      renewalPressure === null ? "N/A" : round(renewalPressure, 2).toFixed(2)
+    }，${
+      (storedBalanceLifeMonths ?? Infinity) < 3 || (renewalPressure ?? 0) >= 1.25
+        ? "会员资产寿命已经偏紧。"
+        : "会员资产寿命暂时可控。"
+    }`,
+  );
+
+  lines.push(`三、${params.analysis.section_labels.actions}`);
+  actions.forEach((action, index) => {
+    lines.push(`${index + 1}. ${action}`);
+  });
+
+  lines.push(`四、${params.analysis.section_labels.ranking}`);
+  lines.push(
+    `- 当前第一优先级是${
+      focus.primaryDimension === "profitability"
+        ? "利润空间"
+        : focus.primaryDimension === "break_even_safety"
+          ? "保本安全垫"
+          : focus.primaryDimension === "cashflow_quality"
+            ? "储值现金流"
+            : "会员资产寿命"
+    }，不要被表面流水掩盖利润问题。`,
+  );
   return lines.join("\n");
 }
 
@@ -1309,6 +2722,71 @@ export function renderHqPortfolioText(params: {
   const priorities = resolveHqNextWeekPriorities(entries);
   priorities.forEach((priority, index) => {
     lines.push(`${index + 1}. ${priority}`);
+  });
+
+  return lines.join("\n");
+}
+
+export function renderHqPortfolioFocusText(params: {
+  label: string;
+  entries: StorePerformanceEntry[];
+  intent: HetangQueryIntent;
+}): string {
+  if (params.entries.length === 0) {
+    return `${params.label} 暂无可用数据。`;
+  }
+  const lines: string[] = [];
+  const entries = [...params.entries].sort((left, right) => right.riskEntry.score - left.riskEntry.score);
+  const frameLabel = entries[0].summary.frame.label;
+  const [topEntry] = entries;
+  const secondEntry = entries[1] ?? null;
+
+  lines.push(`${params.label} ${frameLabel} 当前重点看什么`);
+  lines.push("一、增长结论");
+  lines.push(
+    `- 当前先盯 ${topEntry.summary.storeName}（风险分 ${topEntry.riskEntry.score.toFixed(1)}${topEntry.riskEntry.reasons.length > 0 ? `，${topEntry.riskEntry.reasons.join("、")}` : ""}）。`,
+  );
+  if (secondEntry) {
+    lines.push(`- 第二关注 ${secondEntry.summary.storeName}（风险分 ${secondEntry.riskEntry.score.toFixed(1)}）。`);
+  }
+
+  const lowRepurchaseStores = entries
+    .filter((entry) => (entry.summary.metrics.memberRepurchaseRate7d ?? 1) < 0.45)
+    .map((entry) => entry.summary.storeName);
+  const highSleepingStores = entries
+    .filter((entry) => (entry.summary.metrics.sleepingMemberRate ?? 0) >= 0.15)
+    .map((entry) => entry.summary.storeName);
+
+  lines.push("二、总部先盯的增长信号");
+  lines.push(
+    `1. 先看留存：${
+      lowRepurchaseStores.length > 0
+        ? `${lowRepurchaseStores.join("、")} 会员7日复购偏弱`
+        : "当前未识别出明显留存异常"
+    }。`,
+  );
+  lines.push(
+    `2. 再看会员资产：${
+      highSleepingStores.length > 0
+        ? `${highSleepingStores.join("、")} 沉默会员占比偏高`
+        : "当前会员资产信号整体平稳"
+    }。`,
+  );
+  lines.push("3. 最后看拉新质量：当前应优先解决高风险门店的承接与留存，再下钻新客转化链路。");
+
+  lines.push("三、总部优先动作");
+  resolveHqNextWeekPriorities(entries)
+    .slice(0, 3)
+    .forEach((priority, index) => {
+      lines.push(`${index + 1}. ${priority}`);
+    });
+
+  lines.push("四、门店风险排序");
+  entries.forEach((entry, index) => {
+    lines.push(`${index + 1}. ${entry.summary.storeName} | 风险分 ${entry.riskEntry.score.toFixed(1)}`);
+    if (entry.riskEntry.reasons.length > 0) {
+      lines.push(`   原因：${entry.riskEntry.reasons.join("、")}`);
+    }
   });
 
   return lines.join("\n");
@@ -2063,6 +3541,10 @@ export function renderTechRankingText(params: {
       lines.push(`${index + 1}. ${row.personName} ${round(row.clockEffect ?? 0, 2).toFixed(2)} 元/钟`);
       return;
     }
+    if (params.metric.key === "marketRevenue") {
+      lines.push(`${index + 1}. ${row.personName} ${formatCurrency(row.marketRevenue)}`);
+      return;
+    }
     lines.push(`${index + 1}. ${row.personName} ${formatCurrency(row.turnover)}`);
   });
   return lines.join("\n");
@@ -2088,6 +3570,8 @@ export function resolveTechMetricScore(
       return row.commissionRate ?? -1;
     case "clockEffect":
       return row.clockEffect ?? -1;
+    case "marketRevenue":
+      return row.marketRevenue;
     case "serviceRevenue":
     default:
       return row.turnover;

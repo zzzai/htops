@@ -68,16 +68,20 @@ const secret =
   normalizeCredential(process.env.WECOM_SECRET) ??
   normalizeCredential(process.env.HETANG_WECOM_BOT_SECRET) ??
   readTrimmedFile(process.env.HERMES_WECOM_SECRET_FILE || DEFAULT_HERMES_WECOM_SECRET_FILE);
-const groupChatId = process.argv[2];
-const message = process.argv[3];
+const rawModeOrChatId = process.argv[2];
+const explicitMode = rawModeOrChatId === "image" ? "image" : "markdown";
+const groupChatId = explicitMode === "image" ? process.argv[3] : process.argv[2];
+const payload = explicitMode === "image" ? process.argv[4] : process.argv[3];
 
 if (!botId || !secret) {
   console.error("Missing HETANG_WECOM_BOT_ID or HETANG_WECOM_BOT_SECRET");
   process.exit(1);
 }
 
-if (!groupChatId || !message) {
-  console.error("Usage: wecom-send-group.mjs <chat_id> <message>");
+if (!groupChatId || !payload) {
+  console.error(
+    "Usage: wecom-send-group.mjs <chat_id> <message>\n   or: wecom-send-group.mjs image <chat_id> <image_path>",
+  );
   process.exit(1);
 }
 
@@ -89,12 +93,21 @@ async function main() {
 
   wsClient.on("authenticated", async () => {
     try {
-      await wsClient.sendMessage(groupChatId, {
-        msgtype: "markdown",
-        markdown: {
-          content: message,
-        },
-      });
+      if (explicitMode === "image") {
+        const fileBuffer = fs.readFileSync(payload);
+        const uploadResult = await wsClient.uploadMedia(fileBuffer, {
+          type: "image",
+          filename: path.basename(payload),
+        });
+        await wsClient.sendMediaMessage(groupChatId, "image", uploadResult.media_id);
+      } else {
+        await wsClient.sendMessage(groupChatId, {
+          msgtype: "markdown",
+          markdown: {
+            content: payload,
+          },
+        });
+      }
       wsClient.disconnect();
       process.exit(0);
     } catch (error) {

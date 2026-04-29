@@ -1,5 +1,11 @@
 import type { HetangExternalEventCard } from "../types.js";
+import type { HetangResolvedAiLaneConfig } from "../ai-lanes/types.js";
 import type { AssembledExternalBriefItem } from "./assemble.js";
+
+export type ExternalBriefLlmResolvedConfig = Pick<
+  HetangResolvedAiLaneConfig,
+  "laneId" | "model" | "reasoningMode" | "timeoutMs" | "responseMode"
+>;
 
 export type ExternalBriefLlmClient = {
   expandExternalBriefItem: (input: {
@@ -12,6 +18,7 @@ export type ExternalBriefLlmClient = {
     summary: string;
     whyItMatters: string;
     sourceLabels: string[];
+    llmConfig?: ExternalBriefLlmResolvedConfig;
   }) => Promise<{
     summary?: string;
     whyItMatters?: string;
@@ -101,6 +108,7 @@ export async function enrichExternalBriefItemNarrative(params: {
   item: AssembledExternalBriefItem;
   card: HetangExternalEventCard;
   llm?: ExternalBriefLlmClient;
+  llmConfig?: ExternalBriefLlmResolvedConfig;
 }): Promise<EnrichedExternalBriefNarrative> {
   const fallback = buildFallbackExternalNarrative(params);
   if (!params.llm) {
@@ -121,6 +129,7 @@ export async function enrichExternalBriefItemNarrative(params: {
     summary: params.item.summary,
     whyItMatters: params.item.whyItMatters,
     sourceLabels,
+    llmConfig: params.llmConfig,
   });
 
   const summary = trimToUndefined(llmResult?.summary) ?? fallback.summary;

@@ -40,10 +40,33 @@ export type HetangBridgeCommandRequest = HetangBridgeMessageRequest & {
 
 export type HetangBridgeInboundRequest = HetangBridgeMessageRequest;
 
+export type HetangBridgeAuditSurface = {
+  entry: "command" | "inbound";
+  sink: "command_audit_logs" | "inbound_message_audit_logs";
+  persistence: "required" | "best_effort";
+};
+
+export type HetangBridgeObservabilityStream =
+  | "route_compare_log"
+  | "command_audit_log"
+  | "inbound_audit_log";
+
+export type HetangBridgeRequestDedupePolicy = {
+  scope: "bridge_http";
+  key_fields: Array<"request_id" | "platform_message_id">;
+  ttl_ms: number;
+};
+
 export type HetangBridgeCapabilities = {
   version: "v1";
   entries: Array<"command" | "inbound">;
+  audit_surfaces?: HetangBridgeAuditSurface[];
+  observability_streams?: HetangBridgeObservabilityStream[];
+  request_dedupe?: HetangBridgeRequestDedupePolicy;
+  control_plane_contract_version?: string;
+  tool_contract_version?: string;
   query_graph_version?: string;
+  tool_count?: number;
   serving_capability_count?: number;
   runtime_render_capability_count?: number;
   async_analysis_capability_count?: number;

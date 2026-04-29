@@ -6,6 +6,34 @@ export const CAPABILITY_GRAPH_VERSION = "capability-graph-v1" as const;
 
 export type CapabilityExecutionMode = "serving_sql" | "runtime_render" | "async_analysis";
 export type CapabilityOutputKind = "answer" | "answer+action" | "action";
+export type CapabilityOwnerSurface =
+  | "store_query"
+  | "hq_query"
+  | "customer_query"
+  | "tech_query";
+export type CapabilitySemanticSlot = "store" | "time" | "metric" | "dimension" | "compare";
+export type CapabilityClarificationResolution = "clarify" | "allow-default" | "not-applicable";
+export type CapabilityFailureHint =
+  | "clarify_missing_store"
+  | "clarify_missing_time"
+  | "clarify_missing_metric"
+  | "capability_gap"
+  | "generic_unmatched";
+
+export type CapabilityClarificationPolicy = {
+  missing_store: CapabilityClarificationResolution;
+  missing_time: CapabilityClarificationResolution;
+  missing_metric: CapabilityClarificationResolution;
+};
+
+export type CapabilitySemanticContract = {
+  owner_surface: CapabilityOwnerSurface;
+  required_slots: CapabilitySemanticSlot[];
+  optional_slots: CapabilitySemanticSlot[];
+  clarification_policy: CapabilityClarificationPolicy;
+  failure_hints: CapabilityFailureHint[];
+  sample_tags: string[];
+};
 
 export type ServingSqlFamily =
   | "summary_by_pk"
@@ -32,7 +60,17 @@ type CapabilityNodeBase = {
   downstream_capability_ids: string[];
   fallback_capability_ids: string[];
   description: string;
-};
+} & CapabilitySemanticContract;
+
+type CapabilityNodeSeedBase = Omit<
+  CapabilityNodeBase,
+  | "owner_surface"
+  | "required_slots"
+  | "optional_slots"
+  | "clarification_policy"
+  | "failure_hints"
+  | "sample_tags"
+>;
 
 export type ServingCapabilityNode = CapabilityNodeBase & {
   execution_mode: "serving_sql";
@@ -53,6 +91,23 @@ export type AnyCapabilityGraphNode =
   | ServingCapabilityNode
   | RuntimeRenderCapabilityNode
   | AsyncAnalysisCapabilityNode;
+type ServingCapabilityNodeSeed = CapabilityNodeSeedBase & {
+  execution_mode: "serving_sql";
+  serving_surface: string;
+  sql_family: ServingSqlFamily;
+  cache_ttl_seconds: number;
+};
+type RuntimeRenderCapabilityNodeSeed = CapabilityNodeSeedBase & {
+  execution_mode: "runtime_render";
+};
+type AsyncAnalysisCapabilityNodeSeed = CapabilityNodeSeedBase & {
+  execution_mode: "async_analysis";
+  analysis_job_types: HetangAnalysisJobType[];
+};
+type AnyCapabilityGraphNodeSeed =
+  | ServingCapabilityNodeSeed
+  | RuntimeRenderCapabilityNodeSeed
+  | AsyncAnalysisCapabilityNodeSeed;
 
 export type CapabilityGraphSelection = {
   node: AnyCapabilityGraphNode | null;
@@ -62,7 +117,7 @@ export type CapabilityGraphSelection = {
 
 const ALL_STANDARD_METRICS = listSupportedMetricDefinitions().map((entry) => entry.key);
 
-const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
+const CAPABILITY_GRAPH_NODE_SEEDS: AnyCapabilityGraphNodeSeed[] = [
   {
     capability_id: "store_day_summary_v1",
     entity: "store",
@@ -74,6 +129,7 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
     supported_metrics: [
       "serviceRevenue",
       "serviceOrderCount",
+      "orderAverageAmount",
       "customerCount",
       "totalClockCount",
       "averageTicket",
@@ -154,6 +210,21 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
     description: "单店钟数构成在非 serving 环境下的运行时渲染",
   },
   {
+    capability_id: "store_market_breakdown_v1",
+    entity: "store",
+    actions: ["breakdown"],
+    execution_mode: "runtime_render",
+    output_kind: "answer",
+    supported_metrics: ["marketRevenue"],
+    supported_time_modes: ["day", "window"],
+    supported_dimensions: ["item_type", "item_name", "tech"],
+    supported_response_shapes: ["table"],
+    max_org_count: 1,
+    downstream_capability_ids: ["store_metric_summary_v1"],
+    fallback_capability_ids: ["store_metric_summary_v1"],
+    description: "单店副项/饮品/精油等销售明细在非 serving 环境下的运行时渲染",
+  },
+  {
     capability_id: "store_compare_v1",
     entity: "store",
     actions: ["compare"],
@@ -179,6 +250,8 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
     supported_metrics: [
       "serviceRevenue",
       "serviceOrderCount",
+      "orderAverageAmount",
+      "customerCount",
       "totalClockCount",
       "averageTicket",
       "clockEffect",
@@ -200,7 +273,7 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
     actions: ["trend"],
     execution_mode: "runtime_render",
     output_kind: "answer",
-    supported_metrics: ["serviceRevenue", "averageTicket", "clockEffect", "riskScore"],
+    supported_metrics: [...ALL_STANDARD_METRICS, "riskScore"],
     supported_time_modes: ["day", "window"],
     supported_dimensions: [],
     supported_response_shapes: ["timeseries"],
@@ -215,7 +288,7 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
     actions: ["anomaly"],
     execution_mode: "runtime_render",
     output_kind: "answer",
-    supported_metrics: ["serviceRevenue", "averageTicket", "clockEffect", "riskScore"],
+    supported_metrics: [...ALL_STANDARD_METRICS, "riskScore"],
     supported_time_modes: ["day", "window"],
     supported_dimensions: [],
     supported_response_shapes: ["narrative"],
@@ -302,6 +375,61 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
     description: "总部多店经营全景与风险总览",
   },
   {
+    capability_id: "hq_portfolio_focus_v1",
+    entity: "hq",
+    actions: ["advice", "report"],
+    execution_mode: "runtime_render",
+    output_kind: "answer+action",
+    supported_metrics: ["riskScore"],
+    supported_time_modes: ["day", "window"],
+    supported_dimensions: ["store"],
+    supported_response_shapes: ["narrative"],
+    max_org_count: 20,
+    downstream_capability_ids: ["hq_portfolio_overview_v1", "store_risk_v1", "store_advice_v1"],
+    fallback_capability_ids: ["hq_portfolio_overview_v1", "hq_window_ranking_v1"],
+    description: "总部多店重点盯防与优先动作",
+  },
+  {
+    capability_id: "hq_portfolio_risk_v1",
+    entity: "hq",
+    actions: ["risk"],
+    execution_mode: "runtime_render",
+    output_kind: "answer+action",
+    supported_metrics: ["riskScore"],
+    supported_time_modes: ["day", "window"],
+    supported_dimensions: ["store"],
+    supported_response_shapes: ["narrative"],
+    max_org_count: 20,
+    downstream_capability_ids: ["hq_window_ranking_v1", "store_risk_v1"],
+    fallback_capability_ids: ["hq_window_ranking_v1", "hq_portfolio_overview_v1"],
+    description: "总部多店风险雷达与优先修复动作",
+  },
+  {
+    capability_id: "hq_monthly_trend_report_v1",
+    entity: "hq",
+    actions: ["report", "trend"],
+    execution_mode: "runtime_render",
+    output_kind: "answer+action",
+    supported_metrics: [
+      "serviceRevenue",
+      "customerCount",
+      "orderAverageAmount",
+      "pointClockRate",
+      "addClockRate",
+      "clockEffect",
+      "newMembers",
+      "rechargeCash",
+      "riskScore",
+    ],
+    supported_time_modes: ["window", "timeseries"],
+    supported_dimensions: ["store"],
+    supported_response_shapes: ["narrative"],
+    max_org_count: 20,
+    downstream_capability_ids: ["hq_window_ranking_v1", "store_window_summary_v1"],
+    fallback_capability_ids: ["hq_portfolio_overview_v1", "hq_window_ranking_v1"],
+    description: "总部视角月度经营趋势总结",
+  },
+  {
     capability_id: "store_ranking_v1",
     entity: "store",
     actions: ["ranking"],
@@ -327,6 +455,8 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
     supported_metrics: [
       "serviceRevenue",
       "serviceOrderCount",
+      "orderAverageAmount",
+      "customerCount",
       "totalClockCount",
       "averageTicket",
       "clockEffect",
@@ -354,6 +484,7 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
     supported_metrics: [
       "serviceRevenue",
       "serviceOrderCount",
+      "orderAverageAmount",
       "customerCount",
       "totalClockCount",
       "averageTicket",
@@ -382,6 +513,8 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
       "riskScore",
       "serviceRevenue",
       "serviceOrderCount",
+      "orderAverageAmount",
+      "customerCount",
       "totalClockCount",
       "averageTicket",
       "clockEffect",
@@ -409,6 +542,8 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
       "riskScore",
       "serviceRevenue",
       "serviceOrderCount",
+      "orderAverageAmount",
+      "customerCount",
       "totalClockCount",
       "averageTicket",
       "pointClockRate",
@@ -547,6 +682,7 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
       "addClockRate",
       "totalClockCount",
       "techCommissionRate",
+      "marketRevenue",
     ],
     supported_time_modes: ["day", "window"],
     supported_dimensions: [],
@@ -570,6 +706,21 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
     downstream_capability_ids: [],
     fallback_capability_ids: [],
     description: "技师画像查询",
+  },
+  {
+    capability_id: "tech_current_runtime_v1",
+    entity: "tech",
+    actions: ["summary", "list"],
+    execution_mode: "runtime_render",
+    output_kind: "answer",
+    supported_metrics: [],
+    supported_time_modes: ["as_of"],
+    supported_dimensions: ["tech_state"],
+    supported_response_shapes: ["scalar", "ranking_list"],
+    max_org_count: 1,
+    downstream_capability_ids: ["tech_profile_lookup_v1"],
+    fallback_capability_ids: [],
+    description: "技师当前楼面状态查询",
   },
   {
     capability_id: "arrival_profile_timeseries_v1",
@@ -617,6 +768,268 @@ const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = [
     description: "充值卡型与客服归因分析",
   },
 ];
+
+type CapabilitySemanticContractOverride = Partial<
+  Omit<CapabilitySemanticContract, "clarification_policy">
+> & {
+  clarification_policy?: Partial<CapabilityClarificationPolicy>;
+};
+
+const CAPABILITY_GRAPH_CONTRACT_OVERRIDES: Partial<
+  Record<string, CapabilitySemanticContractOverride>
+> = {
+  store_day_summary_v1: {
+    sample_tags: ["metric_summary", "store_day"],
+  },
+  store_day_clock_breakdown_v1: {
+    owner_surface: "store_query",
+    required_slots: ["store", "time", "metric"],
+    optional_slots: ["dimension"],
+    clarification_policy: {
+      missing_store: "clarify",
+      missing_time: "clarify",
+      missing_metric: "clarify",
+    },
+    failure_hints: ["clarify_missing_metric", "capability_gap"],
+    sample_tags: ["clock_breakdown", "store_day"],
+  },
+  store_window_summary_v1: {
+    sample_tags: ["metric_summary", "store_window"],
+  },
+  store_risk_v1: {
+    owner_surface: "store_query",
+    required_slots: ["store", "time"],
+    optional_slots: ["metric", "compare"],
+    clarification_policy: {
+      missing_store: "clarify",
+      missing_time: "clarify",
+      missing_metric: "allow-default",
+    },
+    failure_hints: ["clarify_missing_time", "generic_unmatched"],
+    sample_tags: ["risk_scan", "boss_guidance"],
+  },
+  store_advice_v1: {
+    required_slots: ["store", "time"],
+    optional_slots: ["metric", "compare"],
+    clarification_policy: {
+      missing_store: "clarify",
+      missing_time: "clarify",
+      missing_metric: "allow-default",
+    },
+    sample_tags: ["boss_guidance", "action_advice"],
+  },
+  hq_portfolio_overview_v1: {
+    owner_surface: "hq_query",
+    required_slots: ["time"],
+    optional_slots: ["metric", "compare"],
+    clarification_policy: {
+      missing_store: "not-applicable",
+      missing_time: "clarify",
+      missing_metric: "allow-default",
+    },
+    sample_tags: ["boss_guidance", "hq_overview"],
+  },
+  hq_portfolio_focus_v1: {
+    owner_surface: "hq_query",
+    required_slots: ["time"],
+    optional_slots: ["metric", "compare"],
+    clarification_policy: {
+      missing_store: "not-applicable",
+      missing_time: "clarify",
+      missing_metric: "allow-default",
+    },
+    sample_tags: ["boss_guidance", "hq_overview", "action_advice"],
+  },
+  hq_portfolio_risk_v1: {
+    owner_surface: "hq_query",
+    required_slots: ["time"],
+    optional_slots: ["metric", "compare"],
+    clarification_policy: {
+      missing_store: "not-applicable",
+      missing_time: "clarify",
+      missing_metric: "allow-default",
+    },
+    sample_tags: ["boss_guidance", "hq_overview", "risk_scan"],
+  },
+  hq_monthly_trend_report_v1: {
+    owner_surface: "hq_query",
+    required_slots: ["time"],
+    optional_slots: ["metric", "dimension", "compare"],
+    clarification_policy: {
+      missing_store: "not-applicable",
+      missing_time: "clarify",
+      missing_metric: "allow-default",
+    },
+    sample_tags: ["monthly_trend", "hq_overview", "boss_guidance"],
+  },
+  customer_profile_lookup_v1: {
+    owner_surface: "customer_query",
+    required_slots: ["store"],
+    optional_slots: [],
+    clarification_policy: {
+      missing_store: "clarify",
+      missing_time: "not-applicable",
+      missing_metric: "not-applicable",
+    },
+    sample_tags: ["customer_profile", "lookup"],
+  },
+};
+
+function pushUnique<T extends string>(target: T[], value: T): void {
+  if (!target.includes(value)) {
+    target.push(value);
+  }
+}
+
+function resolveCapabilityOwnerSurface(
+  entity: QueryPlan["entity"],
+): CapabilitySemanticContract["owner_surface"] {
+  switch (entity) {
+    case "hq":
+      return "hq_query";
+    case "customer_profile":
+      return "customer_query";
+    case "tech":
+      return "tech_query";
+    default:
+      return "store_query";
+  }
+}
+
+function resolveDefaultRequiredSlots(node: AnyCapabilityGraphNodeSeed): CapabilitySemanticSlot[] {
+  const requiredSlots: CapabilitySemanticSlot[] = [];
+  if (node.entity === "store" || node.entity === "customer_profile" || node.entity === "tech") {
+    pushUnique(requiredSlots, "store");
+  }
+  if (node.supported_time_modes.some((mode) => mode !== "as_of")) {
+    pushUnique(requiredSlots, "time");
+  }
+  if (node.supported_metrics.length > 0) {
+    pushUnique(requiredSlots, "metric");
+  }
+  return requiredSlots;
+}
+
+function resolveDefaultOptionalSlots(node: AnyCapabilityGraphNodeSeed): CapabilitySemanticSlot[] {
+  const optionalSlots: CapabilitySemanticSlot[] = [];
+  if (node.supported_dimensions.length > 0) {
+    pushUnique(optionalSlots, "dimension");
+  }
+  if (
+    node.actions.some((action) =>
+      ["compare", "trend", "anomaly", "risk", "advice", "ranking"].includes(action),
+    )
+  ) {
+    pushUnique(optionalSlots, "compare");
+  }
+  return optionalSlots;
+}
+
+function resolveDefaultClarificationPolicy(params: {
+  requiredSlots: CapabilitySemanticSlot[];
+  node: AnyCapabilityGraphNodeSeed;
+}): CapabilityClarificationPolicy {
+  const { node, requiredSlots } = params;
+  return {
+    missing_store: requiredSlots.includes("store") ? "clarify" : "not-applicable",
+    missing_time: requiredSlots.includes("time") ? "clarify" : "not-applicable",
+    missing_metric: requiredSlots.includes("metric")
+      ? "clarify"
+      : node.supported_metrics.length > 0
+        ? "allow-default"
+        : "not-applicable",
+  };
+}
+
+function resolveDefaultFailureHints(params: {
+  clarificationPolicy: CapabilityClarificationPolicy;
+  node: AnyCapabilityGraphNodeSeed;
+}): CapabilityFailureHint[] {
+  const { clarificationPolicy, node } = params;
+  const failureHints: CapabilityFailureHint[] = [];
+  if (clarificationPolicy.missing_store === "clarify") {
+    pushUnique(failureHints, "clarify_missing_store");
+  }
+  if (clarificationPolicy.missing_time === "clarify") {
+    pushUnique(failureHints, "clarify_missing_time");
+  }
+  if (clarificationPolicy.missing_metric === "clarify") {
+    pushUnique(failureHints, "clarify_missing_metric");
+  }
+  pushUnique(
+    failureHints,
+    node.output_kind === "answer+action" ? "generic_unmatched" : "capability_gap",
+  );
+  return failureHints;
+}
+
+function resolveDefaultSampleTags(node: AnyCapabilityGraphNodeSeed): string[] {
+  const sampleTags: string[] = [];
+  if (node.entity === "store" && node.supported_time_modes.includes("day")) {
+    pushUnique(sampleTags, "store_day");
+  }
+  if (node.entity === "store" && node.supported_time_modes.includes("window")) {
+    pushUnique(sampleTags, "store_window");
+  }
+  if (node.actions.includes("summary")) {
+    pushUnique(sampleTags, "metric_summary");
+  }
+  if (node.actions.includes("breakdown")) {
+    pushUnique(sampleTags, "metric_breakdown");
+  }
+  if (node.actions.includes("risk")) {
+    pushUnique(sampleTags, "risk_scan");
+  }
+  if (node.actions.includes("ranking") && node.max_org_count > 1) {
+    pushUnique(sampleTags, "portfolio_view");
+  }
+  return sampleTags;
+}
+
+function buildCapabilitySemanticContract(
+  node: AnyCapabilityGraphNodeSeed,
+): CapabilitySemanticContract {
+  const requiredSlots = resolveDefaultRequiredSlots(node);
+  const optionalSlots = resolveDefaultOptionalSlots(node);
+  const clarificationPolicy = resolveDefaultClarificationPolicy({
+    requiredSlots,
+    node,
+  });
+  const override = CAPABILITY_GRAPH_CONTRACT_OVERRIDES[node.capability_id];
+
+  return {
+    owner_surface: override?.owner_surface ?? resolveCapabilityOwnerSurface(node.entity),
+    required_slots: override?.required_slots ?? requiredSlots,
+    optional_slots: override?.optional_slots ?? optionalSlots,
+    clarification_policy: {
+      ...clarificationPolicy,
+      ...override?.clarification_policy,
+    },
+    failure_hints:
+      override?.failure_hints ??
+      resolveDefaultFailureHints({
+        clarificationPolicy: {
+          ...clarificationPolicy,
+          ...override?.clarification_policy,
+        },
+        node,
+      }),
+    sample_tags: override?.sample_tags ?? resolveDefaultSampleTags(node),
+  };
+}
+
+function attachCapabilitySemanticContract(
+  node: AnyCapabilityGraphNodeSeed,
+): AnyCapabilityGraphNode {
+  return {
+    ...node,
+    ...buildCapabilitySemanticContract(node),
+  };
+}
+
+const CAPABILITY_GRAPH_NODES: AnyCapabilityGraphNode[] = CAPABILITY_GRAPH_NODE_SEEDS.map((node) =>
+  attachCapabilitySemanticContract(node),
+);
 
 function scoreNodeSpecificity(node: AnyCapabilityGraphNode): number {
   return (

@@ -119,22 +119,22 @@ function resolveClockKind(row: TechUpClockRecord, raw: Record<string, unknown> |
 }
 
 function collectWaitRows(rows: TechUpClockRecord[]): WaitRecord[] {
-  return rows
-    .map((row) => {
-      const parsed = tryParseObject(row.rawJson);
-      const waitTime = resolveWaitMinutes(row, parsed);
-      if (!Number.isFinite(waitTime) || waitTime < 0) {
-        return null;
-      }
-      return {
-        techName: row.personName,
-        waitTime,
-        roomCode: typeof parsed?.RoomCode === "string" ? parsed.RoomCode : undefined,
-        clockKind: resolveClockKind(row, parsed),
-        timeBucket: classifyTimeBucket(resolveHour(row.settleTime ?? row.ctime)),
-      };
-    })
-    .filter((row): row is WaitRecord => Boolean(row));
+  const waitRows: WaitRecord[] = [];
+  for (const row of rows) {
+    const parsed = tryParseObject(row.rawJson);
+    const waitTime = resolveWaitMinutes(row, parsed);
+    if (waitTime === null || !Number.isFinite(waitTime) || waitTime < 0) {
+      continue;
+    }
+    waitRows.push({
+      techName: row.personName,
+      waitTime,
+      roomCode: typeof parsed?.RoomCode === "string" ? parsed.RoomCode : undefined,
+      clockKind: resolveClockKind(row, parsed),
+      timeBucket: classifyTimeBucket(resolveHour(row.settleTime ?? row.ctime)),
+    });
+  }
+  return waitRows;
 }
 
 function summarizeAverage(records: WaitRecord[]): number {

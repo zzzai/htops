@@ -1,0 +1,797 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>荷塘悦色经营智能系统架构</title>
+    <style>
+      :root {
+        --bg: #f3f5f8;
+        --surface: #ffffff;
+        --surface-soft: #f8fafc;
+        --ink: #142133;
+        --muted: #5f6e82;
+        --line: #d7dde6;
+        --line-strong: #b8c2d0;
+        --shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+        --radius-xl: 22px;
+        --radius-lg: 16px;
+        --radius-md: 10px;
+        --blue: #2259c9;
+        --blue-soft: #edf3ff;
+        --green: #1d6a3b;
+        --green-soft: #edf8f1;
+        --purple: #6d40c9;
+        --purple-soft: #f3eefc;
+        --orange: #b85a1b;
+        --orange-soft: #fff3ea;
+        --amber: #9a680b;
+        --amber-soft: #fff8eb;
+        --red: #b43b2d;
+        --red-soft: #fff1f0;
+        --max: 1480px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        font-family: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          "Noto Sans SC", sans-serif;
+        color: var(--ink);
+        background: var(--bg);
+      }
+
+      body {
+        padding: 18px 16px 32px;
+      }
+
+      .page {
+        max-width: var(--max);
+        margin: 0 auto;
+      }
+
+      .hero {
+        margin-bottom: 14px;
+        padding: 22px 24px 20px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-xl);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: #eff4fb;
+        color: #31455f;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 14px 0 8px;
+        font-size: clamp(30px, 3.6vw, 46px);
+        line-height: 1.08;
+      }
+
+      .subtitle {
+        margin: 0;
+        max-width: 1100px;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.7;
+      }
+
+      .hero-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      .hero-pill {
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: #f4f6f9;
+        color: #405369;
+        border: 1px solid var(--line);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .board {
+        border: 1px solid var(--line);
+        border-radius: var(--radius-xl);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .board-header {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 18px;
+        align-items: start;
+        padding: 22px 24px 16px;
+        border-bottom: 1px solid var(--line);
+        background: #fbfcfe;
+      }
+
+      .board-header h2 {
+        margin: 0;
+        font-size: 24px;
+        line-height: 1.15;
+      }
+
+      .board-header p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.65;
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .legend-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border-radius: 999px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .legend-line {
+        width: 22px;
+        height: 2px;
+        border-radius: 999px;
+        background: currentColor;
+      }
+
+      .legend-chip.query {
+        color: var(--blue);
+      }
+
+      .legend-chip.analysis {
+        color: var(--orange);
+      }
+
+      .legend-chip.feedback {
+        color: var(--red);
+      }
+
+      .stage {
+        display: grid;
+        grid-template-columns: 164px minmax(0, 1fr);
+        border-top: 1px solid var(--line);
+      }
+
+      .stage:first-of-type {
+        border-top: none;
+      }
+
+      .stage-label {
+        padding: 20px 16px;
+        border-right: 1px solid var(--line);
+      }
+
+      .stage-index {
+        display: inline-flex;
+        width: 30px;
+        height: 30px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 800;
+        color: #fff;
+      }
+
+      .stage-label h3 {
+        margin: 12px 0 7px;
+        font-size: 19px;
+        line-height: 1.18;
+      }
+
+      .stage-label p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.65;
+      }
+
+      .stage-content {
+        padding: 16px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .band-blue .stage-label {
+        background: #eef4ff;
+      }
+
+      .band-blue .stage-index {
+        background: var(--blue);
+      }
+
+      .band-green .stage-label {
+        background: #eef8f1;
+      }
+
+      .band-green .stage-index {
+        background: var(--green);
+      }
+
+      .band-purple .stage-label {
+        background: #f3eefc;
+      }
+
+      .band-purple .stage-index {
+        background: var(--purple);
+      }
+
+      .band-orange .stage-label {
+        background: #fff2e9;
+      }
+
+      .band-orange .stage-index {
+        background: var(--orange);
+      }
+
+      .band-amber .stage-label {
+        background: #fff6e7;
+      }
+
+      .band-amber .stage-index {
+        background: var(--amber);
+      }
+
+      .band-red .stage-label {
+        background: #fff1f0;
+      }
+
+      .band-red .stage-index {
+        background: var(--red);
+      }
+
+      .note-row {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 14px;
+        align-items: stretch;
+      }
+
+      .note {
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: #fbfcfd;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.65;
+      }
+
+      .node-grid {
+        display: grid;
+        gap: 10px;
+      }
+
+      .cols-6 {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+      }
+
+      .cols-5 {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+      }
+
+      .cols-4 {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .cols-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .node {
+        position: relative;
+        min-height: 108px;
+        padding: 13px 13px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .node.has-arrow::after {
+        content: "›";
+        position: absolute;
+        top: 50%;
+        right: -12px;
+        transform: translateY(-50%);
+        font-size: 26px;
+        line-height: 1;
+        color: #adc0d8;
+        font-weight: 300;
+      }
+
+      .node.has-arrow:last-child::after {
+        display: none;
+      }
+
+      .node-tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 5px 9px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .tag-blue {
+        color: var(--blue);
+        background: var(--blue-soft);
+      }
+
+      .tag-green {
+        color: var(--green);
+        background: var(--green-soft);
+      }
+
+      .tag-purple {
+        color: var(--purple);
+        background: var(--purple-soft);
+      }
+
+      .tag-orange {
+        color: var(--orange);
+        background: var(--orange-soft);
+      }
+
+      .tag-amber {
+        color: var(--amber);
+        background: var(--amber-soft);
+      }
+
+      .tag-red {
+        color: var(--red);
+        background: var(--red-soft);
+      }
+
+      .node h4 {
+        margin: 10px 0 6px;
+        font-size: 16px;
+        line-height: 1.26;
+      }
+
+      .node p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .main-flow {
+        display: grid;
+        gap: 12px;
+      }
+
+      .flow-strip {
+        display: grid;
+        gap: 10px;
+        align-items: stretch;
+      }
+
+      .flow-strip.query {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+      }
+
+      .flow-strip.analysis {
+        grid-template-columns: 1.15fr 1fr 1fr 1.15fr;
+      }
+
+      .flow-strip .node {
+        min-height: 102px;
+      }
+
+      .chain-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .chain-label .line {
+        width: 22px;
+        height: 2px;
+        border-radius: 999px;
+        background: currentColor;
+      }
+
+      .chain-label.query {
+        color: var(--blue);
+      }
+
+      .chain-label.analysis {
+        color: var(--orange);
+      }
+
+      .boundary-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .boundary-card {
+        padding: 14px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: #fbfcfd;
+      }
+
+      .boundary-card h4 {
+        margin: 0 0 10px;
+        font-size: 16px;
+      }
+
+      .boundary-card ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.75;
+      }
+
+      .boundary-card li + li {
+        margin-top: 4px;
+      }
+
+      .feedback-flow {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .feedback-node {
+        position: relative;
+        padding: 14px;
+        min-height: 98px;
+        border-radius: 12px;
+        border: 1px solid rgba(180, 35, 24, 0.18);
+        background: #fff7f7;
+      }
+
+      .feedback-node::after {
+        content: "→";
+        position: absolute;
+        top: 50%;
+        right: -15px;
+        transform: translateY(-50%);
+        color: rgba(180, 35, 24, 0.4);
+        font-size: 22px;
+        font-weight: 600;
+      }
+
+      .feedback-node:last-child::after {
+        display: none;
+      }
+
+      .feedback-node h4 {
+        margin: 0 0 7px;
+        color: var(--red);
+        font-size: 15px;
+      }
+
+      .feedback-node p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .footer-strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .footer-card {
+        padding: 14px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .footer-card h4 {
+        margin: 0 0 8px;
+        font-size: 15px;
+      }
+
+      .footer-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      @media (max-width: 1280px) {
+        .cols-6 {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .cols-5,
+        .runtime-grid,
+        .feedback-flow,
+        .footer-strip {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .flow-strip.query,
+        .flow-strip.analysis,
+        .cols-4,
+        .cols-3,
+        .boundary-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .node.has-arrow::after,
+        .feedback-node::after {
+          display: none;
+        }
+      }
+
+      @media (max-width: 900px) {
+        .stage,
+        .note-row,
+        .board-header {
+          grid-template-columns: 1fr;
+        }
+
+        .stage-label {
+          border-right: none;
+          border-bottom: 1px solid var(--line);
+        }
+      }
+
+      @media (max-width: 720px) {
+        body {
+          padding: 14px 10px 30px;
+        }
+
+        .hero,
+        .board-header,
+        .stage-content,
+        .stage-label {
+          padding-left: 16px;
+          padding-right: 16px;
+        }
+
+        .hero {
+          padding-top: 22px;
+          padding-bottom: 20px;
+          border-radius: 24px;
+        }
+
+        .cols-6,
+        .cols-5,
+        .cols-4,
+        .cols-3,
+        .flow-strip.query,
+        .flow-strip.analysis,
+        .boundary-grid,
+        .feedback-flow,
+        .footer-strip {
+          grid-template-columns: 1fr;
+        }
+
+        .board {
+          border-radius: 26px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div class="eyebrow">荷塘悦色 / htops</div>
+        <h1>荷塘悦色经营智能系统架构</h1>
+        <p class="subtitle">
+          这是一张系统架构总览图，用来表达荷塘悦色经营智能系统如何围绕本地经营事实组织语义理解、能力路由、执行链路和反馈回路。重点是主链清晰、边界明确，而不是交付责任或部署说明。
+        </p>
+        <div class="hero-pills">
+          <div class="hero-pill">确定性经营真相层</div>
+          <div class="hero-pill">语义操作系统</div>
+          <div class="hero-pill">Capability Graph</div>
+          <div class="hero-pill">Safe Execution</div>
+          <div class="hero-pill">Analysis Worker</div>
+          <div class="hero-pill">Semantic Quality Loop</div>
+        </div>
+      </header>
+
+      <main class="board">
+        <section class="board-header">
+          <div>
+            <h2>系统主链</h2>
+            <p>Text → Conversation Control → Semantic Intent → Early Stop Gate → Lane Select → Capability Graph → Serving Semantic Layer → Safe Execution → Reply Guard → Answer / Action</p>
+          </div>
+          <div class="legend">
+            <div class="legend-chip query"><span class="legend-line"></span>查询链：快、稳、可审计</div>
+            <div class="legend-chip analysis"><span class="legend-line"></span>分析链：深度复盘、建议</div>
+            <div class="legend-chip feedback"><span class="legend-line"></span>反馈回路：失败样本、评审、升级</div>
+          </div>
+        </section>
+
+        <section class="stage band-blue">
+          <div class="stage-label">
+            <div class="stage-index">1</div>
+            <h3>上游业务系统层</h3>
+            <p>原始业务事实来源，不做 AI 判断。</p>
+          </div>
+          <div class="stage-content">
+            <div class="node-grid cols-6">
+              <article class="node"><div class="node-tag tag-blue">Source</div><h4>POS / 收银系统</h4><p>订单、结算、支付、反结等交易事实。</p></article>
+              <article class="node"><div class="node-tag tag-blue">Source</div><h4>会员系统</h4><p>会员档案、余额、标签、券包快照、沉默状态。</p></article>
+              <article class="node"><div class="node-tag tag-blue">Source</div><h4>技师系统</h4><p>当前在岗、上钟明细、项目承接、提成结构。</p></article>
+              <article class="node"><div class="node-tag tag-blue">Source</div><h4>充值 / 流水接口</h4><p>充值本金、赠送、账户变动、耗卡与异常交易。</p></article>
+              <article class="node"><div class="node-tag tag-blue">Source</div><h4>营销 / 团购渠道</h4><p>来源、转化、活动触达、会员渠道归因。</p></article>
+              <article class="node"><div class="node-tag tag-blue">Source</div><h4>外部情报 / 弱信号</h4><p>平台规则、环境、天气、周边变化线索。</p></article>
+            </div>
+          </div>
+        </section>
+
+        <section class="stage band-green">
+          <div class="stage-label">
+            <div class="stage-index">2</div>
+            <h3>确定性经营真相层</h3>
+            <p>所有重要经营判断都最终落回这里，AI 不改写事实。</p>
+          </div>
+          <div class="stage-content">
+            <div class="note-row">
+              <div class="note">
+                这里是本地经营真相层：原始业务事实先进入本地库，再形成派生指标、日报、顾客画像和 serving 读面。所有高价值经营判断都必须能回落到这个层。
+              </div>
+              <div class="note">
+                结构化经营数据不进入知识库作为主真相源；它们继续走 PostgreSQL、指标语义层与 Safe Execution。
+              </div>
+            </div>
+            <div class="node-grid cols-6">
+              <article class="node has-arrow"><div class="node-tag tag-green">Kernel</div><h4>数据接入 client</h4><p>对接上游 API，按门店拉取原始事实。</p></article>
+              <article class="node has-arrow"><div class="node-tag tag-green">Kernel</div><h4>数据标准化 normalize</h4><p>统一字段口径，保留 rawJson 证据。</p></article>
+              <article class="node has-arrow"><div class="node-tag tag-green">Kernel</div><h4>数据同步 sync</h4><p>营业日切分、ready 状态、回补控制。</p></article>
+              <article class="node has-arrow"><div class="node-tag tag-green">Truth</div><h4>PostgreSQL</h4><p>事实层、派生层、控制面与审计面统一落库。</p></article>
+              <article class="node has-arrow"><div class="node-tag tag-green">Truth</div><h4>原始事实表</h4><p>消费、充值、流水、技师快照、上钟和营销明细。</p></article>
+              <article class="node"><div class="node-tag tag-green">Truth</div><h4>派生指标 / serving views</h4><p>日报、7日、30日、画像、风险信号和读面视图。</p></article>
+            </div>
+          </div>
+        </section>
+
+        <section class="stage band-purple">
+          <div class="stage-label">
+            <div class="stage-index">3</div>
+            <h3>语义操作系统层</h3>
+            <p>把“人话问题”变成“可识别、可路由、可执行的经营意图”。</p>
+          </div>
+          <div class="stage-content">
+            <div class="main-flow">
+              <div class="chain-label query"><span class="line"></span>总入口主链</div>
+              <div class="flow-strip query">
+                <article class="node has-arrow"><div class="node-tag tag-purple">Input</div><h4>用户提问 / 文本输入</h4><p>企微、Bridge、Query API 等统一入口。</p></article>
+                <article class="node has-arrow"><div class="node-tag tag-purple">Control</div><h4>会话控制</h4><p>补槽、上下文继承、对象切换、topic switch。</p></article>
+                <article class="node has-arrow"><div class="node-tag tag-purple">Intent</div><h4>语义意图识别</h4><p>meta / query / analysis 三大入口。</p></article>
+                <article class="node has-arrow"><div class="node-tag tag-purple">Gate</div><h4>早停判断</h4><p>闲聊、澄清、不支持问题、边界说明。</p></article>
+                <article class="node"><div class="node-tag tag-purple">State</div><h4>会话语义状态</h4><p>lastEffectiveText、补槽继承、显式重置。</p></article>
+              </div>
+
+              <div class="chain-label query"><span class="line"></span>查询链路</div>
+              <div class="flow-strip query">
+                <article class="node has-arrow"><div class="node-tag tag-blue">Lane</div><h4>查询 / 分析分流</h4><p>query lane 进入快链路。</p></article>
+                <article class="node has-arrow"><div class="node-tag tag-blue">Graph</div><h4>能力图谱</h4><p>能力选择、fallback、owner path。</p></article>
+                <article class="node has-arrow"><div class="node-tag tag-blue">Plan</div><h4>查询计划</h4><p>实体、时间、指标、维度、回答形态收口。</p></article>
+                <article class="node has-arrow"><div class="node-tag tag-blue">Serve</div><h4>语义服务层</h4><p>query plan 映射到 serving / runtime render。</p></article>
+                <article class="node"><div class="node-tag tag-blue">Audit</div><h4>语义执行审计</h4><p>失败样本、执行轨迹、质量闭环回灌。</p></article>
+              </div>
+
+              <div class="chain-label analysis"><span class="line"></span>异步分析链路</div>
+              <div class="flow-strip analysis">
+                <article class="node has-arrow"><div class="node-tag tag-orange">Lane</div><h4>异步分析链路</h4><p>analysis lane，适合深度复盘、诊断、建议。</p></article>
+                <article class="node has-arrow"><div class="node-tag tag-orange">Worker</div><h4>Analysis Worker</h4><p>较重异步分析，不阻塞主查询链路。</p></article>
+                <article class="node has-arrow"><div class="node-tag tag-orange">Fact</div><h4>事实注入</h4><p>日报、7日、30日、画像、环境和弱信号。</p></article>
+                <article class="node"><div class="node-tag tag-orange">Output</div><h4>诊断 / 建议输出</h4><p>重点问题、原因、优先动作和复盘结论。</p></article>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="stage band-orange">
+          <div class="stage-label">
+            <div class="stage-index">4</div>
+            <h3>执行与调度层</h3>
+            <p>查询执行、异步分析、权限边界与调度编排。</p>
+          </div>
+          <div class="stage-content">
+            <div class="node-grid cols-5">
+              <article class="node"><div class="node-tag tag-orange">Execution</div><h4>语义服务层</h4><p>承接 query plan，组织受控读面与 runtime render。</p></article>
+              <article class="node"><div class="node-tag tag-orange">Execution</div><h4>SQL 编译器</h4><p>受控生成查询，不让模型自由拼底层 SQL。</p></article>
+              <article class="node"><div class="node-tag tag-orange">Trust</div><h4>安全执行</h4><p>权限、字段边界、门店范围、审计与口径控制。</p></article>
+              <article class="node"><div class="node-tag tag-orange">Runtime</div><h4>Query Engine</h4><p>负责 serving / runtime render / analysis 结果总装。</p></article>
+              <article class="node"><div class="node-tag tag-orange">Worker</div><h4>Scheduled / Analysis Worker</h4><p>一个负责同步报表投递，一个负责异步诊断任务。</p></article>
+            </div>
+          </div>
+        </section>
+
+        <section class="stage band-amber">
+          <div class="stage-label">
+            <div class="stage-index">5</div>
+            <h3>输出与协同层</h3>
+            <p>结果展示与协同交付，面向 HQ、店长、运营等业务角色。</p>
+          </div>
+          <div class="stage-content">
+            <div class="node-grid cols-4">
+              <article class="node"><div class="node-tag tag-amber">Delivery</div><h4>Bridge / 外部消息入口</h4><p>企业微信、网关、消息回调的统一入口适配。</p></article>
+              <article class="node"><div class="node-tag tag-amber">Delivery</div><h4>Query API / 只读接口</h4><p>对外提供受控读面，不暴露底表与自由查询。</p></article>
+              <article class="node"><div class="node-tag tag-amber">Delivery</div><h4>报表 / HQ 总览 / 顾客经营</h4><p>日报、周报、月报、5店总览、顾客经营输出。</p></article>
+              <article class="node"><div class="node-tag tag-amber">Delivery</div><h4>结果回复 / 动作建议</h4><p>直接答复、诊断建议、执行提示和后续协同动作。</p></article>
+            </div>
+          </div>
+        </section>
+
+        <section class="stage band-red">
+          <div class="stage-label">
+            <div class="stage-index">6</div>
+            <h3>反馈闭环层</h3>
+            <p>把失败样本、复盘发现、路由观测重新回灌到语义主链。</p>
+          </div>
+          <div class="stage-content">
+            <div class="feedback-flow">
+              <article class="feedback-node"><h4>语义失败样本</h4><p>未识别问法、边界误判、入口掉线、clarify 失配。</p></article>
+              <article class="feedback-node"><h4>复盘发现</h4><p>nightly review、人工评审、执行后观察、doctor 暴露。</p></article>
+              <article class="feedback-node"><h4>路由观测</h4><p>shadow compare、lane 漂移、quality backlog 聚类。</p></article>
+              <article class="feedback-node"><h4>升级积压项</h4><p>把问题收敛成 capability / prompt / route 的明确改造项。</p></article>
+              <article class="feedback-node"><h4>回灌升级</h4><p>回写到语义意图识别、会话语义状态和能力图谱。</p></article>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <section style="margin-top: 18px; display: grid; gap: 18px;">
+        <div class="node-grid cols-3">
+          <article class="footer-card">
+            <h4>AI 边界</h4>
+            <p>AI 只增强理解、归因、解释、复盘与质量回路，不直接充当经营真相，不绕过安全执行主链。</p>
+          </article>
+          <article class="footer-card">
+            <h4>数据库 / 指标语义层 / 知识检索层</h4>
+            <p>结构化经营数据走 PostgreSQL 与指标语义层；知识检索层只承载 SOP、规则、口径、培训资料。</p>
+          </article>
+          <article class="footer-card">
+            <h4>当前仍是事实缺口</h4>
+            <p>等位 / 候钟实时状态、待结账 / 待结算实时单据、优惠券完整发券-核销-回店闭环。</p>
+          </article>
+        </div>
+
+      </section>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,471 @@
+[
+  {
+    "metricKey": "serviceRevenue",
+    "label": "服务营收",
+    "category": "核心经营",
+    "primary": "义乌店昨天营收多少",
+    "similars": ["昨天义乌店营业额多少", "义乌店昨日收入多少", "义乌店昨天营业收入多少"]
+  },
+  {
+    "metricKey": "antiServiceRevenue",
+    "label": "反结金额",
+    "category": "核心经营",
+    "primary": "义乌店昨天反结金额多少",
+    "similars": ["昨天反结多少", "义乌店昨日反结服务金额多少", "义乌店昨天反结额多少"]
+  },
+  {
+    "metricKey": "serviceOrderCount",
+    "label": "服务单数",
+    "category": "核心经营",
+    "primary": "义乌店昨天服务单数多少",
+    "similars": ["昨天订单数多少", "义乌店昨日服务单量多少", "义乌店昨天单量多少"]
+  },
+  {
+    "metricKey": "orderAverageAmount",
+    "label": "单均金额",
+    "category": "核心经营",
+    "primary": "义乌店昨天单均金额多少",
+    "similars": ["昨天订单均价多少", "义乌店昨日单均消费多少", "义乌店昨天单均多少"]
+  },
+  {
+    "metricKey": "customerCount",
+    "label": "消费人数",
+    "category": "核心经营",
+    "primary": "义乌店昨天消费人数多少",
+    "similars": ["昨天客流量多少", "义乌店昨日到店人数多少", "义乌店昨日客流量多少", "义乌店这几天客流怎么样", "义乌店近几天客流咋样", "义乌店昨天上客人数多少"]
+  },
+  {
+    "metricKey": "clockEffect",
+    "label": "钟效",
+    "category": "核心经营",
+    "primary": "义乌店昨天钟效多少",
+    "similars": ["昨天钟均消费多少", "义乌店昨日钟均多少", "义乌店这几天钟效稳不稳", "义乌店昨天单钟产值多少"]
+  },
+  {
+    "metricKey": "clockRevenue",
+    "label": "上钟产值",
+    "category": "核心经营",
+    "primary": "义乌店昨天上钟产值多少",
+    "similars": ["昨天上钟营收多少", "义乌店昨日上钟业绩多少", "义乌店昨天上钟金额多少"]
+  },
+  {
+    "metricKey": "averageTicket",
+    "label": "客单价",
+    "category": "核心经营",
+    "primary": "义乌店昨天客单价多少",
+    "similars": ["昨天客单多少", "义乌店昨日客单价是多少"]
+  },
+  {
+    "metricKey": "memberPaymentAmount",
+    "label": "会员支付金额",
+    "category": "支付结构",
+    "primary": "义乌店昨天会员支付金额多少",
+    "similars": ["昨天会员消费金额多少", "义乌店昨日储值支付金额多少"]
+  },
+  {
+    "metricKey": "memberPaymentShare",
+    "label": "会员消费占比",
+    "category": "支付结构",
+    "primary": "义乌店昨天会员消费占比多少",
+    "similars": ["昨天储值消费占比多少", "义乌店耗卡占比多少"]
+  },
+  {
+    "metricKey": "cashPaymentAmount",
+    "label": "现金支付金额",
+    "category": "支付结构",
+    "primary": "义乌店昨天现金支付金额多少",
+    "similars": ["昨天现金消费金额多少", "义乌店昨日现金金额多少"]
+  },
+  {
+    "metricKey": "cashPaymentShare",
+    "label": "现金消费占比",
+    "category": "支付结构",
+    "primary": "义乌店昨天现金消费占比多少",
+    "similars": ["昨天现金支付占比多少", "义乌店昨日现金占比多少"]
+  },
+  {
+    "metricKey": "wechatPaymentAmount",
+    "label": "微信支付金额",
+    "category": "支付结构",
+    "primary": "义乌店昨天微信支付金额多少",
+    "similars": ["昨天微信消费金额多少", "义乌店昨日微信支付多少"]
+  },
+  {
+    "metricKey": "wechatPaymentShare",
+    "label": "微信支付占比",
+    "category": "支付结构",
+    "primary": "义乌店昨天微信支付占比多少",
+    "similars": ["昨天微信消费占比多少", "义乌店昨日微信占比多少"]
+  },
+  {
+    "metricKey": "alipayPaymentAmount",
+    "label": "支付宝支付金额",
+    "category": "支付结构",
+    "primary": "义乌店昨天支付宝支付金额多少",
+    "similars": ["昨天支付宝消费金额多少", "义乌店昨日支付宝支付多少"]
+  },
+  {
+    "metricKey": "alipayPaymentShare",
+    "label": "支付宝支付占比",
+    "category": "支付结构",
+    "primary": "义乌店昨天支付宝支付占比多少",
+    "similars": ["昨天支付宝消费占比多少", "义乌店昨日支付宝占比多少"]
+  },
+  {
+    "metricKey": "storedConsumeAmount",
+    "label": "耗卡金额",
+    "category": "支付结构",
+    "primary": "义乌店昨天耗卡金额多少",
+    "similars": ["昨天会员耗卡多少", "义乌店昨日划卡金额多少", "义乌店这几天耗卡多不多"]
+  },
+  {
+    "metricKey": "rechargeCash",
+    "label": "充值现金",
+    "category": "充值储值",
+    "primary": "义乌店昨天充值现金多少",
+    "similars": ["昨天实充多少", "义乌店昨日充值金额多少", "义乌店这几天充值行不行"]
+  },
+  {
+    "metricKey": "rechargeStoredValue",
+    "label": "充值总额（含赠送）",
+    "category": "充值储值",
+    "primary": "义乌店昨天充值总额多少",
+    "similars": ["昨天充卡总额多少", "义乌店昨日充值入账总额多少"]
+  },
+  {
+    "metricKey": "rechargeBonusValue",
+    "label": "充值赠送金额",
+    "category": "充值储值",
+    "primary": "义乌店昨天充值赠送金额多少",
+    "similars": ["昨天充值赠送多少", "义乌店昨日赠送额多少"]
+  },
+  {
+    "metricKey": "groupbuyOrderCount",
+    "label": "团购单数",
+    "category": "团购经营",
+    "primary": "义乌店昨天团购单数多少",
+    "similars": ["昨天团购订单数多少", "义乌店昨日团购订单数多少", "义乌店昨天团购单量多少", "义乌店昨天团购订单量多少"]
+  },
+  {
+    "metricKey": "groupbuyOrderShare",
+    "label": "团购占比",
+    "category": "团购经营",
+    "primary": "义乌店昨天团购占比多少",
+    "similars": ["昨天团购订单占比多少", "义乌店昨日团购占比是多少"]
+  },
+  {
+    "metricKey": "groupbuyAmount",
+    "label": "团购金额",
+    "category": "团购经营",
+    "primary": "义乌店昨天团购金额多少",
+    "similars": ["昨天团购消费金额多少", "义乌店昨日团购支付金额多少"]
+  },
+  {
+    "metricKey": "groupbuyAmountShare",
+    "label": "团购消费占比",
+    "category": "团购经营",
+    "primary": "义乌店昨天团购消费占比多少",
+    "similars": ["昨天团购支付占比多少", "义乌店昨日团购金额占比多少"]
+  },
+  {
+    "metricKey": "groupbuyCohortCustomerCount",
+    "label": "团购客样本数",
+    "category": "团购经营",
+    "primary": "义乌店这批团购客样本数多少",
+    "similars": ["团购样本人数有多少", "义乌店团购样本客户数多少"]
+  },
+  {
+    "metricKey": "groupbuyRevisitCustomerCount",
+    "label": "团购复到店人数",
+    "category": "团购经营",
+    "primary": "义乌店团购复到店人数多少",
+    "similars": ["团购二次到店人数多少", "义乌店团购复到店人数有多少"]
+  },
+  {
+    "metricKey": "groupbuyRevisitRate",
+    "label": "团购复到店率",
+    "category": "团购经营",
+    "primary": "义乌店团购复到店率多少",
+    "similars": ["团购二次到店率多少", "义乌店团购复到店率怎么样", "义乌店昨天团购回头率多少"]
+  },
+  {
+    "metricKey": "groupbuyMemberPayConvertedCustomerCount",
+    "label": "团购后会员支付转化人数",
+    "category": "团购经营",
+    "primary": "义乌店团购后会员支付转化人数多少",
+    "similars": ["团购会员支付转化人数多少", "义乌店团购后会员支付转化人数有多少"]
+  },
+  {
+    "metricKey": "groupbuyMemberPayConversionRate",
+    "label": "团购后会员支付转化率",
+    "category": "团购经营",
+    "primary": "义乌店团购后会员支付转化率多少",
+    "similars": ["团购会员支付转化率多少", "义乌店团购后会员支付转化率怎么样"]
+  },
+  {
+    "metricKey": "groupbuy7dRevisitCustomerCount",
+    "label": "7天复到店人数",
+    "category": "团购经营",
+    "primary": "义乌店7天复到店人数多少",
+    "similars": ["7日复到店人数多少", "义乌店7天二次到店人数多少"]
+  },
+  {
+    "metricKey": "groupbuy7dRevisitRate",
+    "label": "7天复到店率",
+    "category": "团购经营",
+    "primary": "义乌店7天复到店率多少",
+    "similars": ["7日复到店率多少", "义乌店7天二次到店率多少", "义乌店团购客回来了没有", "义乌店团购接住没有", "义乌店昨天7天回头率多少"]
+  },
+  {
+    "metricKey": "groupbuy7dCardOpenedCustomerCount",
+    "label": "7天开卡人数",
+    "category": "团购经营",
+    "primary": "义乌店7天开卡人数多少",
+    "similars": ["7日开卡人数多少", "义乌店7天办卡人数多少"]
+  },
+  {
+    "metricKey": "groupbuy7dCardOpenedRate",
+    "label": "7天开卡率",
+    "category": "团购经营",
+    "primary": "义乌店7天开卡率多少",
+    "similars": ["7日开卡率多少", "义乌店7天办卡率多少", "义乌店团购有没有转会员", "义乌店昨天7天办卡率多少"]
+  },
+  {
+    "metricKey": "groupbuy7dStoredValueConvertedCustomerCount",
+    "label": "7天储值转化人数",
+    "category": "团购经营",
+    "primary": "义乌店7天储值转化人数多少",
+    "similars": ["7日储值转化人数多少", "义乌店7天充值转化人数多少"]
+  },
+  {
+    "metricKey": "groupbuy7dStoredValueConversionRate",
+    "label": "7天储值转化率",
+    "category": "团购经营",
+    "primary": "义乌店7天储值转化率多少",
+    "similars": ["7日储值转化率多少", "义乌店7天充值转化率多少", "义乌店昨天7天转储值率多少"]
+  },
+  {
+    "metricKey": "groupbuy30dMemberPayConvertedCustomerCount",
+    "label": "30天会员消费转化人数",
+    "category": "团购经营",
+    "primary": "义乌店30天会员消费转化人数多少",
+    "similars": ["30日会员消费转化人数多少", "义乌店30天会员支付转化人数多少"]
+  },
+  {
+    "metricKey": "groupbuy30dMemberPayConversionRate",
+    "label": "30天会员消费转化率",
+    "category": "团购经营",
+    "primary": "义乌店30天会员消费转化率多少",
+    "similars": ["30日会员消费转化率多少", "义乌店30天会员支付转化率多少", "义乌店团购转会员怎么样", "义乌店昨天30天转会员消费率多少"]
+  },
+  {
+    "metricKey": "groupbuyFirstOrderCustomerCount",
+    "label": "团购首单客数",
+    "category": "团购经营",
+    "primary": "义乌店团购首单客数多少",
+    "similars": ["团购首单人数多少", "义乌店团购首单客样本数多少"]
+  },
+  {
+    "metricKey": "groupbuyFirstOrderHighValueMemberCustomerCount",
+    "label": "团购首单转高价值会员人数",
+    "category": "团购经营",
+    "primary": "义乌店团购首单转高价值会员人数多少",
+    "similars": ["团购首单高价值会员人数多少", "义乌店团购首单高价值会员人数有多少"]
+  },
+  {
+    "metricKey": "groupbuyFirstOrderHighValueMemberRate",
+    "label": "团购首单客转高价值会员率",
+    "category": "团购经营",
+    "primary": "义乌店团购首单客转高价值会员率多少",
+    "similars": ["团购首单转高价值会员率多少", "义乌店首单高价值会员率多少"]
+  },
+  {
+    "metricKey": "meituanGroupbuyOrderCount",
+    "label": "美团团购单数",
+    "category": "平台拆分",
+    "primary": "义乌店昨天美团团购单数多少",
+    "similars": ["昨天美团单数多少", "义乌店昨日美团订单数多少"]
+  },
+  {
+    "metricKey": "meituanGroupbuyOrderShare",
+    "label": "美团团购单数占比",
+    "category": "平台拆分",
+    "primary": "义乌店昨天美团团购单数占比多少",
+    "similars": ["昨天美团订单占比多少", "义乌店昨日美团单数占比多少"]
+  },
+  {
+    "metricKey": "meituanGroupbuyAmount",
+    "label": "美团团购金额",
+    "category": "平台拆分",
+    "primary": "义乌店昨天美团团购金额多少",
+    "similars": ["昨天美团金额多少", "义乌店昨日美团支付金额多少"]
+  },
+  {
+    "metricKey": "meituanGroupbuyAmountShare",
+    "label": "美团团购金额占比",
+    "category": "平台拆分",
+    "primary": "义乌店昨天美团团购金额占比多少",
+    "similars": ["昨天美团金额占比多少", "义乌店昨日美团支付占比多少"]
+  },
+  {
+    "metricKey": "douyinGroupbuyOrderCount",
+    "label": "抖音团购单数",
+    "category": "平台拆分",
+    "primary": "义乌店昨天抖音团购单数多少",
+    "similars": ["昨天抖音单数多少", "义乌店昨日抖音订单数多少"]
+  },
+  {
+    "metricKey": "douyinGroupbuyOrderShare",
+    "label": "抖音团购单数占比",
+    "category": "平台拆分",
+    "primary": "义乌店昨天抖音团购单数占比多少",
+    "similars": ["昨天抖音订单占比多少", "义乌店昨日抖音单数占比多少"]
+  },
+  {
+    "metricKey": "douyinGroupbuyAmount",
+    "label": "抖音团购金额",
+    "category": "平台拆分",
+    "primary": "义乌店昨天抖音团购金额多少",
+    "similars": ["昨天抖音金额多少", "义乌店昨日抖音支付金额多少"]
+  },
+  {
+    "metricKey": "douyinGroupbuyAmountShare",
+    "label": "抖音团购金额占比",
+    "category": "平台拆分",
+    "primary": "义乌店昨天抖音团购金额占比多少",
+    "similars": ["昨天抖音金额占比多少", "义乌店昨日抖音支付占比多少"]
+  },
+  {
+    "metricKey": "totalClockCount",
+    "label": "总钟数",
+    "category": "核心经营",
+    "primary": "义乌店昨天总钟数多少",
+    "similars": ["昨天总上钟数多少", "义乌店昨日钟数多少", "义乌店昨日总钟数", "义乌店昨日总种数"]
+  },
+  {
+    "metricKey": "activeTechCount",
+    "label": "活跃技师",
+    "category": "技师经营",
+    "primary": "义乌店昨天活跃技师多少",
+    "similars": ["昨天活跃技师数多少", "义乌店昨日活跃技师有几人"]
+  },
+  {
+    "metricKey": "onDutyTechCount",
+    "label": "在岗技师",
+    "category": "技师经营",
+    "primary": "义乌店昨天在岗技师多少",
+    "similars": ["昨天在岗技师数多少", "义乌店昨日在岗技师有几人"]
+  },
+  {
+    "metricKey": "techCommission",
+    "label": "技师提成金额",
+    "category": "技师经营",
+    "primary": "义乌店昨天技师提成金额多少",
+    "similars": ["昨天技师提成多少", "义乌店昨日技师提成发了多少"]
+  },
+  {
+    "metricKey": "techCommissionRate",
+    "label": "技师提成占比",
+    "category": "技师经营",
+    "primary": "义乌店昨天技师提成占比多少",
+    "similars": ["昨天提成占比多少", "义乌店昨日技师提成占比是多少", "义乌店昨天技师提成率多少"]
+  },
+  {
+    "metricKey": "marketRevenue",
+    "label": "推销营收",
+    "category": "技师经营",
+    "primary": "义乌店昨天推销营收多少",
+    "similars": ["昨天推销金额多少", "义乌店昨日销售营收多少"]
+  },
+  {
+    "metricKey": "marketCommission",
+    "label": "推销提成",
+    "category": "技师经营",
+    "primary": "义乌店昨天推销提成多少",
+    "similars": ["昨天销售提成多少", "义乌店昨日推销提成发了多少"]
+  },
+  {
+    "metricKey": "sleepingMemberRate",
+    "label": "沉默率",
+    "category": "会员经营",
+    "primary": "义乌店当前沉默率多少",
+    "similars": ["现在沉默会员率多少", "义乌店沉默率怎么样"]
+  },
+  {
+    "metricKey": "newMembers",
+    "label": "新增会员",
+    "category": "会员经营",
+    "primary": "义乌店昨天新增会员多少",
+    "similars": ["昨天新会员多少", "义乌店昨日新增会员有几人"]
+  },
+  {
+    "metricKey": "effectiveMembers",
+    "label": "有效会员",
+    "category": "会员经营",
+    "primary": "义乌店当前有效会员多少",
+    "similars": ["现在有效会员有多少", "义乌店有效会员人数多少"]
+  },
+  {
+    "metricKey": "sleepingMembers",
+    "label": "沉默会员",
+    "category": "会员经营",
+    "primary": "义乌店当前沉默会员多少",
+    "similars": ["现在沉默会员有多少", "义乌店沉默会员人数多少"]
+  },
+  {
+    "metricKey": "currentStoredBalance",
+    "label": "当前储值余额",
+    "category": "会员经营",
+    "primary": "义乌店当前储值余额多少",
+    "similars": ["现在会员储值余额多少", "义乌店现在储值余额还有多少", "义乌店当前卡余额多少"]
+  },
+  {
+    "metricKey": "pointClockRate",
+    "label": "点钟率",
+    "category": "核心经营",
+    "primary": "义乌店近5天点钟率多少",
+    "similars": ["这几天义乌店点钟排行怎么样", "义乌店点钟最高的是谁", "义乌店近几天点钟怎么样", "义乌店近几天点钟加钟怎么样", "义乌店近3天点加钟情况"]
+  },
+  {
+    "metricKey": "addClockRate",
+    "label": "加钟率",
+    "category": "核心经营",
+    "primary": "义乌店近5天加钟率多少",
+    "similars": ["这几天义乌店加钟排行怎么样", "义乌店加钟最高的是谁", "义乌店昨日的加钟率", "义乌店近几天加钟怎么样", "义乌店近几天点钟加钟怎么样", "义乌店近3天点加钟情况"]
+  },
+  {
+    "metricKey": "roomOccupancyRate",
+    "label": "包间上座率",
+    "category": "空间与利润",
+    "primary": "义乌店昨天包间上座率多少",
+    "similars": ["昨天房间上座率多少", "义乌店昨日上座率多少"]
+  },
+  {
+    "metricKey": "roomTurnoverRate",
+    "label": "翻房率",
+    "category": "空间与利润",
+    "primary": "义乌店昨天翻房率多少",
+    "similars": ["昨天翻台率多少", "义乌店昨日翻房率怎么样"]
+  },
+  {
+    "metricKey": "grossMarginRate",
+    "label": "毛利率",
+    "category": "空间与利润",
+    "primary": "义乌店昨天毛利率多少",
+    "similars": ["昨天毛利率怎么样", "义乌店昨日毛利率是多少"]
+  },
+  {
+    "metricKey": "netMarginRate",
+    "label": "净利率",
+    "category": "空间与利润",
+    "primary": "义乌店昨天净利率多少",
+    "similars": ["昨天净利率怎么样", "义乌店昨日净利率是多少"]
+  },
+  {
+    "metricKey": "breakEvenRevenue",
+    "label": "保本营收",
+    "category": "空间与利润",
+    "primary": "义乌店保本营收多少",
+    "similars": ["义乌店盈亏平衡营收多少", "义乌店保本点多少"]
+  }
+]

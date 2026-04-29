@@ -1,6 +1,7 @@
 import { evaluateStoreBusinessScore } from "./business-score.js";
 import { rebuildCustomerIntelligenceForBizDate } from "./customer-intelligence.js";
 import { computeDailyStoreMetrics } from "./metrics.js";
+import { resolveDailyMetricWindowSignals } from "./report-window-signals.js";
 import { HetangOpsStore } from "./store.js";
 import {
   buildStoreManagerDailyDetail,
@@ -226,25 +227,11 @@ async function enrichDailyMetricsWithWindowSignals(params: {
   }
   const review = reviewRows[0];
   const summary = summaryRows[0];
-  const memberRepurchaseBase =
-    review?.memberRepurchaseBaseCustomerCount7d ??
-    summary?.memberRepurchaseBaseCustomerCount7d ??
-    params.metrics.memberRepurchaseBaseCustomerCount7d;
-  const memberRepurchaseReturned =
-    review?.memberRepurchaseReturnedCustomerCount7d ??
-    summary?.memberRepurchaseReturnedCustomerCount7d ??
-    params.metrics.memberRepurchaseReturnedCustomerCount7d;
-  const memberRepurchaseRate =
-    review?.memberRepurchaseRate7d ??
-    summary?.memberRepurchaseRate7d ??
-    params.metrics.memberRepurchaseRate7d;
-
-  return {
-    ...params.metrics,
-    memberRepurchaseBaseCustomerCount7d: memberRepurchaseBase,
-    memberRepurchaseReturnedCustomerCount7d: memberRepurchaseReturned,
-    memberRepurchaseRate7d: memberRepurchaseRate,
-  };
+  return resolveDailyMetricWindowSignals({
+    metrics: params.metrics,
+    review,
+    summary,
+  });
 }
 
 function buildMiddayJudgment(params: {
@@ -430,13 +417,15 @@ function renderSummary30dSection(params: {
       lines.push(`- ${renewalBits.join(" | ")}`);
     }
 
-    const balanceDelta = formatSignedCompactCurrencyChange(
-      current.currentStoredBalance,
-      previous?.currentStoredBalance,
-    );
-    lines.push(
-      `- 当前储值余额 ${formatCompactCurrency(current.currentStoredBalance)}${balanceDelta ? `，较上周期 ${balanceDelta}` : ""}`,
-    );
+    if (typeof current.currentStoredBalance === "number") {
+      const balanceDelta = formatSignedCompactCurrencyChange(
+        current.currentStoredBalance,
+        previous?.currentStoredBalance,
+      );
+      lines.push(
+        `- 当前储值余额 ${formatCompactCurrency(current.currentStoredBalance)}${balanceDelta ? `，较上周期 ${balanceDelta}` : ""}`,
+      );
+    }
     return lines;
   }
 
@@ -721,6 +710,7 @@ export async function buildDailyStoreReport(params: {
       bizDate: params.bizDate,
       updatedAt: generatedAt,
       refreshViews: false,
+      storeConfig: params.config.stores.find((entry) => entry.orgId === params.orgId),
     }),
   ]);
   await params.store.forceRebuildAnalyticsViews();

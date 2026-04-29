@@ -1,8 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type {
+  ChinaHolidayCalendarDayRecord,
   HetangAnalysisDeliveryHealthSummary,
   HetangAnalysisDeadLetter,
+  HetangAnalysisDeadLetterCleanupResult,
+  HetangAnalysisDeadLetterSummary,
   HetangAnalysisJob,
   HetangAnalysisQueueSummary,
   HetangAnalysisJobStatus,
@@ -11,20 +14,43 @@ import type {
   HetangExternalBriefItem,
   HetangExternalEventCard,
   HetangExternalEventCandidate,
+  HetangStoreMasterProfile,
+  HetangStoreMasterProfileSnapshot,
+  HetangIndustryContextSignalKind,
+  HetangIndustryContextSnapshotRecord,
+  HetangStoreExternalObservation,
+  HetangStoreExternalObservationBatch,
+  HetangStoreOperatingStatus,
+  HetangStoreParkingConvenienceLevel,
+  HetangStoreExternalContextEntry,
+  HetangStoreExternalContextConfidence,
+  HetangStoreExternalContextKind,
   HetangExternalSourceConfig,
+  HetangExternalSourceDocumentScopeType,
   HetangExternalSourceTier,
+  HetangStoreExternalContextTruthLevel,
   ConsumeBillRecord,
   CustomerConversionCohortRecord,
+  CustomerObservationTruthBoundary,
+  CustomerOperatingProfileDailyRecord,
+  CustomerOperatingSignalRecord,
   CustomerProfile90dRow,
   CustomerSegmentRecord,
+  CustomerServiceObservationBatch,
+  CustomerServiceObservationRecord,
   CustomerTechLinkRecord,
   DailyStoreAlert,
   DailyStoreMetrics,
   DailyStoreReport,
+  HetangReportDeliveryUpgradeEvent,
   HetangActionItem,
+  HetangConversationReviewFinding,
+  HetangConversationReviewFollowupTarget,
+  HetangConversationReviewRun,
   HetangHistoricalCoverageSnapshot,
   HetangHistoricalCoverageSpan,
   HetangCommandAuditRecord,
+  HetangRecentCommandAuditSummary,
   HetangInboundMessageAuditRecord,
   HetangControlTowerScopeType,
   HetangControlTowerSettingRecord,
@@ -36,10 +62,12 @@ import type {
   MemberCurrentRecord,
   MemberReactivationFeatureRecord,
   MemberReactivationFeedbackRecord,
+  MemberReactivationOutcomeSnapshotRecord,
   MemberReactivationQueueRecord,
   MemberReactivationStrategyRecord,
   RechargeBillRecord,
   StoreManagerDailyKpiRow,
+  StoreEnvironmentDailySnapshotRecord,
   StoreReview7dRow,
   StoreSummary30dRow,
   TechProfile30dRow,
@@ -71,6 +99,8 @@ type AnalyticsWriteOptions = {
   refreshViews?: boolean;
 };
 
+type StoreQueryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
+
 const REQUIRED_ANALYTICS_VIEWS = [
   "mv_store_manager_daily_kpi",
   "mv_tech_profile_30d",
@@ -100,10 +130,20 @@ const ANALYTICS_REBUILD_DROP_ORDER = [
   "mv_store_manager_daily_kpi",
 ] as const;
 const STORE_INITIALIZATION_ADVISORY_LOCK_KEY = 42_060_406;
+const ANALYTICS_REBUILD_ADVISORY_LOCK_KEY = 42_060_407;
 const ANALYSIS_DELIVERY_MAX_ATTEMPTS = 3;
 const HISTORICAL_COVERAGE_TIME_ZONE = "Asia/Shanghai";
 const HISTORICAL_COVERAGE_CUTOFF_LOCAL_TIME = "03:00";
 const ZERO_ROW_BATCH_COVERAGE_CONFIRMATION_THRESHOLD = 2;
+
+function resolveAutoServingPublicationNotes(params: {
+  publishedAt: string;
+  rebuild?: boolean;
+}): string {
+  return params.rebuild
+    ? `analytics-views:rebuild:${params.publishedAt}`
+    : `analytics-views:refresh:${params.publishedAt}`;
+}
 
 function md5(value: string): string {
   return createHash("md5").update(value).digest("hex");
@@ -563,8 +603,331 @@ function parseStringArray(rawValue: unknown): string[] {
   }
 }
 
+function parseReviewFollowupTargets(
+  rawValue: unknown,
+): HetangConversationReviewFollowupTarget[] {
+  return parseStringArray(rawValue).filter(
+    (entry): entry is HetangConversationReviewFollowupTarget =>
+      entry === "sample_candidate" ||
+      entry === "backlog_candidate" ||
+      entry === "deploy_followup_candidate",
+  );
+}
+
+function parseJsonValue(rawValue: unknown): unknown {
+  if (typeof rawValue !== "string" || rawValue.trim().length === 0) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(rawValue);
+  } catch {
+    return undefined;
+  }
+}
+
 function parseTagKeys(rawValue: unknown): string[] {
   return parseStringArray(rawValue);
+}
+
+function mapStoreExternalContextRow(
+  row: Record<string, unknown>,
+): HetangStoreExternalContextEntry {
+  return {
+    orgId: String(row.org_id),
+    snapshotDate: String(row.snapshot_date),
+    contextKind: String(row.context_kind) as HetangStoreExternalContextKind,
+    metricKey: String(row.metric_key),
+    valueText: (row.value_text as string | null) ?? undefined,
+    valueNum:
+      row.value_num === null || row.value_num === undefined
+        ? undefined
+        : normalizeNumeric(row.value_num),
+    valueJson: parseJsonValue(row.value_json),
+    unit: (row.unit as string | null) ?? undefined,
+    truthLevel: String(row.truth_level) as HetangStoreExternalContextTruthLevel,
+    confidence: String(row.confidence) as HetangStoreExternalContextConfidence,
+    sourceType: String(row.source_type),
+    sourceLabel: (row.source_label as string | null) ?? undefined,
+    sourceUri: (row.source_uri as string | null) ?? undefined,
+    applicableModules: parseStringArray(row.applicable_modules_json),
+    notForScoring: Boolean(row.not_for_scoring),
+    note: (row.note as string | null) ?? undefined,
+    rawJson: String(row.raw_json),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function mapStoreMasterProfileRow(row: Record<string, unknown>): HetangStoreMasterProfile {
+  return {
+    orgId: String(row.org_id),
+    storeName: String(row.store_name),
+    brandName: (row.brand_name as string | null) ?? undefined,
+    cityName: (row.city_name as string | null) ?? undefined,
+    districtName: (row.district_name as string | null) ?? undefined,
+    addressText: (row.address_text as string | null) ?? undefined,
+    longitude:
+      row.longitude === null || row.longitude === undefined
+        ? undefined
+        : normalizeNumeric(row.longitude),
+    latitude:
+      row.latitude === null || row.latitude === undefined
+        ? undefined
+        : normalizeNumeric(row.latitude),
+    openingDate: (row.opening_date as string | null) ?? undefined,
+    renovationDate: (row.renovation_date as string | null) ?? undefined,
+    areaM2:
+      row.area_m2 === null || row.area_m2 === undefined ? undefined : normalizeNumeric(row.area_m2),
+    roomCountTotal:
+      row.room_count_total === null || row.room_count_total === undefined
+        ? undefined
+        : normalizeNumeric(row.room_count_total),
+    roomMixJson: parseJsonValue(row.room_mix_json) as Record<string, unknown> | undefined,
+    serviceHoursJson:
+      (parseJsonValue(row.service_hours_json) as Record<string, unknown> | undefined) ?? undefined,
+    storeFormat: (row.store_format as string | null) ?? undefined,
+    businessScene: (row.business_scene as string | null) ?? undefined,
+    parkingAvailable:
+      row.parking_available === null || row.parking_available === undefined
+        ? undefined
+        : Boolean(row.parking_available),
+    parkingConvenienceLevel:
+      (row.parking_convenience_level as HetangStoreParkingConvenienceLevel | null) ?? undefined,
+    operatingStatus: (row.operating_status as HetangStoreOperatingStatus | null) ?? undefined,
+    sourceLabel: (row.source_label as string | null) ?? undefined,
+    verifiedAt: (row.verified_at as string | null) ?? undefined,
+    rawJson: (row.raw_json as string | null) ?? undefined,
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function mapStoreMasterProfileSnapshotRow(
+  row: Record<string, unknown>,
+): HetangStoreMasterProfileSnapshot {
+  return {
+    ...mapStoreMasterProfileRow(row),
+    snapshotDate: String(row.snapshot_date),
+    snapshotCapturedAt: String(row.snapshot_captured_at),
+  };
+}
+
+function mapIndustryContextSnapshotRow(
+  row: Record<string, unknown>,
+): HetangIndustryContextSnapshotRecord {
+  return {
+    snapshotDate: String(row.snapshot_date),
+    signalKind: String(row.signal_kind) as HetangIndustryContextSignalKind,
+    signalKey: String(row.signal_key),
+    title: String(row.title),
+    summary: String(row.summary),
+    detailJson: parseJsonValue(row.detail_json),
+    truthBoundary: String(row.truth_boundary) as HetangIndustryContextSnapshotRecord["truthBoundary"],
+    confidence: String(row.confidence) as HetangIndustryContextSnapshotRecord["confidence"],
+    sourceType: String(row.source_type),
+    sourceLabel: (row.source_label as string | null) ?? undefined,
+    sourceUri: (row.source_uri as string | null) ?? undefined,
+    applicableModules: parseStringArray(row.applicable_modules_json),
+    note: (row.note as string | null) ?? undefined,
+    rawJson: String(row.raw_json),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function mapHolidayCalendarDayRow(row: Record<string, unknown>): ChinaHolidayCalendarDayRecord {
+  return {
+    bizDate: String(row.biz_date),
+    holidayTag: String(row.holiday_tag) as ChinaHolidayCalendarDayRecord["holidayTag"],
+    holidayName: (row.holiday_name as string | null) ?? undefined,
+    isAdjustedWorkday: Boolean(row.is_adjusted_workday),
+    sourceVersion: (row.source_version as string | null) ?? undefined,
+    sourceLabel: (row.source_label as string | null) ?? undefined,
+    rawJson: (row.raw_json as string | null) ?? undefined,
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function mapStoreEnvironmentDailySnapshotRow(
+  row: Record<string, unknown>,
+): StoreEnvironmentDailySnapshotRecord {
+  return {
+    orgId: String(row.org_id),
+    bizDate: String(row.biz_date),
+    cityCode: (row.city_code as string | null) ?? undefined,
+    weekdayIndex:
+      row.weekday_index === null || row.weekday_index === undefined
+        ? undefined
+        : normalizeNumeric(row.weekday_index),
+    weekdayLabel: (row.weekday_label as string | null) ?? undefined,
+    seasonTag: (row.season_tag as StoreEnvironmentDailySnapshotRecord["seasonTag"] | null) ?? undefined,
+    monthTag: (row.month_tag as string | null) ?? undefined,
+    solarTerm: (row.solar_term as StoreEnvironmentDailySnapshotRecord["solarTerm"] | null) ?? undefined,
+    isWeekend:
+      row.is_weekend === null || row.is_weekend === undefined ? undefined : Boolean(row.is_weekend),
+    holidayTag:
+      (row.holiday_tag as StoreEnvironmentDailySnapshotRecord["holidayTag"] | null) ?? undefined,
+    holidayName: (row.holiday_name as string | null) ?? undefined,
+    isAdjustedWorkday:
+      row.is_adjusted_workday === null || row.is_adjusted_workday === undefined
+        ? undefined
+        : Boolean(row.is_adjusted_workday),
+    weatherConditionRaw: (row.weather_condition_raw as string | null) ?? undefined,
+    temperatureC:
+      row.temperature_c === null || row.temperature_c === undefined
+        ? null
+        : normalizeNumeric(row.temperature_c),
+    precipitationMm:
+      row.precipitation_mm === null || row.precipitation_mm === undefined
+        ? null
+        : normalizeNumeric(row.precipitation_mm),
+    windLevel:
+      row.wind_level === null || row.wind_level === undefined
+        ? null
+        : normalizeNumeric(row.wind_level),
+    weatherTag: (row.weather_tag as StoreEnvironmentDailySnapshotRecord["weatherTag"] | null) ?? undefined,
+    temperatureBand:
+      (row.temperature_band as StoreEnvironmentDailySnapshotRecord["temperatureBand"] | null) ??
+      undefined,
+    precipitationTag:
+      (row.precipitation_tag as StoreEnvironmentDailySnapshotRecord["precipitationTag"] | null) ??
+      undefined,
+    windTag: (row.wind_tag as StoreEnvironmentDailySnapshotRecord["windTag"] | null) ?? undefined,
+    citySeasonalPattern: (row.city_seasonal_pattern as string | null) ?? undefined,
+    nightlifeSeasonality: (row.nightlife_seasonality as string | null) ?? undefined,
+    postDinnerLeisureBias:
+      (row.post_dinner_leisure_bias as StoreEnvironmentDailySnapshotRecord["postDinnerLeisureBias"] | null) ??
+      undefined,
+    eveningOutingLikelihood:
+      (row.evening_outing_likelihood as StoreEnvironmentDailySnapshotRecord["eveningOutingLikelihood"] | null) ??
+      undefined,
+    badWeatherTouchPenalty:
+      (row.bad_weather_touch_penalty as StoreEnvironmentDailySnapshotRecord["badWeatherTouchPenalty"] | null) ??
+      undefined,
+    environmentDisturbanceLevel:
+      (row.environment_disturbance_level as StoreEnvironmentDailySnapshotRecord["environmentDisturbanceLevel"] | null) ??
+      undefined,
+    narrativePolicy:
+      (row.narrative_policy as StoreEnvironmentDailySnapshotRecord["narrativePolicy"] | null) ??
+      undefined,
+    contextJson: (row.context_json as string | null) ?? undefined,
+    snapshotJson: String(row.snapshot_json),
+    sourceJson: (row.source_json as string | null) ?? undefined,
+    collectedAt: String(row.collected_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function mapStoreExternalObservationRow(
+  row: Record<string, unknown>,
+): HetangStoreExternalObservation {
+  return {
+    observationId: String(row.observation_id),
+    orgId: String(row.org_id),
+    snapshotDate: String(row.snapshot_date),
+    sourcePlatform: String(row.source_platform),
+    metricDomain: String(row.metric_domain),
+    metricKey: String(row.metric_key),
+    valueNum:
+      row.value_num === null || row.value_num === undefined
+        ? undefined
+        : normalizeNumeric(row.value_num),
+    valueText: (row.value_text as string | null) ?? undefined,
+    valueJson: parseJsonValue(row.value_json),
+    unit: (row.unit as string | null) ?? undefined,
+    truthLevel: String(row.truth_level) as HetangStoreExternalContextTruthLevel,
+    confidence: String(row.confidence) as HetangStoreExternalContextConfidence,
+    sourceLabel: (row.source_label as string | null) ?? undefined,
+    sourceUri: (row.source_uri as string | null) ?? undefined,
+    batchId: (row.batch_id as string | null) ?? undefined,
+    evidenceDocumentId: (row.evidence_document_id as string | null) ?? undefined,
+    applicableModules: parseStringArray(row.applicable_modules_json),
+    notForScoring: Boolean(row.not_for_scoring),
+    validFrom: (row.valid_from as string | null) ?? undefined,
+    validTo: (row.valid_to as string | null) ?? undefined,
+    rawJson: String(row.raw_json),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function mapCustomerServiceObservationRow(
+  row: Record<string, unknown>,
+): CustomerServiceObservationRecord {
+  return {
+    observationId: String(row.observation_id),
+    orgId: String(row.org_id),
+    memberId: (row.member_id as string | null) ?? undefined,
+    customerIdentityKey: String(row.customer_identity_key),
+    sourceRole: String(row.source_role) as CustomerServiceObservationRecord["sourceRole"],
+    sourceType: String(row.source_type) as CustomerServiceObservationRecord["sourceType"],
+    observerId: (row.observer_id as string | null) ?? undefined,
+    batchId: (row.batch_id as string | null) ?? undefined,
+    signalDomain: String(row.signal_domain),
+    signalKey: String(row.signal_key),
+    valueNum:
+      row.value_num === null || row.value_num === undefined
+        ? undefined
+        : normalizeNumeric(row.value_num),
+    valueText: (row.value_text as string | null) ?? undefined,
+    valueJson: parseJsonValue(row.value_json),
+    confidence: String(row.confidence) as CustomerServiceObservationRecord["confidence"],
+    truthBoundary: String(row.truth_boundary) as CustomerObservationTruthBoundary,
+    observedAt: String(row.observed_at),
+    validTo: (row.valid_to as string | null) ?? undefined,
+    rawNote: (row.raw_note as string | null) ?? undefined,
+    rawJson: String(row.raw_json),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function mapCustomerOperatingSignalRow(
+  row: Record<string, unknown>,
+): CustomerOperatingSignalRecord {
+  return {
+    signalId: String(row.signal_id),
+    orgId: String(row.org_id),
+    memberId: (row.member_id as string | null) ?? undefined,
+    customerIdentityKey: String(row.customer_identity_key),
+    signalDomain: String(row.signal_domain),
+    signalKey: String(row.signal_key),
+    valueNum:
+      row.value_num === null || row.value_num === undefined
+        ? undefined
+        : normalizeNumeric(row.value_num),
+    valueText: (row.value_text as string | null) ?? undefined,
+    valueJson: parseJsonValue(row.value_json),
+    confidence: String(row.confidence) as CustomerOperatingSignalRecord["confidence"],
+    truthBoundary: String(row.truth_boundary) as CustomerObservationTruthBoundary,
+    scoringScope: String(row.scoring_scope) as CustomerOperatingSignalRecord["scoringScope"],
+    sourceObservationIds: parseStringArray(row.source_observation_ids_json),
+    supportCount: normalizeNumeric(row.support_count),
+    observedAt: String(row.observed_at),
+    validTo: (row.valid_to as string | null) ?? undefined,
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function mapCustomerOperatingProfileDailyRow(
+  row: Record<string, unknown>,
+): CustomerOperatingProfileDailyRecord {
+  return {
+    orgId: String(row.org_id),
+    bizDate: String(row.biz_date),
+    memberId: (row.member_id as string | null) ?? undefined,
+    customerIdentityKey: String(row.customer_identity_key),
+    customerDisplayName: String(row.customer_display_name),
+    identityProfileJson: (parseJsonValue(row.identity_profile_json) as Record<string, unknown>) ?? {},
+    spendingProfileJson: (parseJsonValue(row.spending_profile_json) as Record<string, unknown>) ?? {},
+    serviceNeedProfileJson:
+      (parseJsonValue(row.service_need_profile_json) as Record<string, unknown>) ?? {},
+    interactionProfileJson:
+      (parseJsonValue(row.interaction_profile_json) as Record<string, unknown>) ?? {},
+    preferenceProfileJson: (parseJsonValue(row.preference_profile_json) as Record<string, unknown>) ?? {},
+    scenarioProfileJson: (parseJsonValue(row.scenario_profile_json) as Record<string, unknown>) ?? {},
+    relationshipProfileJson:
+      (parseJsonValue(row.relationship_profile_json) as Record<string, unknown>) ?? {},
+    opportunityProfileJson:
+      (parseJsonValue(row.opportunity_profile_json) as Record<string, unknown>) ?? {},
+    sourceSignalIds: parseStringArray(row.source_signal_ids_json),
+    updatedAt: String(row.updated_at),
+  };
 }
 
 function mapCustomerTechLinkRow(
@@ -886,6 +1249,45 @@ function mapMemberReactivationFeedbackRow(
   };
 }
 
+function mapMemberReactivationOutcomeSnapshotRow(
+  orgId: string,
+  row: Record<string, unknown>,
+): MemberReactivationOutcomeSnapshotRecord {
+  return {
+    orgId,
+    bizDate: String(row.biz_date),
+    memberId: String(row.member_id),
+    customerIdentityKey: String(row.customer_identity_key),
+    customerDisplayName: String(row.customer_display_name),
+    primarySegment: String(
+      row.primary_segment,
+    ) as MemberReactivationOutcomeSnapshotRecord["primarySegment"],
+    followupBucket: String(
+      row.followup_bucket,
+    ) as MemberReactivationOutcomeSnapshotRecord["followupBucket"],
+    priorityBand: String(
+      row.priority_band,
+    ) as MemberReactivationOutcomeSnapshotRecord["priorityBand"],
+    recommendedActionLabel: String(
+      row.recommended_action_label,
+    ) as MemberReactivationOutcomeSnapshotRecord["recommendedActionLabel"],
+    feedbackStatus: String(
+      row.feedback_status,
+    ) as MemberReactivationOutcomeSnapshotRecord["feedbackStatus"],
+    contacted: Boolean(row.contacted),
+    replied: Boolean(row.replied),
+    booked: Boolean(row.booked),
+    arrived: Boolean(row.arrived),
+    closed: Boolean(row.closed),
+    outcomeLabel: String(
+      row.outcome_label,
+    ) as MemberReactivationOutcomeSnapshotRecord["outcomeLabel"],
+    outcomeScore: normalizeNumeric(row.outcome_score),
+    learningJson: String(row.learning_json),
+    updatedAt: String(row.updated_at),
+  };
+}
+
 function parseSourceConfigs(rawValue: unknown): HetangExternalSourceConfig[] {
   if (typeof rawValue !== "string") {
     return [];
@@ -951,9 +1353,15 @@ export class HetangOpsStore {
       deadLetterEnabled?: boolean;
     },
   ) {
-    this.rawIngestionStore = new HetangRawIngestionStore(this as unknown as any);
-    this.martDerivedStore = new HetangMartDerivedStore(this as unknown as any);
-    this.queueAccessControlStore = new HetangQueueAccessControlStore(this as unknown as any);
+    this.rawIngestionStore = new HetangRawIngestionStore(
+      this as unknown as ConstructorParameters<typeof HetangRawIngestionStore>[0],
+    );
+    this.martDerivedStore = new HetangMartDerivedStore(
+      this as unknown as ConstructorParameters<typeof HetangMartDerivedStore>[0],
+    );
+    this.queueAccessControlStore = new HetangQueueAccessControlStore(
+      this as unknown as ConstructorParameters<typeof HetangQueueAccessControlStore>[0],
+    );
     this.servingPublicationStore = new HetangServingPublicationStore({
       queryable: this.params.pool,
       requiredRelations: REQUIRED_ANALYTICS_VIEWS,
@@ -979,6 +1387,10 @@ export class HetangOpsStore {
 
   getQueueAccessControlStore(): HetangQueueAccessControlStore {
     return this.queueAccessControlStore;
+  }
+
+  getServingPublicationStore(): HetangServingPublicationStore {
+    return this.servingPublicationStore;
   }
 
   async initialize(): Promise<void> {
@@ -1089,7 +1501,9 @@ export class HetangOpsStore {
         consume_quota BOOLEAN NOT NULL DEFAULT TRUE,
         reason TEXT NOT NULL,
         command_body TEXT NOT NULL,
-        response_excerpt TEXT
+        response_excerpt TEXT,
+        query_entry_source TEXT,
+        query_entry_reason TEXT
       );
 
       CREATE TABLE IF NOT EXISTS inbound_message_audit_logs (
@@ -1198,6 +1612,50 @@ export class HetangOpsStore {
         dead_letter_scope TEXT NOT NULL,
         reason TEXT NOT NULL,
         payload_json TEXT,
+        created_at TEXT NOT NULL,
+        resolved_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS conversation_review_runs (
+        review_run_id TEXT PRIMARY KEY,
+        review_date TEXT NOT NULL,
+        source_window_start TEXT NOT NULL,
+        source_window_end TEXT NOT NULL,
+        status TEXT NOT NULL,
+        input_conversation_count INTEGER NOT NULL DEFAULT 0,
+        input_shadow_sample_count INTEGER NOT NULL DEFAULT 0,
+        input_analysis_job_count INTEGER NOT NULL DEFAULT 0,
+        finding_count INTEGER NOT NULL DEFAULT 0,
+        summary_json TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS conversation_review_findings (
+        finding_id TEXT PRIMARY KEY,
+        review_run_id TEXT NOT NULL REFERENCES conversation_review_runs(review_run_id) ON DELETE CASCADE,
+        conversation_id TEXT,
+        message_id TEXT,
+        job_id TEXT,
+        channel TEXT,
+        account_id TEXT,
+        chat_id TEXT,
+        sender_id TEXT,
+        org_id TEXT,
+        store_name TEXT,
+        finding_type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        confidence DOUBLE PRECISION,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        evidence_json TEXT NOT NULL,
+        suggested_action_type TEXT,
+        suggested_action_payload_json TEXT,
+        followup_targets_json TEXT,
+        memory_candidate_json TEXT,
+        status TEXT NOT NULL,
         created_at TEXT NOT NULL,
         resolved_at TEXT
       );
@@ -1430,6 +1888,15 @@ export class HetangOpsStore {
         PRIMARY KEY (org_id, biz_date)
       );
 
+      CREATE TABLE IF NOT EXISTS mart_daily_report_delivery_upgrades (
+        org_id TEXT NOT NULL,
+        biz_date TEXT NOT NULL,
+        store_name TEXT NOT NULL,
+        alert_sent_at TEXT,
+        upgraded_at TEXT NOT NULL,
+        PRIMARY KEY (org_id, biz_date)
+      );
+
       CREATE TABLE IF NOT EXISTS serving_manifest (
         serving_version TEXT PRIMARY KEY,
         published_at TEXT NOT NULL,
@@ -1531,6 +1998,25 @@ export class HetangOpsStore {
         member_pay_amount_30d_after_groupbuy DOUBLE PRECISION NOT NULL,
         high_value_member_within_30d BOOLEAN NOT NULL,
         cohort_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (org_id, biz_date, customer_identity_key)
+      );
+
+      CREATE TABLE IF NOT EXISTS mart_customer_operating_profiles_daily (
+        org_id TEXT NOT NULL,
+        biz_date TEXT NOT NULL,
+        customer_identity_key TEXT NOT NULL,
+        member_id TEXT,
+        customer_display_name TEXT NOT NULL,
+        identity_profile_json TEXT NOT NULL,
+        spending_profile_json TEXT NOT NULL,
+        service_need_profile_json TEXT NOT NULL,
+        interaction_profile_json TEXT NOT NULL,
+        preference_profile_json TEXT NOT NULL,
+        scenario_profile_json TEXT NOT NULL,
+        relationship_profile_json TEXT NOT NULL,
+        opportunity_profile_json TEXT NOT NULL,
+        source_signal_ids_json TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (org_id, biz_date, customer_identity_key)
       );
@@ -1666,11 +2152,263 @@ export class HetangOpsStore {
         PRIMARY KEY (org_id, biz_date, member_id)
       );
 
+      CREATE TABLE IF NOT EXISTS mart_member_reactivation_outcome_snapshots_daily (
+        org_id TEXT NOT NULL,
+        biz_date TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        customer_identity_key TEXT NOT NULL,
+        customer_display_name TEXT NOT NULL,
+        primary_segment TEXT NOT NULL,
+        followup_bucket TEXT NOT NULL,
+        priority_band TEXT NOT NULL,
+        recommended_action_label TEXT NOT NULL,
+        feedback_status TEXT NOT NULL,
+        contacted BOOLEAN NOT NULL DEFAULT FALSE,
+        replied BOOLEAN NOT NULL DEFAULT FALSE,
+        booked BOOLEAN NOT NULL DEFAULT FALSE,
+        arrived BOOLEAN NOT NULL DEFAULT FALSE,
+        closed BOOLEAN NOT NULL DEFAULT FALSE,
+        outcome_label TEXT NOT NULL,
+        outcome_score DOUBLE PRECISION NOT NULL,
+        learning_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (org_id, biz_date, member_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS store_master_profiles (
+        org_id TEXT PRIMARY KEY,
+        store_name TEXT NOT NULL,
+        brand_name TEXT,
+        city_name TEXT,
+        district_name TEXT,
+        address_text TEXT,
+        longitude DOUBLE PRECISION,
+        latitude DOUBLE PRECISION,
+        opening_date TEXT,
+        renovation_date TEXT,
+        area_m2 DOUBLE PRECISION,
+        room_count_total INTEGER,
+        room_mix_json TEXT,
+        service_hours_json TEXT,
+        store_format TEXT,
+        business_scene TEXT,
+        parking_available BOOLEAN,
+        parking_convenience_level TEXT,
+        operating_status TEXT,
+        source_label TEXT,
+        verified_at TEXT,
+        raw_json TEXT,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS store_master_profile_snapshots (
+        org_id TEXT NOT NULL,
+        snapshot_date TEXT NOT NULL,
+        snapshot_captured_at TEXT NOT NULL,
+        store_name TEXT NOT NULL,
+        brand_name TEXT,
+        city_name TEXT,
+        district_name TEXT,
+        address_text TEXT,
+        longitude DOUBLE PRECISION,
+        latitude DOUBLE PRECISION,
+        opening_date TEXT,
+        renovation_date TEXT,
+        area_m2 DOUBLE PRECISION,
+        room_count_total INTEGER,
+        room_mix_json TEXT,
+        service_hours_json TEXT,
+        store_format TEXT,
+        business_scene TEXT,
+        parking_available BOOLEAN,
+        parking_convenience_level TEXT,
+        operating_status TEXT,
+        source_label TEXT,
+        verified_at TEXT,
+        raw_json TEXT,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (org_id, snapshot_date, snapshot_captured_at)
+      );
+
+      CREATE TABLE IF NOT EXISTS industry_context_snapshots (
+        snapshot_date TEXT NOT NULL,
+        signal_kind TEXT NOT NULL,
+        signal_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        detail_json TEXT,
+        truth_boundary TEXT NOT NULL,
+        confidence TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        source_label TEXT,
+        source_uri TEXT,
+        applicable_modules_json TEXT NOT NULL,
+        note TEXT,
+        raw_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (snapshot_date, signal_kind, signal_key)
+      );
+
+      CREATE TABLE IF NOT EXISTS china_holiday_calendar_days (
+        biz_date TEXT PRIMARY KEY,
+        holiday_tag TEXT NOT NULL,
+        holiday_name TEXT,
+        is_adjusted_workday BOOLEAN NOT NULL DEFAULT FALSE,
+        source_version TEXT,
+        source_label TEXT,
+        raw_json TEXT,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS store_environment_daily_snapshots (
+        org_id TEXT NOT NULL,
+        biz_date TEXT NOT NULL,
+        city_code TEXT,
+        weekday_index INTEGER,
+        weekday_label TEXT,
+        is_weekend BOOLEAN,
+        holiday_tag TEXT,
+        holiday_name TEXT,
+        is_adjusted_workday BOOLEAN,
+        season_tag TEXT,
+        month_tag TEXT,
+        solar_term TEXT,
+        weather_condition_raw TEXT,
+        temperature_c DOUBLE PRECISION,
+        precipitation_mm DOUBLE PRECISION,
+        wind_level DOUBLE PRECISION,
+        weather_tag TEXT,
+        temperature_band TEXT,
+        precipitation_tag TEXT,
+        wind_tag TEXT,
+        city_seasonal_pattern TEXT,
+        nightlife_seasonality TEXT,
+        post_dinner_leisure_bias TEXT,
+        evening_outing_likelihood TEXT,
+        bad_weather_touch_penalty TEXT,
+        environment_disturbance_level TEXT,
+        narrative_policy TEXT,
+        context_json TEXT,
+        snapshot_json TEXT NOT NULL,
+        source_json TEXT,
+        collected_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (org_id, biz_date)
+      );
+
+      CREATE TABLE IF NOT EXISTS store_external_observation_batches (
+        batch_id TEXT PRIMARY KEY,
+        org_id TEXT NOT NULL,
+        source_platform TEXT NOT NULL,
+        capture_scope TEXT NOT NULL,
+        capture_mode TEXT NOT NULL,
+        captured_at TEXT NOT NULL,
+        operator_id TEXT,
+        browser_profile_id TEXT,
+        status TEXT NOT NULL,
+        raw_manifest_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS store_external_observations (
+        observation_id TEXT PRIMARY KEY,
+        org_id TEXT NOT NULL,
+        snapshot_date TEXT NOT NULL,
+        source_platform TEXT NOT NULL,
+        metric_domain TEXT NOT NULL,
+        metric_key TEXT NOT NULL,
+        value_num DOUBLE PRECISION,
+        value_text TEXT,
+        value_json TEXT,
+        unit TEXT,
+        truth_level TEXT NOT NULL,
+        confidence TEXT NOT NULL,
+        source_label TEXT,
+        source_uri TEXT,
+        batch_id TEXT,
+        evidence_document_id TEXT,
+        applicable_modules_json TEXT NOT NULL,
+        not_for_scoring BOOLEAN NOT NULL DEFAULT TRUE,
+        valid_from TEXT,
+        valid_to TEXT,
+        raw_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS customer_service_observation_batches (
+        batch_id TEXT PRIMARY KEY,
+        org_id TEXT NOT NULL,
+        source_role TEXT NOT NULL,
+        collection_surface TEXT NOT NULL,
+        capture_mode TEXT NOT NULL,
+        captured_at TEXT NOT NULL,
+        operator_id TEXT,
+        status TEXT NOT NULL,
+        raw_manifest_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS customer_service_observations (
+        observation_id TEXT PRIMARY KEY,
+        org_id TEXT NOT NULL,
+        member_id TEXT,
+        customer_identity_key TEXT NOT NULL,
+        source_role TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        observer_id TEXT,
+        batch_id TEXT,
+        signal_domain TEXT NOT NULL,
+        signal_key TEXT NOT NULL,
+        value_num DOUBLE PRECISION,
+        value_text TEXT,
+        value_json TEXT,
+        confidence TEXT NOT NULL,
+        truth_boundary TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        valid_to TEXT,
+        raw_note TEXT,
+        raw_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS customer_operating_signals (
+        signal_id TEXT PRIMARY KEY,
+        org_id TEXT NOT NULL,
+        member_id TEXT,
+        customer_identity_key TEXT NOT NULL,
+        signal_domain TEXT NOT NULL,
+        signal_key TEXT NOT NULL,
+        value_num DOUBLE PRECISION,
+        value_text TEXT,
+        value_json TEXT,
+        confidence TEXT NOT NULL,
+        truth_boundary TEXT NOT NULL,
+        scoring_scope TEXT NOT NULL,
+        source_observation_ids_json TEXT NOT NULL,
+        support_count INTEGER NOT NULL,
+        observed_at TEXT NOT NULL,
+        valid_to TEXT,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS external_source_documents (
         document_id TEXT PRIMARY KEY,
         source_id TEXT NOT NULL,
         source_tier TEXT NOT NULL,
         source_url TEXT NOT NULL,
+        scope_type TEXT NOT NULL DEFAULT 'hq',
+        org_id TEXT,
+        platform_store_id TEXT,
         title TEXT NOT NULL,
         summary TEXT NOT NULL,
         content_text TEXT,
@@ -1753,6 +2491,29 @@ export class HetangOpsStore {
         PRIMARY KEY (issue_id, item_id)
       );
 
+      CREATE TABLE IF NOT EXISTS store_external_context_entries (
+        org_id TEXT NOT NULL,
+        snapshot_date TEXT NOT NULL,
+        context_kind TEXT NOT NULL,
+        metric_key TEXT NOT NULL,
+        value_text TEXT,
+        value_num DOUBLE PRECISION,
+        value_json TEXT,
+        unit TEXT,
+        truth_level TEXT NOT NULL,
+        confidence TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        source_label TEXT,
+        source_uri TEXT,
+        applicable_modules_json TEXT NOT NULL,
+        not_for_scoring BOOLEAN NOT NULL DEFAULT TRUE,
+        note TEXT,
+        raw_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (org_id, snapshot_date, context_kind, metric_key)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_raw_api_rows_fingerprint
         ON raw_api_rows (row_fingerprint);
       CREATE INDEX IF NOT EXISTS idx_fact_consume_bills_biz_date
@@ -1771,6 +2532,26 @@ export class HetangOpsStore {
         ON employee_binding_scopes (channel, sender_id);
       CREATE INDEX IF NOT EXISTS idx_command_audit_logs_sender_time
         ON command_audit_logs (channel, sender_id, occurred_at);
+      CREATE INDEX IF NOT EXISTS idx_store_master_profiles_city
+        ON store_master_profiles (city_name, operating_status);
+      CREATE INDEX IF NOT EXISTS idx_store_master_profile_snapshots_org_date
+        ON store_master_profile_snapshots (org_id, snapshot_date DESC, snapshot_captured_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_industry_context_snapshots_date_kind
+        ON industry_context_snapshots (snapshot_date DESC, signal_kind, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_china_holiday_calendar_days_tag
+        ON china_holiday_calendar_days (holiday_tag, biz_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_store_environment_daily_snapshots_org_date
+        ON store_environment_daily_snapshots (org_id, biz_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_store_external_observation_batches_org_time
+        ON store_external_observation_batches (org_id, captured_at DESC, source_platform);
+      CREATE INDEX IF NOT EXISTS idx_store_external_observations_org_snapshot
+        ON store_external_observations (org_id, snapshot_date DESC, metric_domain, metric_key);
+      CREATE INDEX IF NOT EXISTS idx_customer_service_observation_batches_org_time
+        ON customer_service_observation_batches (org_id, captured_at DESC, source_role);
+      CREATE INDEX IF NOT EXISTS idx_customer_service_observations_identity_time
+        ON customer_service_observations (org_id, customer_identity_key, observed_at DESC, signal_domain, signal_key);
+      CREATE INDEX IF NOT EXISTS idx_customer_operating_signals_identity_time
+        ON customer_operating_signals (org_id, customer_identity_key, observed_at DESC, signal_domain, signal_key);
       CREATE INDEX IF NOT EXISTS idx_inbound_message_audit_logs_sender_time
         ON inbound_message_audit_logs (channel, sender_id, received_at DESC);
       CREATE INDEX IF NOT EXISTS idx_inbound_message_audit_logs_conversation_time
@@ -1785,6 +2566,12 @@ export class HetangOpsStore {
         ON analysis_job_subscribers (job_id, delivered_at, updated_at DESC, subscriber_key);
       CREATE INDEX IF NOT EXISTS idx_analysis_dead_letters_scope
         ON analysis_dead_letters (org_id, dead_letter_scope, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_conversation_review_runs_date
+        ON conversation_review_runs (review_date DESC, created_at DESC, review_run_id);
+      CREATE INDEX IF NOT EXISTS idx_conversation_review_findings_run
+        ON conversation_review_findings (review_run_id, created_at DESC, finding_id);
+      CREATE INDEX IF NOT EXISTS idx_conversation_review_findings_type_status
+        ON conversation_review_findings (finding_type, status, created_at DESC, finding_id);
       CREATE INDEX IF NOT EXISTS idx_mart_customer_tech_links_customer
         ON mart_customer_tech_links (org_id, biz_date, customer_identity_key);
       CREATE INDEX IF NOT EXISTS idx_mart_customer_tech_links_tech
@@ -1793,6 +2580,8 @@ export class HetangOpsStore {
         ON mart_customer_segments (org_id, biz_date, primary_segment);
       CREATE INDEX IF NOT EXISTS idx_mart_customer_conversion_cohorts_groupbuy
         ON mart_customer_conversion_cohorts (org_id, biz_date, first_groupbuy_biz_date);
+      CREATE INDEX IF NOT EXISTS idx_mart_customer_operating_profiles_daily_member
+        ON mart_customer_operating_profiles_daily (org_id, biz_date, member_id, customer_identity_key);
       CREATE INDEX IF NOT EXISTS idx_mart_member_reactivation_queue_priority
         ON mart_member_reactivation_queue_daily (org_id, biz_date, priority_rank, strategy_priority_score DESC);
       CREATE INDEX IF NOT EXISTS idx_mart_member_reactivation_queue_execution
@@ -1801,12 +2590,20 @@ export class HetangOpsStore {
         ON mart_member_reactivation_queue_daily (org_id, biz_date, followup_bucket, priority_rank);
       CREATE INDEX IF NOT EXISTS idx_ops_member_reactivation_feedback_status
         ON ops_member_reactivation_feedback (org_id, biz_date, feedback_status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_mart_member_reactivation_outcome_action
+        ON mart_member_reactivation_outcome_snapshots_daily (
+          org_id, biz_date, primary_segment, recommended_action_label, outcome_score DESC
+        );
       CREATE INDEX IF NOT EXISTS idx_external_source_documents_published
         ON external_source_documents (published_at DESC, source_tier, source_id);
       CREATE INDEX IF NOT EXISTS idx_external_source_documents_theme
         ON external_source_documents (theme, published_at DESC, document_id);
+      CREATE INDEX IF NOT EXISTS idx_external_source_documents_scope
+        ON external_source_documents (scope_type, org_id, platform_store_id, published_at DESC);
       CREATE INDEX IF NOT EXISTS idx_external_event_candidates_normalized
         ON external_event_candidates (normalized_key, theme, published_at DESC, candidate_id);
+      CREATE INDEX IF NOT EXISTS idx_store_external_context_entries_snapshot
+        ON store_external_context_entries (org_id, snapshot_date DESC, context_kind, metric_key);
       CREATE INDEX IF NOT EXISTS idx_external_event_cards_issue_theme
         ON external_event_cards (issue_date, theme, published_at DESC, card_id);
       CREATE INDEX IF NOT EXISTS idx_external_brief_issues_date
@@ -1827,6 +2624,8 @@ export class HetangOpsStore {
       ALTER TABLE mart_member_reactivation_queue_daily
         ADD COLUMN IF NOT EXISTS birthday_boost_score DOUBLE PRECISION NOT NULL DEFAULT 0;
       ALTER TABLE command_audit_logs ADD COLUMN IF NOT EXISTS consume_quota BOOLEAN NOT NULL DEFAULT TRUE;
+      ALTER TABLE command_audit_logs ADD COLUMN IF NOT EXISTS query_entry_source TEXT;
+      ALTER TABLE command_audit_logs ADD COLUMN IF NOT EXISTS query_entry_reason TEXT;
       ALTER TABLE analysis_jobs ADD COLUMN IF NOT EXISTS capability_id TEXT;
       ALTER TABLE analysis_jobs ADD COLUMN IF NOT EXISTS delivery_attempt_count INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE analysis_jobs ADD COLUMN IF NOT EXISTS last_delivery_attempt_at TEXT;
@@ -1862,7 +2661,11 @@ export class HetangOpsStore {
       ALTER TABLE external_source_documents ADD COLUMN IF NOT EXISTS action TEXT;
       ALTER TABLE external_source_documents ADD COLUMN IF NOT EXISTS object_text TEXT;
       ALTER TABLE external_source_documents ADD COLUMN IF NOT EXISTS score DOUBLE PRECISION;
+      ALTER TABLE external_source_documents ADD COLUMN IF NOT EXISTS scope_type TEXT NOT NULL DEFAULT 'hq';
+      ALTER TABLE external_source_documents ADD COLUMN IF NOT EXISTS org_id TEXT;
+      ALTER TABLE external_source_documents ADD COLUMN IF NOT EXISTS platform_store_id TEXT;
       ALTER TABLE external_event_cards ADD COLUMN IF NOT EXISTS sources_json TEXT;
+      ALTER TABLE conversation_review_findings ADD COLUMN IF NOT EXISTS followup_targets_json TEXT;
     `);
 
     for (const store of this.params.stores) {
@@ -1878,19 +2681,28 @@ export class HetangOpsStore {
         [store.orgId, store.storeName, JSON.stringify(store.rawAliases ?? [])],
       );
     }
-      await this.rebuildAnalyticsViews();
       this.initialized = true;
+      try {
+        await this.ensureAnalyticsViewsReady();
+      } catch (error) {
+        this.initialized = false;
+        throw error;
+      }
     });
   }
 
   private async withInitializationLock<T>(work: () => Promise<T>): Promise<T> {
-    const locked = await this.acquireAdvisoryLock(STORE_INITIALIZATION_ADVISORY_LOCK_KEY);
+    return await this.withAdvisoryLock(STORE_INITIALIZATION_ADVISORY_LOCK_KEY, work);
+  }
+
+  private async withAdvisoryLock<T>(lockKey: number, work: () => Promise<T>): Promise<T> {
+    const locked = await this.acquireAdvisoryLock(lockKey);
 
     try {
       return await work();
     } finally {
       if (locked) {
-        await this.releaseAdvisoryLock(STORE_INITIALIZATION_ADVISORY_LOCK_KEY);
+        await this.releaseAdvisoryLock(lockKey);
       }
     }
   }
@@ -1986,60 +2798,103 @@ export class HetangOpsStore {
   }
 
   private async rebuildAnalyticsViews(): Promise<void> {
-    try {
-      await this.rebuildAnalyticsViewsForMode("materialized");
-      this.analyticsViewMode = "materialized";
-    } catch (error) {
-      if (isDropRelationSyntaxUnsupportedError(error) && (this.initialized || this.analyticsViewMode === "materialized")) {
-        await this.refreshAnalyticsViews();
+    await this.withAdvisoryLock(ANALYTICS_REBUILD_ADVISORY_LOCK_KEY, async () => {
+      try {
+        await this.rebuildAnalyticsViewsForMode("materialized");
         this.analyticsViewMode = "materialized";
-        return;
+      } catch (error) {
+        if (
+          isDropRelationSyntaxUnsupportedError(error) &&
+          (this.initialized || this.analyticsViewMode === "materialized")
+        ) {
+          await this.refreshAnalyticsViews();
+          this.analyticsViewMode = "materialized";
+          return;
+        }
+        if (!isMaterializedViewUnsupportedError(error)) {
+          throw error;
+        }
+        await this.rebuildAnalyticsViewsForMode("plain");
+        this.analyticsViewMode = "plain";
       }
-      if (!isMaterializedViewUnsupportedError(error)) {
-        throw error;
-      }
-      await this.rebuildAnalyticsViewsForMode("plain");
-      this.analyticsViewMode = "plain";
-    }
+    });
   }
 
-  private async dropAnalyticsRelationIfExists(name: string): Promise<void> {
+  private async dropAnalyticsRelationIfExists(
+    name: string,
+    queryable: StoreQueryable = this.params.pool,
+  ): Promise<void> {
     assertSafeTableName(name);
-    if (!(await this.relationExists(name))) {
+    const result = await queryable.query(
+      `
+        SELECT relation.relkind AS relkind
+        FROM pg_class AS relation
+        INNER JOIN pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND relation.relname = $1
+          AND relation.relkind IN ('v', 'm')
+        LIMIT 1
+      `,
+      [name],
+    );
+    const relkind = String(result.rows[0]?.relkind ?? "");
+    if (relkind !== "v" && relkind !== "m") {
       return;
     }
-    try {
-      await this.params.pool.query(`DROP VIEW ${name}`);
-      return;
-    } catch (error) {
-      if (isMissingRelationError(error)) {
-        return;
-      }
-      if (!isWrongDropRelationTypeError(error, "view")) {
+    if (relkind === "v") {
+      try {
+        await queryable.query(`DROP VIEW ${name}`);
+      } catch (error) {
+        if (isMissingRelationError(error)) {
+          return;
+        }
         throw error;
       }
+      return;
     }
 
     try {
-      await this.params.pool.query(`DROP MATERIALIZED VIEW ${name}`);
+      await queryable.query(`DROP MATERIALIZED VIEW ${name}`);
     } catch (error) {
       if (isMissingRelationError(error)) {
         return;
       }
-      if (!isWrongDropRelationTypeError(error, "materialized view")) {
-        throw error;
-      }
+      throw error;
     }
   }
 
   private async rebuildAnalyticsViewsForMode(mode: "materialized" | "plain"): Promise<void> {
     const relationKeyword = mode === "materialized" ? "MATERIALIZED VIEW" : "OR REPLACE VIEW";
+    const client = await this.params.pool.connect();
+    const queryable: StoreQueryable = client;
 
-    for (const relation of ANALYTICS_REBUILD_DROP_ORDER) {
-      await this.dropAnalyticsRelationIfExists(relation);
+    try {
+      await client.query("BEGIN");
+
+      for (const relation of ANALYTICS_REBUILD_DROP_ORDER) {
+        await this.dropAnalyticsRelationIfExists(relation, queryable);
+      }
+
+      await this.rebuildAnalyticsViewsForModeStatements(relationKeyword, queryable);
+      await client.query("COMMIT");
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // Preserve the original rebuild failure.
+      }
+      throw error;
+    } finally {
+      client.release();
     }
-
-    await this.params.pool.query(`
+  }
+  
+  private async rebuildAnalyticsViewsForModeStatements(
+    relationKeyword: string,
+    queryable: StoreQueryable,
+  ): Promise<void> {
+      await queryable.query(`
       CREATE ${relationKeyword} mv_store_manager_daily_kpi AS
       WITH consume_daily AS (
         SELECT
@@ -2102,7 +2957,7 @@ export class HetangOpsStore {
         ON dim_store.org_id = daily_keys.org_id;
     `);
 
-    await this.params.pool.query(`
+      await queryable.query(`
       CREATE ${relationKeyword} mv_tech_profile_30d AS
       WITH window_dates AS (
         SELECT DISTINCT
@@ -2229,7 +3084,7 @@ export class HetangOpsStore {
        AND customer_window.tech_code = profile_keys.tech_code;
     `);
 
-    await this.params.pool.query(`
+      await queryable.query(`
       CREATE ${relationKeyword} mv_customer_profile_90d AS
       SELECT
         segments.org_id AS org_id,
@@ -2295,7 +3150,7 @@ export class HetangOpsStore {
        AND cohorts.customer_identity_key = segments.customer_identity_key;
     `);
 
-    await this.params.pool.query(`
+      await queryable.query(`
       CREATE ${relationKeyword} mv_store_review_7d AS
       WITH window_dates AS (
         SELECT DISTINCT
@@ -2351,6 +3206,7 @@ export class HetangOpsStore {
           window_dates.org_id,
           window_dates.window_end_biz_date,
           SUM(COALESCE((metrics_daily.metrics ->> 'serviceOrderCount')::DOUBLE PRECISION, 0)) AS service_order_count_7d,
+          SUM(COALESCE((metrics_daily.metrics ->> 'customerCount')::DOUBLE PRECISION, 0)) AS customer_count_7d,
           SUM(COALESCE((metrics_daily.metrics ->> 'groupbuyOrderCount')::DOUBLE PRECISION, 0)) AS groupbuy_order_count_7d,
           SUM(COALESCE((metrics_daily.metrics ->> 'upClockRecordCount')::DOUBLE PRECISION, 0)) AS up_clock_record_count_7d,
           SUM(COALESCE((metrics_daily.metrics ->> 'pointClockRecordCount')::DOUBLE PRECISION, 0)) AS point_clock_record_count_7d,
@@ -2451,6 +3307,7 @@ export class HetangOpsStore {
         COALESCE(dim_store.store_name, window_dates.org_id) AS store_name,
         COALESCE(kpi_window.revenue_7d, 0) AS revenue_7d,
         COALESCE(kpi_window.order_count_7d, 0) AS order_count_7d,
+        COALESCE(metrics_window_7d.customer_count_7d, 0) AS customer_count_7d,
         COALESCE(kpi_window.total_clocks_7d, 0) AS total_clocks_7d,
         kpi_window.clock_effect_7d AS clock_effect_7d,
         kpi_window.average_ticket_7d AS average_ticket_7d,
@@ -2540,7 +3397,7 @@ export class HetangOpsStore {
         ON dim_store.org_id = window_dates.org_id;
     `);
 
-    await this.params.pool.query(`
+      await queryable.query(`
       CREATE ${relationKeyword} mv_store_summary_30d AS
       WITH window_dates AS (
         SELECT DISTINCT
@@ -2596,6 +3453,7 @@ export class HetangOpsStore {
           window_dates.org_id,
           window_dates.window_end_biz_date,
           SUM(COALESCE((metrics_daily.metrics ->> 'serviceOrderCount')::DOUBLE PRECISION, 0)) AS service_order_count_30d,
+          SUM(COALESCE((metrics_daily.metrics ->> 'customerCount')::DOUBLE PRECISION, 0)) AS customer_count_30d,
           SUM(COALESCE((metrics_daily.metrics ->> 'groupbuyOrderCount')::DOUBLE PRECISION, 0)) AS groupbuy_order_count_30d,
           SUM(COALESCE((metrics_daily.metrics ->> 'upClockRecordCount')::DOUBLE PRECISION, 0)) AS up_clock_record_count_30d,
           SUM(COALESCE((metrics_daily.metrics ->> 'pointClockRecordCount')::DOUBLE PRECISION, 0)) AS point_clock_record_count_30d,
@@ -2675,6 +3533,7 @@ export class HetangOpsStore {
         COALESCE(dim_store.store_name, window_dates.org_id) AS store_name,
         COALESCE(kpi_window.revenue_30d, 0) AS revenue_30d,
         COALESCE(kpi_window.order_count_30d, 0) AS order_count_30d,
+        COALESCE(metrics_window_30d.customer_count_30d, 0) AS customer_count_30d,
         COALESCE(kpi_window.total_clocks_30d, 0) AS total_clocks_30d,
         kpi_window.clock_effect_30d AS clock_effect_30d,
         kpi_window.average_ticket_30d AS average_ticket_30d,
@@ -2761,7 +3620,7 @@ export class HetangOpsStore {
         ON dim_store.org_id = window_dates.org_id;
     `);
 
-    await this.params.pool.query(`
+      await queryable.query(`
       CREATE OR REPLACE VIEW serving_store_day AS
       SELECT
         metrics.org_id AS org_id,
@@ -2780,7 +3639,7 @@ export class HetangOpsStore {
         ON store.org_id = metrics.org_id;
     `);
 
-    await this.params.pool.query(`
+      await queryable.query(`
       CREATE OR REPLACE VIEW serving_store_day_breakdown AS
       WITH day_keys AS (
         SELECT org_id, biz_date FROM mv_store_manager_daily_kpi
@@ -2810,7 +3669,7 @@ export class HetangOpsStore {
         ON store.org_id = day_keys.org_id;
     `);
 
-    await this.params.pool.query(`
+      await queryable.query(`
       CREATE OR REPLACE VIEW serving_store_window AS
       SELECT
         review.org_id AS org_id,
@@ -2819,6 +3678,7 @@ export class HetangOpsStore {
         review.store_name AS store_name,
         review.revenue_7d AS service_revenue,
         review.order_count_7d AS service_order_count,
+        review.customer_count_7d AS customer_count,
         review.total_clocks_7d AS total_clocks,
         review.average_ticket_7d AS average_ticket,
         review.clock_effect_7d AS clock_effect,
@@ -2840,6 +3700,7 @@ export class HetangOpsStore {
         summary.store_name AS store_name,
         summary.revenue_30d AS service_revenue,
         summary.order_count_30d AS service_order_count,
+        summary.customer_count_30d AS customer_count,
         summary.total_clocks_30d AS total_clocks,
         summary.average_ticket_30d AS average_ticket,
         summary.clock_effect_30d AS clock_effect,
@@ -2855,7 +3716,7 @@ export class HetangOpsStore {
       FROM mv_store_summary_30d AS summary;
     `);
 
-    await this.params.pool.query(`
+      await queryable.query(`
       CREATE OR REPLACE VIEW serving_customer_profile_asof AS
       SELECT
         profile.org_id AS org_id,
@@ -2893,7 +3754,7 @@ export class HetangOpsStore {
       FROM mv_customer_profile_90d AS profile;
     `);
 
-    await this.params.pool.query(`
+      await queryable.query(`
       CREATE OR REPLACE VIEW serving_customer_ranked_list_asof AS
       SELECT
         profile.org_id AS org_id,
@@ -2946,7 +3807,7 @@ export class HetangOpsStore {
        AND queue.member_id = profile.member_id;
     `);
 
-    await this.params.pool.query(`
+      await queryable.query(`
       CREATE OR REPLACE VIEW serving_tech_profile_window AS
       SELECT
         profile.org_id AS org_id,
@@ -2965,7 +3826,7 @@ export class HetangOpsStore {
       FROM mv_tech_profile_30d AS profile;
     `);
 
-    await this.params.pool.query(`
+      await queryable.query(`
       CREATE OR REPLACE VIEW serving_hq_portfolio_window AS
       SELECT
         org_id,
@@ -2974,6 +3835,7 @@ export class HetangOpsStore {
         store_name,
         service_revenue,
         service_order_count,
+        customer_count,
         total_clocks,
         average_ticket,
         clock_effect,
@@ -3003,6 +3865,15 @@ export class HetangOpsStore {
       if (!(await this.relationExists(relation))) {
         await this.rebuildAnalyticsViews();
         this.analyticsPublicationDirty = false;
+        const publishedAt = new Date().toISOString();
+        await this.servingPublicationStore.publishServingManifest(
+          resolveGeneratedServingVersion(publishedAt),
+          publishedAt,
+          resolveAutoServingPublicationNotes({
+            publishedAt,
+            rebuild: true,
+          }),
+        );
         return;
       }
     }
@@ -3012,15 +3883,32 @@ export class HetangOpsStore {
     if (!this.initialized || this.analyticsViewMode !== "materialized") {
       return;
     }
+    const publishedAt = new Date().toISOString();
     for (const relation of REQUIRED_ANALYTICS_VIEWS) {
       if (!(await this.relationExists(relation))) {
         await this.rebuildAnalyticsViews();
         this.analyticsPublicationDirty = false;
+        await this.servingPublicationStore.publishServingManifest(
+          resolveGeneratedServingVersion(publishedAt),
+          publishedAt,
+          resolveAutoServingPublicationNotes({
+            publishedAt,
+            rebuild: true,
+          }),
+        );
         return;
       }
     }
     await this.refreshAnalyticsViews();
     this.analyticsPublicationDirty = false;
+    await this.servingPublicationStore.publishServingManifest(
+      resolveGeneratedServingVersion(publishedAt),
+      publishedAt,
+      resolveAutoServingPublicationNotes({
+        publishedAt,
+        rebuild: true,
+      }),
+    );
   }
 
   async publishServingManifest(servingVersion: string, publishedAt: string, notes?: string): Promise<void> {
@@ -3043,6 +3931,7 @@ export class HetangOpsStore {
         }
       }
     }
+    const dataChanged = materialized ? needsRefresh : this.analyticsPublicationDirty;
     if (materialized && needsRefresh) {
       if (params.rebuild) {
         await this.rebuildAnalyticsViews();
@@ -3054,6 +3943,7 @@ export class HetangOpsStore {
       this.analyticsPublicationDirty = false;
     }
     const shouldPublishManifest =
+      dataChanged ||
       typeof params.publishedAt === "string" ||
       typeof params.servingVersion === "string" ||
       typeof params.notes === "string";
@@ -3065,7 +3955,13 @@ export class HetangOpsStore {
     await this.servingPublicationStore.publishServingManifest(
       servingVersion,
       publishedAt,
-      params.notes,
+      params.notes ??
+        (dataChanged
+          ? resolveAutoServingPublicationNotes({
+              publishedAt,
+              rebuild: params.rebuild,
+            })
+          : undefined),
     );
     return servingVersion;
   }
@@ -3139,6 +4035,124 @@ export class HetangOpsStore {
       `,
       [params.status, params.finishedAt, JSON.stringify(params.details ?? {}), params.syncRunId],
     );
+  }
+
+  async reclaimStaleSyncRuns(params: {
+    staleBefore: string;
+    reclaimedAt: string;
+    modes?: string[];
+  }): Promise<number> {
+    const detailsJson = JSON.stringify({
+      reclaimedAsStale: true,
+      reclaimedAt: params.reclaimedAt,
+      staleBefore: params.staleBefore,
+      previousStatus: "running",
+    });
+    const result = await this.params.pool.query(
+      `
+        WITH updated AS (
+          UPDATE sync_runs
+          SET status = 'failed',
+              finished_at = $1,
+              details_json = $2
+          WHERE status = 'running'
+            AND started_at < $3
+            AND ($4::text[] IS NULL OR mode = ANY($4::text[]))
+          RETURNING sync_run_id
+        )
+        SELECT COUNT(*)::int AS reclaimed_count
+        FROM updated
+      `,
+      [
+        params.reclaimedAt,
+        detailsJson,
+        params.staleBefore,
+        params.modes?.length ? params.modes : null,
+      ],
+    );
+    return normalizeNumeric(result.rows[0]?.reclaimed_count);
+  }
+
+  async reclaimSupersededSyncRuns(params: {
+    orgId: string;
+    mode: string;
+    reclaimedAt: string;
+    supersededBySyncRunId: string;
+    supersededByStartedAt: string;
+  }): Promise<number> {
+    const detailsJson = JSON.stringify({
+      reclaimedAsSuperseded: true,
+      reclaimedAt: params.reclaimedAt,
+      previousStatus: "running",
+      supersededBySyncRunId: params.supersededBySyncRunId,
+      supersededByStartedAt: params.supersededByStartedAt,
+      supersededByMode: params.mode,
+    });
+    const result = await this.params.pool.query(
+      `
+        WITH updated AS (
+          UPDATE sync_runs
+          SET status = 'failed',
+              finished_at = $1,
+              details_json = $2
+          WHERE status = 'running'
+            AND org_id = $3
+            AND mode = $4
+            AND sync_run_id <> $5
+          RETURNING sync_run_id
+        )
+        SELECT COUNT(*)::int AS reclaimed_count
+        FROM updated
+      `,
+      [
+        params.reclaimedAt,
+        detailsJson,
+        params.orgId,
+        params.mode,
+        params.supersededBySyncRunId,
+      ],
+    );
+    return normalizeNumeric(result.rows[0]?.reclaimed_count);
+  }
+
+  async getSyncRunExecutionSummary(params: {
+    staleBefore: string;
+  }): Promise<{
+    runningCount: number;
+    staleRunningCount: number;
+    dailyRunningCount: number;
+    staleDailyRunningCount: number;
+    backfillRunningCount: number;
+    staleBackfillRunningCount: number;
+    latestStartedAt?: string;
+  }> {
+    const result = await this.params.pool.query(
+      `
+        SELECT
+          SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END)::int AS running_count,
+          SUM(CASE WHEN status = 'running' AND started_at < $1 THEN 1 ELSE 0 END)::int AS stale_running_count,
+          SUM(CASE WHEN status = 'running' AND mode = 'daily' THEN 1 ELSE 0 END)::int AS daily_running_count,
+          SUM(CASE WHEN status = 'running' AND mode = 'daily' AND started_at < $1 THEN 1 ELSE 0 END)::int AS stale_daily_running_count,
+          SUM(CASE WHEN status = 'running' AND mode = 'backfill' THEN 1 ELSE 0 END)::int AS backfill_running_count,
+          SUM(CASE WHEN status = 'running' AND mode = 'backfill' AND started_at < $1 THEN 1 ELSE 0 END)::int AS stale_backfill_running_count,
+          MAX(CASE WHEN status = 'running' THEN started_at ELSE NULL END) AS latest_started_at
+        FROM sync_runs
+      `,
+      [params.staleBefore],
+    );
+    const row = (result.rows[0] ?? {}) as Record<string, unknown>;
+    return {
+      runningCount: normalizeNumeric(row.running_count ?? 0),
+      staleRunningCount: normalizeNumeric(row.stale_running_count ?? 0),
+      dailyRunningCount: normalizeNumeric(row.daily_running_count ?? 0),
+      staleDailyRunningCount: normalizeNumeric(row.stale_daily_running_count ?? 0),
+      backfillRunningCount: normalizeNumeric(row.backfill_running_count ?? 0),
+      staleBackfillRunningCount: normalizeNumeric(row.stale_backfill_running_count ?? 0),
+      latestStartedAt:
+        typeof row.latest_started_at === "string" && row.latest_started_at.trim().length > 0
+          ? row.latest_started_at
+          : undefined,
+    };
   }
 
   async recordSyncError(params: {
@@ -3265,6 +4279,16 @@ export class HetangOpsStore {
     }
     const parsed = JSON.parse(rawState);
     return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  }
+
+  async deleteScheduledJobState(jobType: string, stateKey: string): Promise<void> {
+    await this.params.pool.query(
+      `
+        DELETE FROM scheduled_job_state
+        WHERE job_type = $1 AND state_key = $2
+      `,
+      [jobType, stateKey],
+    );
   }
 
   async setScheduledJobState(
@@ -3448,7 +4472,9 @@ export class HetangOpsStore {
       }
       const rowCount = Number(row.row_count ?? 0);
       if (Number.isFinite(rowCount) && rowCount > 0) {
-        addBizDateRangeToCoverage(days, clampedWindow.startBizDate, clampedWindow.endBizDate);
+        // Non-zero batches only prove that some rows existed within the requested window.
+        // Actual daily raw-fact coverage must still come from landed fact rows, otherwise a
+        // single sparse batch would incorrectly mark the whole window as fully covered.
         continue;
       }
 
@@ -3765,8 +4791,9 @@ export class HetangOpsStore {
       `
         INSERT INTO command_audit_logs (
           occurred_at, channel, sender_id, command_name, action,
-          requested_org_id, effective_org_id, decision, consume_quota, reason, command_body, response_excerpt
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          requested_org_id, effective_org_id, decision, consume_quota, reason, command_body, response_excerpt,
+          query_entry_source, query_entry_reason
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       `,
       [
         record.occurredAt,
@@ -3781,6 +4808,8 @@ export class HetangOpsStore {
         record.reason,
         record.commandBody,
         record.responseExcerpt ?? null,
+        record.queryEntrySource ?? null,
+        record.queryEntryReason ?? null,
       ],
     );
   }
@@ -3803,6 +4832,105 @@ export class HetangOpsStore {
       [params.channel, params.senderId, params.since],
     );
     return normalizeNumeric(result.rows[0]?.count);
+  }
+
+  async getRecentCommandAuditSummary(params?: {
+    channel?: string;
+    windowHours?: number;
+    now?: Date;
+  }): Promise<HetangRecentCommandAuditSummary> {
+    const windowHours = Math.max(1, Math.trunc(params?.windowHours ?? 24));
+    const now = params?.now ?? new Date();
+    const since = new Date(now.getTime() - windowHours * 60 * 60 * 1_000).toISOString();
+    const values: unknown[] = [since];
+    const channelClause =
+      typeof params?.channel === "string" && params.channel.trim().length > 0
+        ? `AND channel = $${values.push(params.channel.trim())}`
+        : "";
+    const summaryResult = await this.params.pool.query(
+      `
+        SELECT
+          COUNT(*)::int AS recent_allowed_count,
+          COALESCE(SUM(CASE WHEN action = 'query' THEN 1 ELSE 0 END), 0)::int AS recent_query_count,
+          COALESCE(
+            SUM(CASE WHEN action = 'query' AND query_entry_source = 'rule' THEN 1 ELSE 0 END),
+            0
+          )::int AS recent_query_rule_count,
+          COALESCE(
+            SUM(CASE WHEN action = 'query' AND query_entry_source = 'rule_clarifier' THEN 1 ELSE 0 END),
+            0
+          )::int AS recent_query_clarify_count,
+          COALESCE(
+            SUM(CASE WHEN action = 'query' AND query_entry_source = 'ai_fallback' THEN 1 ELSE 0 END),
+            0
+          )::int AS recent_query_ai_fallback_count,
+          COALESCE(
+            SUM(CASE WHEN action = 'query' AND query_entry_source = 'none' THEN 1 ELSE 0 END),
+            0
+          )::int AS recent_query_unresolved_count
+        FROM command_audit_logs
+        WHERE decision = 'allowed'
+          AND consume_quota = TRUE
+          AND occurred_at >= $1
+          ${channelClause}
+      `,
+      values,
+    );
+    const latestResult = await this.params.pool.query(
+      `
+        SELECT occurred_at, command_body, action, sender_id
+        FROM command_audit_logs
+        WHERE decision = 'allowed'
+          AND consume_quota = TRUE
+          AND occurred_at >= $1
+          ${channelClause}
+        ORDER BY occurred_at DESC
+        LIMIT 1
+      `,
+      values,
+    );
+    const latestQueryResult = await this.params.pool.query(
+      `
+        SELECT occurred_at, query_entry_source, query_entry_reason
+        FROM command_audit_logs
+        WHERE decision = 'allowed'
+          AND consume_quota = TRUE
+          AND action = 'query'
+          AND occurred_at >= $1
+          ${channelClause}
+        ORDER BY occurred_at DESC
+        LIMIT 1
+      `,
+      values,
+    );
+    const row = summaryResult.rows[0] as Record<string, unknown> | undefined;
+    const latestRow = latestResult.rows[0] as Record<string, unknown> | undefined;
+    const latestQueryRow = latestQueryResult.rows[0] as Record<string, unknown> | undefined;
+    return {
+      recentAllowedCount: normalizeNumeric(row?.recent_allowed_count),
+      windowHours,
+      latestOccurredAt:
+        typeof latestRow?.occurred_at === "string" ? latestRow.occurred_at : null,
+      latestCommandBody:
+        typeof latestRow?.command_body === "string" ? latestRow.command_body : null,
+      latestAction: typeof latestRow?.action === "string" ? latestRow.action : null,
+      latestSenderId: typeof latestRow?.sender_id === "string" ? latestRow.sender_id : null,
+      recentQueryCount: normalizeNumeric(row?.recent_query_count),
+      recentQueryRuleCount: normalizeNumeric(row?.recent_query_rule_count),
+      recentQueryClarifyCount: normalizeNumeric(row?.recent_query_clarify_count),
+      recentQueryAiFallbackCount: normalizeNumeric(row?.recent_query_ai_fallback_count),
+      recentQueryUnresolvedCount: normalizeNumeric(row?.recent_query_unresolved_count),
+      latestQueryOccurredAt:
+        typeof latestQueryRow?.occurred_at === "string" ? latestQueryRow.occurred_at : null,
+      latestQueryEntrySource:
+        typeof latestQueryRow?.query_entry_source === "string"
+          ? latestQueryRow.query_entry_source
+          : null,
+      latestQueryEntryReason:
+        typeof latestQueryRow?.query_entry_reason === "string"
+          ? latestQueryRow.query_entry_reason
+          : null,
+    };
   }
 
   async recordInboundMessageAudit(record: HetangInboundMessageAuditRecord): Promise<void> {
@@ -3912,6 +5040,233 @@ export class HetangOpsStore {
       effectiveContent: (row.effective_content as string | null) ?? undefined,
       receivedAt: String(row.received_at),
       recordedAt: (row.recorded_at as string | null) ?? undefined,
+    }));
+  }
+
+  async createConversationReviewRun(run: HetangConversationReviewRun): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO conversation_review_runs (
+          review_run_id, review_date, source_window_start, source_window_end, status,
+          input_conversation_count, input_shadow_sample_count, input_analysis_job_count,
+          finding_count, summary_json, started_at, completed_at, created_at, updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5,
+          $6, $7, $8,
+          $9, $10, $11, $12, $13, $14
+        )
+        ON CONFLICT (review_run_id) DO UPDATE SET
+          review_date = EXCLUDED.review_date,
+          source_window_start = EXCLUDED.source_window_start,
+          source_window_end = EXCLUDED.source_window_end,
+          status = EXCLUDED.status,
+          input_conversation_count = EXCLUDED.input_conversation_count,
+          input_shadow_sample_count = EXCLUDED.input_shadow_sample_count,
+          input_analysis_job_count = EXCLUDED.input_analysis_job_count,
+          finding_count = EXCLUDED.finding_count,
+          summary_json = EXCLUDED.summary_json,
+          started_at = EXCLUDED.started_at,
+          completed_at = EXCLUDED.completed_at,
+          created_at = EXCLUDED.created_at,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        run.reviewRunId,
+        run.reviewDate,
+        run.sourceWindowStart,
+        run.sourceWindowEnd,
+        run.status,
+        run.inputConversationCount,
+        run.inputShadowSampleCount,
+        run.inputAnalysisJobCount,
+        run.findingCount,
+        run.summaryJson ?? null,
+        run.startedAt ?? null,
+        run.completedAt ?? null,
+        run.createdAt,
+        run.updatedAt,
+      ],
+    );
+  }
+
+  async createConversationReviewFinding(finding: HetangConversationReviewFinding): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO conversation_review_findings (
+          finding_id, review_run_id, conversation_id, message_id, job_id,
+          channel, account_id, chat_id, sender_id, org_id, store_name,
+          finding_type, severity, confidence, title, summary, evidence_json,
+          suggested_action_type, suggested_action_payload_json, followup_targets_json,
+          memory_candidate_json, status, created_at, resolved_at
+        ) VALUES (
+          $1, $2, $3, $4, $5,
+          $6, $7, $8, $9, $10, $11,
+          $12, $13, $14, $15, $16, $17,
+          $18, $19, $20, $21,
+          $22, $23, $24
+        )
+        ON CONFLICT (finding_id) DO UPDATE SET
+          review_run_id = EXCLUDED.review_run_id,
+          conversation_id = EXCLUDED.conversation_id,
+          message_id = EXCLUDED.message_id,
+          job_id = EXCLUDED.job_id,
+          channel = EXCLUDED.channel,
+          account_id = EXCLUDED.account_id,
+          chat_id = EXCLUDED.chat_id,
+          sender_id = EXCLUDED.sender_id,
+          org_id = EXCLUDED.org_id,
+          store_name = EXCLUDED.store_name,
+          finding_type = EXCLUDED.finding_type,
+          severity = EXCLUDED.severity,
+          confidence = EXCLUDED.confidence,
+          title = EXCLUDED.title,
+          summary = EXCLUDED.summary,
+          evidence_json = EXCLUDED.evidence_json,
+          suggested_action_type = EXCLUDED.suggested_action_type,
+          suggested_action_payload_json = EXCLUDED.suggested_action_payload_json,
+          followup_targets_json = EXCLUDED.followup_targets_json,
+          memory_candidate_json = EXCLUDED.memory_candidate_json,
+          status = EXCLUDED.status,
+          created_at = EXCLUDED.created_at,
+          resolved_at = EXCLUDED.resolved_at
+      `,
+      [
+        finding.findingId,
+        finding.reviewRunId,
+        finding.conversationId ?? null,
+        finding.messageId ?? null,
+        finding.jobId ?? null,
+        finding.channel ?? null,
+        finding.accountId ?? null,
+        finding.chatId ?? null,
+        finding.senderId ?? null,
+        finding.orgId ?? null,
+        finding.storeName ?? null,
+        finding.findingType,
+        finding.severity,
+        finding.confidence ?? null,
+        finding.title,
+        finding.summary,
+        finding.evidenceJson,
+        finding.suggestedActionType ?? null,
+        finding.suggestedActionPayloadJson ?? null,
+        finding.followupTargets ? JSON.stringify(finding.followupTargets) : null,
+        finding.memoryCandidateJson ?? null,
+        finding.status,
+        finding.createdAt,
+        finding.resolvedAt ?? null,
+      ],
+    );
+  }
+
+  async listConversationReviewRuns(
+    params: {
+      status?: HetangConversationReviewRun["status"];
+      limit?: number;
+    } = {},
+  ): Promise<HetangConversationReviewRun[]> {
+    const values: Array<string | number> = [];
+    const where: string[] = [];
+    if (params.status) {
+      values.push(params.status);
+      where.push(`status = $${values.length}`);
+    }
+    const limit = Math.max(1, Math.min(200, Math.trunc(params.limit ?? 20)));
+    values.push(limit);
+    const result = await this.params.pool.query(
+      `
+        SELECT *
+        FROM conversation_review_runs
+        ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+        ORDER BY review_date DESC, created_at DESC, review_run_id DESC
+        LIMIT $${values.length}
+      `,
+      values,
+    );
+    return result.rows.map((row: Record<string, unknown>) => ({
+      reviewRunId: String(row.review_run_id),
+      reviewDate: String(row.review_date),
+      sourceWindowStart: String(row.source_window_start),
+      sourceWindowEnd: String(row.source_window_end),
+      status: String(row.status) as HetangConversationReviewRun["status"],
+      inputConversationCount: normalizeNumeric(row.input_conversation_count),
+      inputShadowSampleCount: normalizeNumeric(row.input_shadow_sample_count),
+      inputAnalysisJobCount: normalizeNumeric(row.input_analysis_job_count),
+      findingCount: normalizeNumeric(row.finding_count),
+      summaryJson: (row.summary_json as string | null) ?? undefined,
+      startedAt: (row.started_at as string | null) ?? undefined,
+      completedAt: (row.completed_at as string | null) ?? undefined,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    }));
+  }
+
+  async listConversationReviewFindings(
+    params: {
+      reviewRunId?: string;
+      findingType?: HetangConversationReviewFinding["findingType"];
+      status?: HetangConversationReviewFinding["status"];
+      limit?: number;
+    } = {},
+  ): Promise<HetangConversationReviewFinding[]> {
+    const values: Array<string | number> = [];
+    const where: string[] = [];
+    if (params.reviewRunId) {
+      values.push(params.reviewRunId);
+      where.push(`review_run_id = $${values.length}`);
+    }
+    if (params.findingType) {
+      values.push(params.findingType);
+      where.push(`finding_type = $${values.length}`);
+    }
+    if (params.status) {
+      values.push(params.status);
+      where.push(`status = $${values.length}`);
+    }
+    const limit = Math.max(1, Math.min(500, Math.trunc(params.limit ?? 100)));
+    values.push(limit);
+    const result = await this.params.pool.query(
+      `
+        SELECT *
+        FROM conversation_review_findings
+        ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+        ORDER BY created_at DESC, finding_id DESC
+        LIMIT $${values.length}
+      `,
+      values,
+    );
+    return result.rows.map((row: Record<string, unknown>) => ({
+      findingId: String(row.finding_id),
+      reviewRunId: String(row.review_run_id),
+      conversationId: (row.conversation_id as string | null) ?? undefined,
+      messageId: (row.message_id as string | null) ?? undefined,
+      jobId: (row.job_id as string | null) ?? undefined,
+      channel: (row.channel as string | null) ?? undefined,
+      accountId: (row.account_id as string | null) ?? undefined,
+      chatId: (row.chat_id as string | null) ?? undefined,
+      senderId: (row.sender_id as string | null) ?? undefined,
+      orgId: (row.org_id as string | null) ?? undefined,
+      storeName: (row.store_name as string | null) ?? undefined,
+      findingType: String(row.finding_type) as HetangConversationReviewFinding["findingType"],
+      severity: String(row.severity) as HetangConversationReviewFinding["severity"],
+      confidence:
+        row.confidence === null || row.confidence === undefined
+          ? undefined
+          : normalizeNumeric(row.confidence),
+      title: String(row.title),
+      summary: String(row.summary),
+      evidenceJson: String(row.evidence_json),
+      suggestedActionType: (row.suggested_action_type as string | null) ?? undefined,
+      suggestedActionPayloadJson:
+        (row.suggested_action_payload_json as string | null) ?? undefined,
+      followupTargets: (() => {
+        const followupTargets = parseReviewFollowupTargets(row.followup_targets_json);
+        return followupTargets.length > 0 ? followupTargets : undefined;
+      })(),
+      memoryCandidateJson: (row.memory_candidate_json as string | null) ?? undefined,
+      status: String(row.status) as HetangConversationReviewFinding["status"],
+      createdAt: String(row.created_at),
+      resolvedAt: (row.resolved_at as string | null) ?? undefined,
     }));
   }
 
@@ -4169,6 +5524,80 @@ export class HetangOpsStore {
     };
   }
 
+  async getAnalysisDeadLetterSummary(): Promise<HetangAnalysisDeadLetterSummary | null> {
+    const countsResult = await this.params.pool.query(
+      `
+        SELECT
+          SUM(
+            CASE WHEN resolved_at IS NULL AND dead_letter_scope = 'job' THEN 1 ELSE 0 END
+          )::int AS unresolved_job_count,
+          SUM(
+            CASE WHEN resolved_at IS NULL AND dead_letter_scope = 'subscriber' THEN 1 ELSE 0 END
+          )::int AS unresolved_subscriber_count,
+          SUM(
+            CASE
+              WHEN resolved_at IS NULL
+                AND dead_letter_scope = 'subscriber'
+                AND LOWER(reason) LIKE '%invalid chatid%'
+              THEN 1
+              ELSE 0
+            END
+          )::int AS invalid_chatid_subscriber_count,
+          SUM(
+            CASE
+              WHEN resolved_at IS NULL
+                AND dead_letter_scope = 'job'
+                AND reason = 'delivery abandoned after subscriber fan-out exhaustion'
+              THEN 1
+              ELSE 0
+            END
+          )::int AS subscriber_fanout_exhausted_job_count
+        FROM analysis_dead_letters
+      `,
+    );
+    const latestResult = await this.params.pool.query(
+      `
+        SELECT created_at, reason
+        FROM analysis_dead_letters
+        WHERE resolved_at IS NULL
+        ORDER BY
+          created_at DESC,
+          CASE WHEN dead_letter_scope = 'subscriber' THEN 0 ELSE 1 END ASC,
+          dead_letter_key DESC
+        LIMIT 1
+      `,
+    );
+    const row = (countsResult.rows[0] ?? {}) as Record<string, unknown>;
+    const latestRow = (latestResult.rows[0] ?? {}) as Record<string, unknown>;
+    const unresolvedJobCount = normalizeNumeric(row.unresolved_job_count ?? 0);
+    const unresolvedSubscriberCount = normalizeNumeric(row.unresolved_subscriber_count ?? 0);
+    const invalidChatidSubscriberCount = normalizeNumeric(
+      row.invalid_chatid_subscriber_count ?? 0,
+    );
+    const subscriberFanoutExhaustedJobCount = normalizeNumeric(
+      row.subscriber_fanout_exhausted_job_count ?? 0,
+    );
+    const latestUnresolvedAt =
+      typeof latestRow.created_at === "string" ? latestRow.created_at : undefined;
+    const latestReason = typeof latestRow.reason === "string" ? latestRow.reason : undefined;
+    if (
+      unresolvedJobCount <= 0 &&
+      unresolvedSubscriberCount <= 0 &&
+      !latestUnresolvedAt &&
+      !latestReason
+    ) {
+      return null;
+    }
+    return {
+      unresolvedJobCount,
+      unresolvedSubscriberCount,
+      latestUnresolvedAt,
+      latestReason,
+      invalidChatidSubscriberCount,
+      subscriberFanoutExhaustedJobCount,
+    };
+  }
+
   async listAnalysisDeadLetters(
     params: {
       orgId?: string;
@@ -4311,7 +5740,162 @@ export class HetangOpsStore {
     }
   }
 
+  async cleanupStaleInvalidChatidSubscriberResiduals(params: {
+    resolvedAt: string;
+    staleBefore: string;
+    limit?: number;
+  }): Promise<HetangAnalysisDeadLetterCleanupResult> {
+    const client = await this.params.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const targetResult = await client.query(
+        `
+          SELECT dead_letter_key, job_id, subscriber_key
+          FROM analysis_dead_letters
+          WHERE resolved_at IS NULL
+            AND dead_letter_scope = 'subscriber'
+            AND subscriber_key IS NOT NULL
+            AND LOWER(reason) LIKE '%invalid chatid%'
+            AND created_at <= $1
+          ORDER BY created_at ASC, dead_letter_key
+          LIMIT $2
+          FOR UPDATE
+        `,
+        [params.staleBefore, Math.max(1, Math.min(100, params.limit ?? 20))],
+      );
+      const targets = targetResult.rows as Array<{
+        dead_letter_key?: string;
+        job_id?: string;
+        subscriber_key?: string;
+      }>;
+      if (targets.length === 0) {
+        await client.query("COMMIT");
+        return {
+          residualClass: "stale-invalid-chatid-subscriber",
+          cleanedSubscriberCount: 0,
+          cleanedJobCount: 0,
+          resolvedDeadLetterCount: 0,
+        };
+      }
+
+      let cleanedSubscriberCount = 0;
+      let cleanedJobCount = 0;
+      let resolvedDeadLetterCount = 0;
+      const jobIds = new Set<string>();
+
+      for (const target of targets) {
+        if (target.job_id) {
+          jobIds.add(String(target.job_id));
+        }
+        if (!target.subscriber_key) {
+          continue;
+        }
+        const updatedSubscriber = await client.query(
+          `
+            UPDATE analysis_job_subscribers
+            SET delivered_at = $2,
+                last_delivery_error = NULL,
+                next_delivery_after = NULL,
+                delivery_abandoned_at = NULL,
+                updated_at = $2
+            WHERE subscriber_key = $1
+              AND delivery_abandoned_at IS NOT NULL
+          `,
+          [String(target.subscriber_key), params.resolvedAt],
+        );
+        cleanedSubscriberCount += updatedSubscriber.rowCount ?? 0;
+      }
+
+      for (const jobId of jobIds) {
+        const subscriberSummary = await client.query(
+          `
+            SELECT
+              SUM(
+                CASE WHEN delivered_at IS NULL AND delivery_abandoned_at IS NULL THEN 1 ELSE 0 END
+              )::int AS pending_count,
+              SUM(CASE WHEN delivered_at IS NOT NULL THEN 1 ELSE 0 END)::int AS delivered_count
+            FROM analysis_job_subscribers
+            WHERE job_id = $1
+          `,
+          [jobId],
+        );
+        const pendingCount = normalizeNumeric(subscriberSummary.rows[0]?.pending_count);
+        const deliveredCount = normalizeNumeric(subscriberSummary.rows[0]?.delivered_count);
+        if (pendingCount === 0 && deliveredCount > 0) {
+          const updatedJob = await client.query(
+            `
+              UPDATE analysis_jobs
+              SET delivered_at = $2,
+                  last_delivery_error = NULL,
+                  next_delivery_after = NULL,
+                  delivery_abandoned_at = NULL,
+                  updated_at = $2
+              WHERE job_id = $1
+                AND delivery_abandoned_at IS NOT NULL
+            `,
+            [jobId, params.resolvedAt],
+          );
+          cleanedJobCount += updatedJob.rowCount ?? 0;
+        }
+      }
+
+      for (const target of targets) {
+        if (!target.dead_letter_key) {
+          continue;
+        }
+        const resolvedSubscriberDeadLetter = await client.query(
+          `
+            UPDATE analysis_dead_letters
+            SET resolved_at = $2
+            WHERE dead_letter_key = $1
+              AND resolved_at IS NULL
+          `,
+          [String(target.dead_letter_key), params.resolvedAt],
+        );
+        resolvedDeadLetterCount += resolvedSubscriberDeadLetter.rowCount ?? 0;
+      }
+
+      for (const jobId of jobIds) {
+        const resolvedJobDeadLetters = await client.query(
+          `
+            UPDATE analysis_dead_letters
+            SET resolved_at = $2
+            WHERE job_id = $1
+              AND resolved_at IS NULL
+              AND dead_letter_scope = 'job'
+              AND reason = 'delivery abandoned after subscriber fan-out exhaustion'
+          `,
+          [jobId, params.resolvedAt],
+        );
+        resolvedDeadLetterCount += resolvedJobDeadLetters.rowCount ?? 0;
+      }
+
+      await client.query("COMMIT");
+      return {
+        residualClass: "stale-invalid-chatid-subscriber",
+        cleanedSubscriberCount,
+        cleanedJobCount,
+        resolvedDeadLetterCount,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async getNextDeliverableAnalysisSubscription(): Promise<
+    | (HetangAnalysisJob & {
+        subscriberKey: string;
+        deliveryChannel: string;
+        deliveryTarget: string;
+        deliveryAccountId?: string;
+        deliveryThreadId?: string;
+      })
+    | null
+  >;
+  async getNextDeliverableAnalysisSubscription(asOf: string): Promise<
     | (HetangAnalysisJob & {
         subscriberKey: string;
         deliveryChannel: string;
@@ -4441,6 +6025,7 @@ export class HetangOpsStore {
     return row ? mapAnalysisJobRow(row) : null;
   }
 
+  async getNextDeliverableAnalysisJob(asOf: string): Promise<HetangAnalysisJob | null>;
   async getNextDeliverableAnalysisJob(asOf?: string): Promise<HetangAnalysisJob | null> {
     const result = await this.params.pool.query(
       `
@@ -5195,11 +6780,1064 @@ export class HetangOpsStore {
     return normalizeNumeric(result.rows[0]?.seen_count);
   }
 
+  async upsertStoreMasterProfile(row: HetangStoreMasterProfile): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO store_master_profiles (
+          org_id, store_name, brand_name, city_name, district_name, address_text,
+          longitude, latitude, opening_date, renovation_date,
+          area_m2, room_count_total, room_mix_json, service_hours_json,
+          store_format, business_scene,
+          parking_available, parking_convenience_level, operating_status,
+          source_label, verified_at, raw_json,
+          updated_at, created_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6,
+          $7, $8, $9, $10,
+          $11, $12, $13, $14,
+          $15, $16,
+          $17, $18, $19,
+          $20, $21, $22,
+          $23, $23
+        )
+        ON CONFLICT (org_id) DO UPDATE SET
+          store_name = EXCLUDED.store_name,
+          brand_name = EXCLUDED.brand_name,
+          city_name = EXCLUDED.city_name,
+          district_name = EXCLUDED.district_name,
+          address_text = EXCLUDED.address_text,
+          longitude = EXCLUDED.longitude,
+          latitude = EXCLUDED.latitude,
+          opening_date = EXCLUDED.opening_date,
+          renovation_date = EXCLUDED.renovation_date,
+          area_m2 = EXCLUDED.area_m2,
+          room_count_total = EXCLUDED.room_count_total,
+          room_mix_json = EXCLUDED.room_mix_json,
+          service_hours_json = EXCLUDED.service_hours_json,
+          store_format = EXCLUDED.store_format,
+          business_scene = EXCLUDED.business_scene,
+          parking_available = EXCLUDED.parking_available,
+          parking_convenience_level = EXCLUDED.parking_convenience_level,
+          operating_status = EXCLUDED.operating_status,
+          source_label = EXCLUDED.source_label,
+          verified_at = EXCLUDED.verified_at,
+          raw_json = EXCLUDED.raw_json,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        row.orgId,
+        row.storeName,
+        row.brandName ?? null,
+        row.cityName ?? null,
+        row.districtName ?? null,
+        row.addressText ?? null,
+        row.longitude ?? null,
+        row.latitude ?? null,
+        row.openingDate ?? null,
+        row.renovationDate ?? null,
+        row.areaM2 ?? null,
+        row.roomCountTotal ?? null,
+        row.roomMixJson === undefined ? null : JSON.stringify(row.roomMixJson),
+        row.serviceHoursJson === undefined ? null : JSON.stringify(row.serviceHoursJson),
+        row.storeFormat ?? null,
+        row.businessScene ?? null,
+        row.parkingAvailable ?? null,
+        row.parkingConvenienceLevel ?? null,
+        row.operatingStatus ?? null,
+        row.sourceLabel ?? null,
+        row.verifiedAt ?? null,
+        row.rawJson ?? null,
+        row.updatedAt,
+      ],
+    );
+  }
+
+  async getStoreMasterProfile(orgId: string): Promise<HetangStoreMasterProfile | null> {
+    const result = await this.params.pool.query(
+      `
+        SELECT *
+        FROM store_master_profiles
+        WHERE org_id = $1
+      `,
+      [orgId],
+    );
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    return row ? mapStoreMasterProfileRow(row) : null;
+  }
+
+  async insertStoreMasterProfileSnapshot(row: HetangStoreMasterProfileSnapshot): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO store_master_profile_snapshots (
+          org_id, snapshot_date, snapshot_captured_at,
+          store_name, brand_name, city_name, district_name, address_text,
+          longitude, latitude, opening_date, renovation_date,
+          area_m2, room_count_total, room_mix_json, service_hours_json,
+          store_format, business_scene,
+          parking_available, parking_convenience_level, operating_status,
+          source_label, verified_at, raw_json,
+          updated_at, created_at
+        ) VALUES (
+          $1, $2, $3,
+          $4, $5, $6, $7, $8,
+          $9, $10, $11, $12,
+          $13, $14, $15, $16,
+          $17, $18,
+          $19, $20, $21,
+          $22, $23, $24,
+          $25, $25
+        )
+        ON CONFLICT (org_id, snapshot_date, snapshot_captured_at) DO UPDATE SET
+          store_name = EXCLUDED.store_name,
+          brand_name = EXCLUDED.brand_name,
+          city_name = EXCLUDED.city_name,
+          district_name = EXCLUDED.district_name,
+          address_text = EXCLUDED.address_text,
+          longitude = EXCLUDED.longitude,
+          latitude = EXCLUDED.latitude,
+          opening_date = EXCLUDED.opening_date,
+          renovation_date = EXCLUDED.renovation_date,
+          area_m2 = EXCLUDED.area_m2,
+          room_count_total = EXCLUDED.room_count_total,
+          room_mix_json = EXCLUDED.room_mix_json,
+          service_hours_json = EXCLUDED.service_hours_json,
+          store_format = EXCLUDED.store_format,
+          business_scene = EXCLUDED.business_scene,
+          parking_available = EXCLUDED.parking_available,
+          parking_convenience_level = EXCLUDED.parking_convenience_level,
+          operating_status = EXCLUDED.operating_status,
+          source_label = EXCLUDED.source_label,
+          verified_at = EXCLUDED.verified_at,
+          raw_json = EXCLUDED.raw_json,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        row.orgId,
+        row.snapshotDate,
+        row.snapshotCapturedAt,
+        row.storeName,
+        row.brandName ?? null,
+        row.cityName ?? null,
+        row.districtName ?? null,
+        row.addressText ?? null,
+        row.longitude ?? null,
+        row.latitude ?? null,
+        row.openingDate ?? null,
+        row.renovationDate ?? null,
+        row.areaM2 ?? null,
+        row.roomCountTotal ?? null,
+        row.roomMixJson === undefined ? null : JSON.stringify(row.roomMixJson),
+        row.serviceHoursJson === undefined ? null : JSON.stringify(row.serviceHoursJson),
+        row.storeFormat ?? null,
+        row.businessScene ?? null,
+        row.parkingAvailable ?? null,
+        row.parkingConvenienceLevel ?? null,
+        row.operatingStatus ?? null,
+        row.sourceLabel ?? null,
+        row.verifiedAt ?? null,
+        row.rawJson ?? null,
+        row.updatedAt,
+      ],
+    );
+  }
+
+  async listStoreMasterProfileSnapshots(orgId: string): Promise<HetangStoreMasterProfileSnapshot[]> {
+    const result = await this.params.pool.query(
+      `
+        SELECT *
+        FROM store_master_profile_snapshots
+        WHERE org_id = $1
+        ORDER BY snapshot_date DESC, snapshot_captured_at DESC
+      `,
+      [orgId],
+    );
+    return result.rows.map((row) =>
+      mapStoreMasterProfileSnapshotRow(row as Record<string, unknown>),
+    );
+  }
+
+  async upsertIndustryContextSnapshot(
+    row: Omit<HetangIndustryContextSnapshotRecord, "truthBoundary" | "applicableModules" | "rawJson"> & {
+      truthBoundary?: HetangIndustryContextSnapshotRecord["truthBoundary"];
+      applicableModules?: string[];
+      rawJson?: string;
+    },
+  ): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO industry_context_snapshots (
+          snapshot_date, signal_kind, signal_key,
+          title, summary, detail_json,
+          truth_boundary, confidence,
+          source_type, source_label, source_uri,
+          applicable_modules_json, note, raw_json,
+          updated_at, created_at
+        ) VALUES (
+          $1, $2, $3,
+          $4, $5, $6,
+          $7, $8,
+          $9, $10, $11,
+          $12, $13, $14,
+          $15, $15
+        )
+        ON CONFLICT (snapshot_date, signal_kind, signal_key) DO UPDATE SET
+          title = EXCLUDED.title,
+          summary = EXCLUDED.summary,
+          detail_json = EXCLUDED.detail_json,
+          truth_boundary = EXCLUDED.truth_boundary,
+          confidence = EXCLUDED.confidence,
+          source_type = EXCLUDED.source_type,
+          source_label = EXCLUDED.source_label,
+          source_uri = EXCLUDED.source_uri,
+          applicable_modules_json = EXCLUDED.applicable_modules_json,
+          note = EXCLUDED.note,
+          raw_json = EXCLUDED.raw_json,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        row.snapshotDate,
+        row.signalKind,
+        row.signalKey,
+        row.title,
+        row.summary,
+        row.detailJson === undefined ? null : JSON.stringify(row.detailJson),
+        row.truthBoundary ?? "weak_signal",
+        row.confidence,
+        row.sourceType,
+        row.sourceLabel ?? null,
+        row.sourceUri ?? null,
+        JSON.stringify(row.applicableModules ?? []),
+        row.note ?? null,
+        row.rawJson ??
+          JSON.stringify({
+            snapshotDate: row.snapshotDate,
+            signalKind: row.signalKind,
+            signalKey: row.signalKey,
+            title: row.title,
+          }),
+        row.updatedAt,
+      ],
+    );
+  }
+
+  async listIndustryContextSnapshots(params: {
+    snapshotDate?: string;
+    signalKinds?: HetangIndustryContextSignalKind[];
+    limit?: number;
+  } = {}): Promise<HetangIndustryContextSnapshotRecord[]> {
+    const values: unknown[] = [];
+    const where: string[] = [];
+    if (params.snapshotDate) {
+      values.push(params.snapshotDate);
+      where.push(`snapshot_date = $${values.length}`);
+    } else {
+      where.push(
+        `snapshot_date = (SELECT MAX(snapshot_date) FROM industry_context_snapshots)`,
+      );
+    }
+    if ((params.signalKinds?.length ?? 0) > 0) {
+      values.push(params.signalKinds!);
+      where.push(`signal_kind = ANY($${values.length}::text[])`);
+    }
+    const limit = Math.max(1, Math.floor(params.limit ?? 200));
+    values.push(limit);
+    const result = await this.params.pool.query(
+      `
+        SELECT
+          snapshot_date,
+          signal_kind,
+          signal_key,
+          title,
+          summary,
+          detail_json,
+          truth_boundary,
+          confidence,
+          source_type,
+          source_label,
+          source_uri,
+          applicable_modules_json,
+          note,
+          raw_json,
+          updated_at
+        FROM industry_context_snapshots
+        WHERE ${where.join(" AND ")}
+        ORDER BY snapshot_date DESC, updated_at DESC, signal_kind, signal_key
+        LIMIT $${values.length}
+      `,
+      values,
+    );
+    return result.rows.map((row) =>
+      mapIndustryContextSnapshotRow(row as Record<string, unknown>),
+    );
+  }
+
+  async upsertHolidayCalendarDay(row: ChinaHolidayCalendarDayRecord): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO china_holiday_calendar_days (
+          biz_date, holiday_tag, holiday_name, is_adjusted_workday,
+          source_version, source_label, raw_json,
+          updated_at, created_at
+        ) VALUES (
+          $1, $2, $3, $4,
+          $5, $6, $7,
+          $8, $8
+        )
+        ON CONFLICT (biz_date) DO UPDATE SET
+          holiday_tag = EXCLUDED.holiday_tag,
+          holiday_name = EXCLUDED.holiday_name,
+          is_adjusted_workday = EXCLUDED.is_adjusted_workday,
+          source_version = EXCLUDED.source_version,
+          source_label = EXCLUDED.source_label,
+          raw_json = EXCLUDED.raw_json,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        row.bizDate,
+        row.holidayTag,
+        row.holidayName ?? null,
+        row.isAdjustedWorkday,
+        row.sourceVersion ?? null,
+        row.sourceLabel ?? null,
+        row.rawJson ?? null,
+        row.updatedAt,
+      ],
+    );
+  }
+
+  async getHolidayCalendarDay(bizDate: string): Promise<ChinaHolidayCalendarDayRecord | null> {
+    const result = await this.params.pool.query(
+      `
+        SELECT *
+        FROM china_holiday_calendar_days
+        WHERE biz_date = $1
+      `,
+      [bizDate],
+    );
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    return row ? mapHolidayCalendarDayRow(row) : null;
+  }
+
+  async upsertStoreEnvironmentDailySnapshot(
+    row: StoreEnvironmentDailySnapshotRecord,
+  ): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO store_environment_daily_snapshots (
+          org_id, biz_date, city_code,
+          weekday_index, weekday_label, is_weekend,
+          holiday_tag, holiday_name, is_adjusted_workday,
+          season_tag, month_tag, solar_term,
+          weather_condition_raw, temperature_c, precipitation_mm, wind_level,
+          weather_tag, temperature_band, precipitation_tag, wind_tag,
+          city_seasonal_pattern, nightlife_seasonality,
+          post_dinner_leisure_bias, evening_outing_likelihood,
+          bad_weather_touch_penalty, environment_disturbance_level, narrative_policy,
+          context_json, snapshot_json, source_json,
+          collected_at, updated_at, created_at
+        ) VALUES (
+          $1, $2, $3,
+          $4, $5, $6,
+          $7, $8, $9,
+          $10, $11, $12,
+          $13, $14, $15, $16,
+          $17, $18, $19, $20,
+          $21, $22,
+          $23, $24,
+          $25, $26, $27,
+          $28, $29, $30,
+          $31, $32, $32
+        )
+        ON CONFLICT (org_id, biz_date) DO UPDATE SET
+          city_code = EXCLUDED.city_code,
+          weekday_index = EXCLUDED.weekday_index,
+          weekday_label = EXCLUDED.weekday_label,
+          is_weekend = EXCLUDED.is_weekend,
+          holiday_tag = EXCLUDED.holiday_tag,
+          holiday_name = EXCLUDED.holiday_name,
+          is_adjusted_workday = EXCLUDED.is_adjusted_workday,
+          season_tag = EXCLUDED.season_tag,
+          month_tag = EXCLUDED.month_tag,
+          solar_term = EXCLUDED.solar_term,
+          weather_condition_raw = EXCLUDED.weather_condition_raw,
+          temperature_c = EXCLUDED.temperature_c,
+          precipitation_mm = EXCLUDED.precipitation_mm,
+          wind_level = EXCLUDED.wind_level,
+          weather_tag = EXCLUDED.weather_tag,
+          temperature_band = EXCLUDED.temperature_band,
+          precipitation_tag = EXCLUDED.precipitation_tag,
+          wind_tag = EXCLUDED.wind_tag,
+          city_seasonal_pattern = EXCLUDED.city_seasonal_pattern,
+          nightlife_seasonality = EXCLUDED.nightlife_seasonality,
+          post_dinner_leisure_bias = EXCLUDED.post_dinner_leisure_bias,
+          evening_outing_likelihood = EXCLUDED.evening_outing_likelihood,
+          bad_weather_touch_penalty = EXCLUDED.bad_weather_touch_penalty,
+          environment_disturbance_level = EXCLUDED.environment_disturbance_level,
+          narrative_policy = EXCLUDED.narrative_policy,
+          context_json = EXCLUDED.context_json,
+          snapshot_json = EXCLUDED.snapshot_json,
+          source_json = EXCLUDED.source_json,
+          collected_at = EXCLUDED.collected_at,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        row.orgId,
+        row.bizDate,
+        row.cityCode ?? null,
+        row.weekdayIndex ?? null,
+        row.weekdayLabel ?? null,
+        row.isWeekend ?? null,
+        row.holidayTag ?? null,
+        row.holidayName ?? null,
+        row.isAdjustedWorkday ?? null,
+        row.seasonTag ?? null,
+        row.monthTag ?? null,
+        row.solarTerm ?? null,
+        row.weatherConditionRaw ?? null,
+        row.temperatureC ?? null,
+        row.precipitationMm ?? null,
+        row.windLevel ?? null,
+        row.weatherTag ?? null,
+        row.temperatureBand ?? null,
+        row.precipitationTag ?? null,
+        row.windTag ?? null,
+        row.citySeasonalPattern ?? null,
+        row.nightlifeSeasonality ?? null,
+        row.postDinnerLeisureBias ?? null,
+        row.eveningOutingLikelihood ?? null,
+        row.badWeatherTouchPenalty ?? null,
+        row.environmentDisturbanceLevel ?? null,
+        row.narrativePolicy ?? null,
+        row.contextJson ?? null,
+        row.snapshotJson,
+        row.sourceJson ?? null,
+        row.collectedAt,
+        row.updatedAt,
+      ],
+    );
+  }
+
+  async getStoreEnvironmentDailySnapshot(
+    orgId: string,
+    bizDate: string,
+  ): Promise<StoreEnvironmentDailySnapshotRecord | null> {
+    const result = await this.params.pool.query(
+      `
+        SELECT *
+        FROM store_environment_daily_snapshots
+        WHERE org_id = $1 AND biz_date = $2
+      `,
+      [orgId, bizDate],
+    );
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    return row ? mapStoreEnvironmentDailySnapshotRow(row) : null;
+  }
+
+  async listStoreEnvironmentDailySnapshots(
+    orgId: string,
+    limit = 30,
+  ): Promise<StoreEnvironmentDailySnapshotRecord[]> {
+    const normalizedLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 30;
+    const result = await this.params.pool.query(
+      `
+        SELECT *
+        FROM store_environment_daily_snapshots
+        WHERE org_id = $1
+        ORDER BY biz_date DESC
+        LIMIT $2
+      `,
+      [orgId, normalizedLimit],
+    );
+    return result.rows.map((row) =>
+      mapStoreEnvironmentDailySnapshotRow(row as Record<string, unknown>),
+    );
+  }
+
+  async createStoreExternalObservationBatch(row: HetangStoreExternalObservationBatch): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO store_external_observation_batches (
+          batch_id, org_id, source_platform, capture_scope, capture_mode,
+          captured_at, operator_id, browser_profile_id, status, raw_manifest_json,
+          created_at, updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5,
+          $6, $7, $8, $9, $10,
+          $6, $6
+        )
+        ON CONFLICT (batch_id) DO UPDATE SET
+          org_id = EXCLUDED.org_id,
+          source_platform = EXCLUDED.source_platform,
+          capture_scope = EXCLUDED.capture_scope,
+          capture_mode = EXCLUDED.capture_mode,
+          captured_at = EXCLUDED.captured_at,
+          operator_id = EXCLUDED.operator_id,
+          browser_profile_id = EXCLUDED.browser_profile_id,
+          status = EXCLUDED.status,
+          raw_manifest_json = EXCLUDED.raw_manifest_json,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        row.batchId,
+        row.orgId,
+        row.sourcePlatform,
+        row.captureScope,
+        row.captureMode,
+        row.capturedAt,
+        row.operatorId ?? null,
+        row.browserProfileId ?? null,
+        row.status,
+        row.rawManifestJson,
+      ],
+    );
+  }
+
+  async insertStoreExternalObservation(row: Omit<HetangStoreExternalObservation, "applicableModules" | "notForScoring" | "rawJson"> & {
+    applicableModules?: string[];
+    notForScoring?: boolean;
+    rawJson?: string;
+  }): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO store_external_observations (
+          observation_id, org_id, snapshot_date, source_platform, metric_domain, metric_key,
+          value_num, value_text, value_json, unit,
+          truth_level, confidence, source_label, source_uri,
+          batch_id, evidence_document_id, applicable_modules_json,
+          not_for_scoring, valid_from, valid_to, raw_json,
+          updated_at, created_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6,
+          $7, $8, $9, $10,
+          $11, $12, $13, $14,
+          $15, $16, $17,
+          $18, $19, $20, $21,
+          $22, $22
+        )
+        ON CONFLICT (observation_id) DO UPDATE SET
+          org_id = EXCLUDED.org_id,
+          snapshot_date = EXCLUDED.snapshot_date,
+          source_platform = EXCLUDED.source_platform,
+          metric_domain = EXCLUDED.metric_domain,
+          metric_key = EXCLUDED.metric_key,
+          value_num = EXCLUDED.value_num,
+          value_text = EXCLUDED.value_text,
+          value_json = EXCLUDED.value_json,
+          unit = EXCLUDED.unit,
+          truth_level = EXCLUDED.truth_level,
+          confidence = EXCLUDED.confidence,
+          source_label = EXCLUDED.source_label,
+          source_uri = EXCLUDED.source_uri,
+          batch_id = EXCLUDED.batch_id,
+          evidence_document_id = EXCLUDED.evidence_document_id,
+          applicable_modules_json = EXCLUDED.applicable_modules_json,
+          not_for_scoring = EXCLUDED.not_for_scoring,
+          valid_from = EXCLUDED.valid_from,
+          valid_to = EXCLUDED.valid_to,
+          raw_json = EXCLUDED.raw_json,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        row.observationId,
+        row.orgId,
+        row.snapshotDate,
+        row.sourcePlatform,
+        row.metricDomain,
+        row.metricKey,
+        row.valueNum ?? null,
+        row.valueText ?? null,
+        row.valueJson === undefined ? null : JSON.stringify(row.valueJson),
+        row.unit ?? null,
+        row.truthLevel,
+        row.confidence,
+        row.sourceLabel ?? null,
+        row.sourceUri ?? null,
+        row.batchId ?? null,
+        row.evidenceDocumentId ?? null,
+        JSON.stringify(row.applicableModules ?? []),
+        row.notForScoring ?? true,
+        row.validFrom ?? null,
+        row.validTo ?? null,
+        row.rawJson ??
+          JSON.stringify({
+            observationId: row.observationId,
+            orgId: row.orgId,
+            snapshotDate: row.snapshotDate,
+            metricDomain: row.metricDomain,
+            metricKey: row.metricKey,
+          }),
+        row.updatedAt,
+      ],
+    );
+  }
+
+  async listStoreExternalObservations(params: {
+    orgId: string;
+    snapshotDate?: string;
+    sourcePlatform?: string;
+    metricDomain?: string;
+    limit?: number;
+  }): Promise<HetangStoreExternalObservation[]> {
+    const values: Array<string | number> = [params.orgId];
+    const where = [`org_id = $${values.length}`];
+    if (params.snapshotDate) {
+      values.push(params.snapshotDate);
+      where.push(`snapshot_date = $${values.length}`);
+    }
+    if (params.sourcePlatform) {
+      values.push(params.sourcePlatform);
+      where.push(`source_platform = $${values.length}`);
+    }
+    if (params.metricDomain) {
+      values.push(params.metricDomain);
+      where.push(`metric_domain = $${values.length}`);
+    }
+    const limit = Math.max(1, Math.floor(params.limit ?? 200));
+    values.push(limit);
+    const result = await this.params.pool.query(
+      `
+        SELECT
+          observation_id,
+          org_id,
+          snapshot_date,
+          source_platform,
+          metric_domain,
+          metric_key,
+          value_num,
+          value_text,
+          value_json,
+          unit,
+          truth_level,
+          confidence,
+          source_label,
+          source_uri,
+          batch_id,
+          evidence_document_id,
+          applicable_modules_json,
+          not_for_scoring,
+          valid_from,
+          valid_to,
+          raw_json,
+          updated_at
+        FROM store_external_observations
+        WHERE ${where.join(" AND ")}
+        ORDER BY snapshot_date DESC, updated_at DESC, observation_id DESC
+        LIMIT $${values.length}
+      `,
+      values,
+    );
+    return result.rows.map((row) => mapStoreExternalObservationRow(row as Record<string, unknown>));
+  }
+
+  async createCustomerServiceObservationBatch(row: CustomerServiceObservationBatch): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO customer_service_observation_batches (
+          batch_id, org_id, source_role, collection_surface, capture_mode,
+          captured_at, operator_id, status, raw_manifest_json,
+          created_at, updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5,
+          $6, $7, $8, $9,
+          $6, $6
+        )
+        ON CONFLICT (batch_id) DO UPDATE SET
+          org_id = EXCLUDED.org_id,
+          source_role = EXCLUDED.source_role,
+          collection_surface = EXCLUDED.collection_surface,
+          capture_mode = EXCLUDED.capture_mode,
+          captured_at = EXCLUDED.captured_at,
+          operator_id = EXCLUDED.operator_id,
+          status = EXCLUDED.status,
+          raw_manifest_json = EXCLUDED.raw_manifest_json,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        row.batchId,
+        row.orgId,
+        row.sourceRole,
+        row.collectionSurface,
+        row.captureMode,
+        row.capturedAt,
+        row.operatorId ?? null,
+        row.status,
+        row.rawManifestJson,
+      ],
+    );
+  }
+
+  async insertCustomerServiceObservation(
+    row: Omit<CustomerServiceObservationRecord, "rawJson"> & { rawJson?: string },
+  ): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO customer_service_observations (
+          observation_id, org_id, member_id, customer_identity_key,
+          source_role, source_type, observer_id, batch_id,
+          signal_domain, signal_key, value_num, value_text, value_json,
+          confidence, truth_boundary, observed_at, valid_to,
+          raw_note, raw_json, updated_at, created_at
+        ) VALUES (
+          $1, $2, $3, $4,
+          $5, $6, $7, $8,
+          $9, $10, $11, $12, $13,
+          $14, $15, $16, $17,
+          $18, $19, $20, $20
+        )
+        ON CONFLICT (observation_id) DO UPDATE SET
+          org_id = EXCLUDED.org_id,
+          member_id = EXCLUDED.member_id,
+          customer_identity_key = EXCLUDED.customer_identity_key,
+          source_role = EXCLUDED.source_role,
+          source_type = EXCLUDED.source_type,
+          observer_id = EXCLUDED.observer_id,
+          batch_id = EXCLUDED.batch_id,
+          signal_domain = EXCLUDED.signal_domain,
+          signal_key = EXCLUDED.signal_key,
+          value_num = EXCLUDED.value_num,
+          value_text = EXCLUDED.value_text,
+          value_json = EXCLUDED.value_json,
+          confidence = EXCLUDED.confidence,
+          truth_boundary = EXCLUDED.truth_boundary,
+          observed_at = EXCLUDED.observed_at,
+          valid_to = EXCLUDED.valid_to,
+          raw_note = EXCLUDED.raw_note,
+          raw_json = EXCLUDED.raw_json,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        row.observationId,
+        row.orgId,
+        row.memberId ?? null,
+        row.customerIdentityKey,
+        row.sourceRole,
+        row.sourceType,
+        row.observerId ?? null,
+        row.batchId ?? null,
+        row.signalDomain,
+        row.signalKey,
+        row.valueNum ?? null,
+        row.valueText ?? null,
+        row.valueJson === undefined ? null : JSON.stringify(row.valueJson),
+        row.confidence,
+        row.truthBoundary,
+        row.observedAt,
+        row.validTo ?? null,
+        row.rawNote ?? null,
+        row.rawJson ??
+          JSON.stringify({
+            observationId: row.observationId,
+            customerIdentityKey: row.customerIdentityKey,
+            signalDomain: row.signalDomain,
+            signalKey: row.signalKey,
+          }),
+        row.updatedAt,
+      ],
+    );
+  }
+
+  async listCustomerServiceObservations(params: {
+    orgId: string;
+    memberId?: string;
+    customerIdentityKey?: string;
+    signalDomain?: string;
+    limit?: number;
+  }): Promise<CustomerServiceObservationRecord[]> {
+    const values: Array<string | number> = [params.orgId];
+    const where = [`org_id = $${values.length}`];
+    if (params.memberId) {
+      values.push(params.memberId);
+      where.push(`member_id = $${values.length}`);
+    }
+    if (params.customerIdentityKey) {
+      values.push(params.customerIdentityKey);
+      where.push(`customer_identity_key = $${values.length}`);
+    }
+    if (params.signalDomain) {
+      values.push(params.signalDomain);
+      where.push(`signal_domain = $${values.length}`);
+    }
+    const limit = Math.max(1, Math.floor(params.limit ?? 200));
+    values.push(limit);
+    const result = await this.params.pool.query(
+      `
+        SELECT
+          observation_id,
+          org_id,
+          member_id,
+          customer_identity_key,
+          source_role,
+          source_type,
+          observer_id,
+          batch_id,
+          signal_domain,
+          signal_key,
+          value_num,
+          value_text,
+          value_json,
+          confidence,
+          truth_boundary,
+          observed_at,
+          valid_to,
+          raw_note,
+          raw_json,
+          updated_at
+        FROM customer_service_observations
+        WHERE ${where.join(" AND ")}
+        ORDER BY observed_at DESC, updated_at DESC, observation_id DESC
+        LIMIT $${values.length}
+      `,
+      values,
+    );
+    return result.rows.map((row) =>
+      mapCustomerServiceObservationRow(row as Record<string, unknown>),
+    );
+  }
+
+  async upsertCustomerOperatingSignal(row: CustomerOperatingSignalRecord): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO customer_operating_signals (
+          signal_id, org_id, member_id, customer_identity_key,
+          signal_domain, signal_key, value_num, value_text, value_json,
+          confidence, truth_boundary, scoring_scope,
+          source_observation_ids_json, support_count, observed_at,
+          valid_to, updated_at, created_at
+        ) VALUES (
+          $1, $2, $3, $4,
+          $5, $6, $7, $8, $9,
+          $10, $11, $12,
+          $13, $14, $15,
+          $16, $17, $17
+        )
+        ON CONFLICT (signal_id) DO UPDATE SET
+          org_id = EXCLUDED.org_id,
+          member_id = EXCLUDED.member_id,
+          customer_identity_key = EXCLUDED.customer_identity_key,
+          signal_domain = EXCLUDED.signal_domain,
+          signal_key = EXCLUDED.signal_key,
+          value_num = EXCLUDED.value_num,
+          value_text = EXCLUDED.value_text,
+          value_json = EXCLUDED.value_json,
+          confidence = EXCLUDED.confidence,
+          truth_boundary = EXCLUDED.truth_boundary,
+          scoring_scope = EXCLUDED.scoring_scope,
+          source_observation_ids_json = EXCLUDED.source_observation_ids_json,
+          support_count = EXCLUDED.support_count,
+          observed_at = EXCLUDED.observed_at,
+          valid_to = EXCLUDED.valid_to,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        row.signalId,
+        row.orgId,
+        row.memberId ?? null,
+        row.customerIdentityKey,
+        row.signalDomain,
+        row.signalKey,
+        row.valueNum ?? null,
+        row.valueText ?? null,
+        row.valueJson === undefined ? null : JSON.stringify(row.valueJson),
+        row.confidence,
+        row.truthBoundary,
+        row.scoringScope,
+        JSON.stringify(row.sourceObservationIds),
+        row.supportCount,
+        row.observedAt,
+        row.validTo ?? null,
+        row.updatedAt,
+      ],
+    );
+  }
+
+  async listCustomerOperatingSignals(params: {
+    orgId: string;
+    memberId?: string;
+    customerIdentityKey?: string;
+    signalDomain?: string;
+    limit?: number;
+  }): Promise<CustomerOperatingSignalRecord[]> {
+    const values: Array<string | number> = [params.orgId];
+    const where = [`org_id = $${values.length}`];
+    if (params.memberId) {
+      values.push(params.memberId);
+      where.push(`member_id = $${values.length}`);
+    }
+    if (params.customerIdentityKey) {
+      values.push(params.customerIdentityKey);
+      where.push(`customer_identity_key = $${values.length}`);
+    }
+    if (params.signalDomain) {
+      values.push(params.signalDomain);
+      where.push(`signal_domain = $${values.length}`);
+    }
+    const limit = Math.max(1, Math.floor(params.limit ?? 200));
+    values.push(limit);
+    const result = await this.params.pool.query(
+      `
+        SELECT
+          signal_id,
+          org_id,
+          member_id,
+          customer_identity_key,
+          signal_domain,
+          signal_key,
+          value_num,
+          value_text,
+          value_json,
+          confidence,
+          truth_boundary,
+          scoring_scope,
+          source_observation_ids_json,
+          support_count,
+          observed_at,
+          valid_to,
+          updated_at
+        FROM customer_operating_signals
+        WHERE ${where.join(" AND ")}
+        ORDER BY observed_at DESC, updated_at DESC, signal_id DESC
+        LIMIT $${values.length}
+      `,
+      values,
+    );
+    return result.rows.map((row) => mapCustomerOperatingSignalRow(row as Record<string, unknown>));
+  }
+  async upsertStoreExternalContextEntry(row: {
+    orgId: string;
+    snapshotDate: string;
+    contextKind: HetangStoreExternalContextKind;
+    metricKey: string;
+    valueText?: string;
+    valueNum?: number;
+    valueJson?: unknown;
+    unit?: string;
+    truthLevel: HetangStoreExternalContextTruthLevel;
+    confidence: HetangStoreExternalContextConfidence;
+    sourceType: string;
+    sourceLabel?: string;
+    sourceUri?: string;
+    applicableModules?: string[];
+    notForScoring?: boolean;
+    note?: string;
+    rawJson?: string;
+    updatedAt: string;
+  }): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO store_external_context_entries (
+          org_id, snapshot_date, context_kind, metric_key,
+          value_text, value_num, value_json, unit,
+          truth_level, confidence,
+          source_type, source_label, source_uri,
+          applicable_modules_json, not_for_scoring, note,
+          raw_json, updated_at, created_at
+        ) VALUES (
+          $1, $2, $3, $4,
+          $5, $6, $7, $8,
+          $9, $10,
+          $11, $12, $13,
+          $14, $15, $16,
+          $17, $18, $18
+        )
+        ON CONFLICT (org_id, snapshot_date, context_kind, metric_key) DO UPDATE SET
+          value_text = EXCLUDED.value_text,
+          value_num = EXCLUDED.value_num,
+          value_json = EXCLUDED.value_json,
+          unit = EXCLUDED.unit,
+          truth_level = EXCLUDED.truth_level,
+          confidence = EXCLUDED.confidence,
+          source_type = EXCLUDED.source_type,
+          source_label = EXCLUDED.source_label,
+          source_uri = EXCLUDED.source_uri,
+          applicable_modules_json = EXCLUDED.applicable_modules_json,
+          not_for_scoring = EXCLUDED.not_for_scoring,
+          note = EXCLUDED.note,
+          raw_json = EXCLUDED.raw_json,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        row.orgId,
+        row.snapshotDate,
+        row.contextKind,
+        row.metricKey,
+        row.valueText ?? null,
+        row.valueNum ?? null,
+        row.valueJson === undefined ? null : JSON.stringify(row.valueJson),
+        row.unit ?? null,
+        row.truthLevel,
+        row.confidence,
+        row.sourceType,
+        row.sourceLabel ?? null,
+        row.sourceUri ?? null,
+        JSON.stringify(row.applicableModules ?? []),
+        row.notForScoring ?? true,
+        row.note ?? null,
+        row.rawJson ??
+          JSON.stringify({
+            orgId: row.orgId,
+            snapshotDate: row.snapshotDate,
+            contextKind: row.contextKind,
+            metricKey: row.metricKey,
+          }),
+        row.updatedAt,
+      ],
+    );
+  }
+
+  async listStoreExternalContextEntries(params: {
+    orgId: string;
+    snapshotDate?: string;
+  }): Promise<HetangStoreExternalContextEntry[]> {
+    const values: Array<string> = [params.orgId];
+    const snapshotClause = params.snapshotDate
+      ? (() => {
+          values.push(params.snapshotDate!);
+          return `snapshot_date = $${values.length}`;
+        })()
+      : `snapshot_date = (
+          SELECT MAX(snapshot_date)
+          FROM store_external_context_entries
+          WHERE org_id = $1
+        )`;
+    const result = await this.params.pool.query(
+      `
+        SELECT
+          org_id,
+          snapshot_date,
+          context_kind,
+          metric_key,
+          value_text,
+          value_num,
+          value_json,
+          unit,
+          truth_level,
+          confidence,
+          source_type,
+          source_label,
+          source_uri,
+          applicable_modules_json,
+          not_for_scoring,
+          note,
+          raw_json,
+          updated_at
+        FROM store_external_context_entries
+        WHERE org_id = $1
+          AND ${snapshotClause}
+        ORDER BY snapshot_date DESC, context_kind, metric_key
+      `,
+      values,
+    );
+    return result.rows.map((row) => mapStoreExternalContextRow(row as Record<string, unknown>));
+  }
+
   async insertExternalSourceDocument(row: {
     documentId: string;
     sourceId: string;
     sourceTier: HetangExternalSourceTier;
     sourceUrl?: string;
+    scopeType?: HetangExternalSourceDocumentScopeType;
+    orgId?: string;
+    platformStoreId?: string;
     title: string;
     summary?: string;
     contentText?: string;
@@ -5217,20 +7855,25 @@ export class HetangOpsStore {
     await this.params.pool.query(
       `
         INSERT INTO external_source_documents (
-          document_id, source_id, source_tier, source_url, title, summary, content_text,
+          document_id, source_id, source_tier, source_url, scope_type, org_id, platform_store_id,
+          title, summary, content_text,
           entity, action, object_text, score,
           published_at, event_at, fetched_at, theme, blocked_reason, raw_json,
           created_at, updated_at
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
-          $8, $9, $10, $11,
-          $12, $13, $14, $15, $16, $17,
-          $14, $14
+          $8, $9, $10,
+          $11, $12, $13, $14,
+          $15, $16, $17, $18, $19, $20,
+          $17, $17
         )
         ON CONFLICT (document_id) DO UPDATE SET
           source_id = EXCLUDED.source_id,
           source_tier = EXCLUDED.source_tier,
           source_url = EXCLUDED.source_url,
+          scope_type = EXCLUDED.scope_type,
+          org_id = EXCLUDED.org_id,
+          platform_store_id = EXCLUDED.platform_store_id,
           title = EXCLUDED.title,
           summary = EXCLUDED.summary,
           content_text = EXCLUDED.content_text,
@@ -5251,6 +7894,9 @@ export class HetangOpsStore {
         row.sourceId,
         row.sourceTier,
         row.sourceUrl ?? "",
+        row.scopeType ?? "hq",
+        row.orgId ?? null,
+        row.platformStoreId ?? null,
         row.title,
         row.summary ?? "",
         row.contentText ?? null,
@@ -5271,6 +7917,9 @@ export class HetangOpsStore {
   async listFreshExternalSourceDocuments(params: {
     sincePublishedAt: string;
     theme?: string;
+    scopeType?: HetangExternalSourceDocumentScopeType;
+    orgId?: string;
+    platformStoreId?: string;
     limit?: number;
   }): Promise<
     Array<{
@@ -5278,6 +7927,9 @@ export class HetangOpsStore {
       sourceId: string;
       sourceTier: HetangExternalSourceTier;
       sourceUrl: string;
+      scopeType: HetangExternalSourceDocumentScopeType;
+      orgId?: string;
+      platformStoreId?: string;
       title: string;
       summary: string;
       score?: number;
@@ -5292,6 +7944,18 @@ export class HetangOpsStore {
       values.push(params.theme);
       where.push(`theme = $${values.length}`);
     }
+    if (params.scopeType) {
+      values.push(params.scopeType);
+      where.push(`scope_type = $${values.length}`);
+    }
+    if (params.orgId) {
+      values.push(params.orgId);
+      where.push(`org_id = $${values.length}`);
+    }
+    if (params.platformStoreId) {
+      values.push(params.platformStoreId);
+      where.push(`platform_store_id = $${values.length}`);
+    }
     const limit = Math.max(1, Math.floor(params.limit ?? 50));
     values.push(limit);
     const result = await this.params.pool.query(
@@ -5301,6 +7965,9 @@ export class HetangOpsStore {
           source_id,
           source_tier,
           source_url,
+          scope_type,
+          org_id,
+          platform_store_id,
           title,
           summary,
           score,
@@ -5319,6 +7986,9 @@ export class HetangOpsStore {
       sourceId: String(entry.source_id),
       sourceTier: String(entry.source_tier) as HetangExternalSourceTier,
       sourceUrl: String(entry.source_url),
+      scopeType: String(entry.scope_type) as HetangExternalSourceDocumentScopeType,
+      orgId: (entry.org_id as string | null) ?? undefined,
+      platformStoreId: (entry.platform_store_id as string | null) ?? undefined,
       title: String(entry.title),
       summary: String(entry.summary),
       score:
@@ -5335,6 +8005,9 @@ export class HetangOpsStore {
     params: {
       sourceId?: string;
       publishedSince?: string;
+      scopeType?: HetangExternalSourceDocumentScopeType;
+      orgId?: string;
+      platformStoreId?: string;
       limit?: number;
     } = {},
   ): Promise<
@@ -5343,6 +8016,9 @@ export class HetangOpsStore {
       sourceId: string;
       sourceTier: HetangExternalSourceTier;
       sourceUrl: string;
+      scopeType: HetangExternalSourceDocumentScopeType;
+      orgId?: string;
+      platformStoreId?: string;
       title: string;
       summary: string;
       entity?: string;
@@ -5365,6 +8041,18 @@ export class HetangOpsStore {
       values.push(params.publishedSince);
       where.push(`published_at >= $${values.length}`);
     }
+    if (params.scopeType) {
+      values.push(params.scopeType);
+      where.push(`scope_type = $${values.length}`);
+    }
+    if (params.orgId) {
+      values.push(params.orgId);
+      where.push(`org_id = $${values.length}`);
+    }
+    if (params.platformStoreId) {
+      values.push(params.platformStoreId);
+      where.push(`platform_store_id = $${values.length}`);
+    }
     const limit = Math.max(1, Math.floor(params.limit ?? 50));
     values.push(limit);
     const result = await this.params.pool.query(
@@ -5374,6 +8062,9 @@ export class HetangOpsStore {
           source_id,
           source_tier,
           source_url,
+          scope_type,
+          org_id,
+          platform_store_id,
           title,
           summary,
           entity,
@@ -5396,6 +8087,9 @@ export class HetangOpsStore {
       sourceId: String(entry.source_id),
       sourceTier: String(entry.source_tier) as HetangExternalSourceTier,
       sourceUrl: String(entry.source_url),
+      scopeType: String(entry.scope_type) as HetangExternalSourceDocumentScopeType,
+      orgId: (entry.org_id as string | null) ?? undefined,
+      platformStoreId: (entry.platform_store_id as string | null) ?? undefined,
       title: String(entry.title),
       summary: String(entry.summary),
       entity: (entry.entity as string | null) ?? undefined,
@@ -6772,9 +9466,10 @@ export class HetangOpsStore {
     return result.rows.map((record: Record<string, unknown>) => ({
       orgId: String(record.org_id),
       windowEndBizDate: String(record.window_end_biz_date),
-      storeName: String(record.store_name ?? orgId),
+        storeName: String(record.store_name ?? orgId),
       revenue7d: normalizeNumeric(record.revenue_7d),
       orderCount7d: normalizeNumeric(record.order_count_7d),
+      customerCount7d: normalizeNumeric(record.customer_count_7d),
       totalClocks7d: normalizeNumeric(record.total_clocks_7d),
       clockEffect7d:
         record.clock_effect_7d === null || record.clock_effect_7d === undefined
@@ -6901,6 +9596,7 @@ export class HetangOpsStore {
       storeName: String(record.store_name ?? orgId),
       revenue30d: normalizeNumeric(record.revenue_30d),
       orderCount30d: normalizeNumeric(record.order_count_30d),
+      customerCount30d: normalizeNumeric(record.customer_count_30d),
       totalClocks30d: normalizeNumeric(record.total_clocks_30d),
       clockEffect30d:
         record.clock_effect_30d === null || record.clock_effect_30d === undefined
@@ -7858,6 +10554,86 @@ export class HetangOpsStore {
     );
   }
 
+  async replaceCustomerOperatingProfilesDaily(
+    orgId: string,
+    bizDate: string,
+    rows: CustomerOperatingProfileDailyRecord[],
+    updatedAt: string,
+    options: AnalyticsWriteOptions = {},
+  ): Promise<void> {
+    const client = await this.params.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `
+          DELETE FROM mart_customer_operating_profiles_daily
+          WHERE org_id = $1 AND biz_date = $2
+        `,
+        [orgId, bizDate],
+      );
+      for (const row of rows) {
+        await client.query(
+          `
+            INSERT INTO mart_customer_operating_profiles_daily (
+              org_id, biz_date, customer_identity_key, member_id, customer_display_name,
+              identity_profile_json, spending_profile_json, service_need_profile_json,
+              interaction_profile_json, preference_profile_json, scenario_profile_json,
+              relationship_profile_json, opportunity_profile_json,
+              source_signal_ids_json, updated_at
+            ) VALUES (
+              $1, $2, $3, $4, $5,
+              $6, $7, $8,
+              $9, $10, $11,
+              $12, $13,
+              $14, $15
+            )
+          `,
+          [
+            row.orgId,
+            row.bizDate,
+            row.customerIdentityKey,
+            row.memberId ?? null,
+            row.customerDisplayName,
+            JSON.stringify(row.identityProfileJson),
+            JSON.stringify(row.spendingProfileJson),
+            JSON.stringify(row.serviceNeedProfileJson),
+            JSON.stringify(row.interactionProfileJson),
+            JSON.stringify(row.preferenceProfileJson),
+            JSON.stringify(row.scenarioProfileJson),
+            JSON.stringify(row.relationshipProfileJson),
+            JSON.stringify(row.opportunityProfileJson),
+            JSON.stringify(row.sourceSignalIds),
+            updatedAt,
+          ],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+    await this.handleAnalyticsMutation(options);
+  }
+
+  async listCustomerOperatingProfilesDaily(
+    orgId: string,
+    bizDate: string,
+  ): Promise<CustomerOperatingProfileDailyRecord[]> {
+    const result = await this.params.pool.query(
+      `
+        SELECT *
+        FROM mart_customer_operating_profiles_daily
+        WHERE org_id = $1 AND biz_date = $2
+        ORDER BY customer_identity_key
+      `,
+      [orgId, bizDate],
+    );
+    return result.rows.map((row: Record<string, unknown>) =>
+      mapCustomerOperatingProfileDailyRow(row),
+    );
+  }
   async replaceMemberReactivationFeatures(
     orgId: string,
     bizDate: string,
@@ -8328,6 +11104,89 @@ export class HetangOpsStore {
     );
   }
 
+  async upsertMemberReactivationOutcomeSnapshot(
+    row: MemberReactivationOutcomeSnapshotRecord,
+  ): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO mart_member_reactivation_outcome_snapshots_daily (
+          org_id, biz_date, member_id,
+          customer_identity_key, customer_display_name,
+          primary_segment, followup_bucket, priority_band, recommended_action_label,
+          feedback_status,
+          contacted, replied, booked, arrived, closed,
+          outcome_label, outcome_score,
+          learning_json, updated_at
+        ) VALUES (
+          $1, $2, $3,
+          $4, $5,
+          $6, $7, $8, $9,
+          $10,
+          $11, $12, $13, $14, $15,
+          $16, $17,
+          $18, $19
+        )
+        ON CONFLICT (org_id, biz_date, member_id) DO UPDATE SET
+          customer_identity_key = EXCLUDED.customer_identity_key,
+          customer_display_name = EXCLUDED.customer_display_name,
+          primary_segment = EXCLUDED.primary_segment,
+          followup_bucket = EXCLUDED.followup_bucket,
+          priority_band = EXCLUDED.priority_band,
+          recommended_action_label = EXCLUDED.recommended_action_label,
+          feedback_status = EXCLUDED.feedback_status,
+          contacted = EXCLUDED.contacted,
+          replied = EXCLUDED.replied,
+          booked = EXCLUDED.booked,
+          arrived = EXCLUDED.arrived,
+          closed = EXCLUDED.closed,
+          outcome_label = EXCLUDED.outcome_label,
+          outcome_score = EXCLUDED.outcome_score,
+          learning_json = EXCLUDED.learning_json,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        row.orgId,
+        row.bizDate,
+        row.memberId,
+        row.customerIdentityKey,
+        row.customerDisplayName,
+        row.primarySegment,
+        row.followupBucket,
+        row.priorityBand,
+        row.recommendedActionLabel,
+        row.feedbackStatus,
+        row.contacted,
+        row.replied,
+        row.booked,
+        row.arrived,
+        row.closed,
+        row.outcomeLabel,
+        row.outcomeScore,
+        row.learningJson,
+        row.updatedAt,
+      ],
+    );
+  }
+
+  async listMemberReactivationOutcomeSnapshotsByDateRange(
+    orgId: string,
+    startBizDate: string,
+    endBizDate: string,
+  ): Promise<MemberReactivationOutcomeSnapshotRecord[]> {
+    const result = await this.params.pool.query(
+      `
+        SELECT *
+        FROM mart_member_reactivation_outcome_snapshots_daily
+        WHERE org_id = $1 AND biz_date BETWEEN $2 AND $3
+        ORDER BY biz_date DESC, outcome_score DESC, member_id
+      `,
+      [orgId, startBizDate, endBizDate],
+    );
+    return result.rows.map((row: Record<string, unknown>) =>
+      mapMemberReactivationOutcomeSnapshotRow(orgId, row),
+    );
+  }
+
   async listCustomerProfile90dByDateRange(
     orgId: string,
     startBizDate: string,
@@ -8444,6 +11303,27 @@ export class HetangOpsStore {
     );
   }
 
+  async recordReportDeliveryUpgrade(params: HetangReportDeliveryUpgradeEvent): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO mart_daily_report_delivery_upgrades (
+          org_id, biz_date, store_name, alert_sent_at, upgraded_at
+        ) VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (org_id, biz_date) DO UPDATE SET
+          store_name = EXCLUDED.store_name,
+          alert_sent_at = EXCLUDED.alert_sent_at,
+          upgraded_at = EXCLUDED.upgraded_at
+      `,
+      [
+        params.orgId,
+        params.bizDate,
+        params.storeName,
+        params.alertSentAt ?? null,
+        params.upgradedAt,
+      ],
+    );
+  }
+
   async getDailyReport(
     orgId: string,
     bizDate: string,
@@ -8465,5 +11345,28 @@ export class HetangOpsStore {
       sentAt: (result.rows[0].sent_at as string | null) ?? null,
       sendStatus: (result.rows[0].send_status as string | null) ?? null,
     };
+  }
+
+  async listRecentReportDeliveryUpgrades(params?: {
+    since?: string;
+    limit?: number;
+  }): Promise<HetangReportDeliveryUpgradeEvent[]> {
+    const result = await this.params.pool.query(
+      `
+        SELECT org_id, store_name, biz_date, alert_sent_at, upgraded_at
+        FROM mart_daily_report_delivery_upgrades
+        WHERE ($1::text IS NULL OR upgraded_at >= $1)
+        ORDER BY upgraded_at DESC, store_name ASC
+        LIMIT $2
+      `,
+      [params?.since ?? null, Math.max(params?.limit ?? 5, 1)],
+    );
+    return result.rows.map((row) => ({
+      orgId: String(row.org_id),
+      storeName: String(row.store_name),
+      bizDate: String(row.biz_date),
+      alertSentAt: typeof row.alert_sent_at === "string" ? row.alert_sent_at : undefined,
+      upgradedAt: String(row.upgraded_at),
+    }));
   }
 }

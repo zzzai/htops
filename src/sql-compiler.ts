@@ -14,12 +14,18 @@ function hashPlan(plan: QueryPlan): string {
   return createHash("sha256").update(JSON.stringify(plan)).digest("hex");
 }
 
+function resolveOrderAverageAmountSql(): string {
+  return "COALESCE(ROUND((service_revenue / NULLIF(service_order_count, 0))::numeric, 2), 0)";
+}
+
 function resolveMetricColumn(metric: string): string {
   switch (metric) {
     case "riskScore":
       return "risk_score";
     case "serviceOrderCount":
       return "service_order_count";
+    case "orderAverageAmount":
+      return resolveOrderAverageAmountSql();
     case "customerCount":
       return "customer_count";
     case "totalClockCount":
@@ -67,6 +73,7 @@ export function compileServingQuery(params: {
             biz_date,
             service_revenue,
             service_order_count,
+            ${resolveOrderAverageAmountSql()} AS order_average_amount,
             customer_count,
             total_clocks,
             average_ticket,
@@ -125,6 +132,8 @@ export function compileServingQuery(params: {
                 window_days,
                 service_revenue,
                 service_order_count,
+                ${resolveOrderAverageAmountSql()} AS order_average_amount,
+                customer_count,
                 total_clocks,
                 average_ticket,
                 clock_effect,
@@ -145,6 +154,8 @@ export function compileServingQuery(params: {
                 window_days,
                 service_revenue,
                 service_order_count,
+                ${resolveOrderAverageAmountSql()} AS baseline_order_average_amount,
+                customer_count,
                 total_clocks,
                 average_ticket,
                 clock_effect,
@@ -164,6 +175,8 @@ export function compileServingQuery(params: {
               current_window.window_days,
               current_window.service_revenue,
               current_window.service_order_count,
+              current_window.order_average_amount,
+              current_window.customer_count,
               current_window.total_clocks,
               current_window.average_ticket,
               current_window.clock_effect,
@@ -174,6 +187,8 @@ export function compileServingQuery(params: {
               baseline_window.window_days AS baseline_window_days,
               baseline_window.service_revenue AS baseline_service_revenue,
               baseline_window.service_order_count AS baseline_service_order_count,
+              baseline_window.baseline_order_average_amount,
+              baseline_window.customer_count AS baseline_customer_count,
               baseline_window.total_clocks AS baseline_total_clocks,
               baseline_window.average_ticket AS baseline_average_ticket,
               baseline_window.clock_effect AS baseline_clock_effect,
@@ -205,6 +220,8 @@ export function compileServingQuery(params: {
             window_days,
             service_revenue,
             service_order_count,
+            ${resolveOrderAverageAmountSql()} AS order_average_amount,
+            customer_count,
             total_clocks,
             average_ticket,
             clock_effect,
@@ -457,10 +474,15 @@ export function compileServingQuery(params: {
             window_days,
             service_revenue,
             service_order_count,
+            ${resolveOrderAverageAmountSql()} AS order_average_amount,
+            customer_count,
             total_clocks,
             average_ticket,
             point_clock_rate,
             add_clock_rate,
+            sleeping_member_rate,
+            renewal_pressure_index_30d,
+            member_repurchase_rate_7d,
             risk_score
           FROM serving_hq_portfolio_window
           WHERE org_id = ANY($1)
@@ -503,6 +525,8 @@ export function compileServingQuery(params: {
             window_days,
             service_revenue,
             service_order_count,
+            ${resolveOrderAverageAmountSql()} AS order_average_amount,
+            customer_count,
             total_clocks,
             average_ticket,
             clock_effect,

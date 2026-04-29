@@ -1,0 +1,122 @@
+{
+  "default": {
+    "owner_module": "src/semantic-intent.ts",
+    "recommended_action": "补失败样本归类并收敛到 capability graph / semantic intent 主链。",
+    "priority": "medium",
+    "samples": [
+      {
+        "sample_tag": "semantic_gap_generic",
+        "prompt": "五店近15天整体哪里不对"
+      }
+    ]
+  },
+  "entries": {
+    "clarify_missing_time": {
+      "owner_module": "src/query-intent.ts",
+      "recommended_action": "补 missing-time carry 规则，并把 capability clarify policy 对齐到 contract。",
+      "priority": "high",
+      "samples": [
+        {
+          "sample_tag": "time_scope_gap",
+          "prompt": "义乌店营收怎么样"
+        }
+      ]
+    },
+    "clarify_missing_store": {
+      "owner_module": "src/query-intent.ts",
+      "recommended_action": "补绑定 scope 和跨轮 store carry，减少缺门店澄清。",
+      "priority": "high",
+      "samples": [
+        {
+          "sample_tag": "store_scope_gap",
+          "prompt": "昨天营收多少"
+        }
+      ]
+    },
+    "clarify_missing_metric": {
+      "owner_module": "src/capability-graph.ts",
+      "recommended_action": "补 capability contract 的 required_slots / allow-default 策略，减少缺指标歧义。",
+      "priority": "medium",
+      "samples": [
+        {
+          "sample_tag": "metric_slot_gap",
+          "prompt": "义乌店昨天盘里收了多少"
+        }
+      ]
+    },
+    "generic_unmatched": {
+      "owner_module": "src/semantic-intent.ts",
+      "recommended_action": "补老板式开放问法和经营口语入口，避免经营问题被归到 generic unmatched。",
+      "priority": "high",
+      "samples": [
+        {
+          "sample_tag": "boss_open_guidance",
+          "prompt": "哪个门店须重点关注"
+        }
+      ]
+    },
+    "entry_unresolved": {
+      "owner_module": "src/semantic-intent.ts",
+      "recommended_action": "补 semantic front door 的兜底分类与 owner-surface 落点，减少 entry unresolved。",
+      "priority": "high",
+      "samples": [
+        {
+          "sample_tag": "entry_unresolved",
+          "prompt": "五店近15天整体哪里不对"
+        }
+      ]
+    },
+    "colloquial_lane_miss": {
+      "owner_module": "src/query-semantics.ts",
+      "recommended_action": "补老板式口语扩展规则，把口语经营问法映射到正确的 semantic expansion 和 intent route。",
+      "priority": "high",
+      "samples": [
+        {
+          "sample_tag": "colloquial_lane_miss",
+          "prompt": "盘子怎么样"
+        },
+        {
+          "sample_tag": "colloquial_lane_miss_biz",
+          "prompt": "最近生意好不好"
+        }
+      ]
+    },
+    "scope_inheritance_miss": {
+      "owner_module": "src/query-intent.ts",
+      "recommended_action": "补跨轮 scope 继承规则，让对象切换问法能继承上轮 store+time。",
+      "priority": "high",
+      "samples": [
+        {
+          "sample_tag": "scope_inheritance_miss",
+          "prompt": "那顾客呢"
+        },
+        {
+          "sample_tag": "scope_inheritance_object_switch",
+          "prompt": "技师呢"
+        }
+      ]
+    },
+    "topic_switch_false_positive": {
+      "owner_module": "src/query-intent.ts",
+      "recommended_action": "收紧 topic switch 检测，避免对象切换问法被误判为话题切换。",
+      "priority": "medium",
+      "samples": [
+        {
+          "sample_tag": "topic_switch_false_positive",
+          "prompt": "技师呢"
+        }
+      ]
+    },
+    "semantic_failure": {
+      "owner_module": "src/query-plan.ts",
+      "recommended_action": "补 query-plan 到 capability graph 的映射校验，避免语义命中后执行落空。",
+      "priority": "medium",
+      "samples": [
+        {
+          "sample_tag": "query_plan_gap",
+          "prompt": "义乌店昨天盘里收了多少"
+        }
+      ]
+    }
+  }
+}

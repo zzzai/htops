@@ -1,5 +1,9 @@
 import type {
   HetangActionItem,
+  HetangAnalysisDeadLetterCleanupResult,
+  HetangConversationReviewFinding,
+  HetangConversationReviewRun,
+  HetangAnalysisDeadLetterSummary,
   HetangAnalysisDeadLetter,
   HetangAnalysisJob,
   HetangAnalysisQueueSummary,
@@ -20,6 +24,7 @@ type QueueAccessControlLegacyStore = {
     jobType: string,
     stateKey: string,
   ) => Promise<Record<string, unknown> | null>;
+  deleteScheduledJobState: (jobType: string, stateKey: string) => Promise<void>;
   setScheduledJobState: (
     jobType: string,
     stateKey: string,
@@ -51,6 +56,18 @@ type QueueAccessControlLegacyStore = {
     contains?: string;
     limit?: number;
   }) => Promise<HetangInboundMessageAuditRecord[]>;
+  createConversationReviewRun: (run: HetangConversationReviewRun) => Promise<void>;
+  createConversationReviewFinding: (finding: HetangConversationReviewFinding) => Promise<void>;
+  listConversationReviewRuns: (params?: {
+    status?: HetangConversationReviewRun["status"];
+    limit?: number;
+  }) => Promise<HetangConversationReviewRun[]>;
+  listConversationReviewFindings: (params?: {
+    reviewRunId?: string;
+    findingType?: HetangConversationReviewFinding["findingType"];
+    status?: HetangConversationReviewFinding["status"];
+    limit?: number;
+  }) => Promise<HetangConversationReviewFinding[]>;
   createAnalysisJob: (job: HetangAnalysisJob) => Promise<void>;
   upsertAnalysisSubscriber: (params: {
     jobId: string;
@@ -70,6 +87,7 @@ type QueueAccessControlLegacyStore = {
     subscriberRetryingCount: number;
     subscriberAbandonedCount: number;
   }>;
+  getAnalysisDeadLetterSummary: () => Promise<HetangAnalysisDeadLetterSummary | null>;
   getAnalysisQueueSummary: () => Promise<HetangAnalysisQueueSummary>;
   listAnalysisDeadLetters: (params?: {
     orgId?: string;
@@ -81,6 +99,11 @@ type QueueAccessControlLegacyStore = {
     deadLetterKey: string;
     replayedAt: string;
   }) => Promise<HetangAnalysisDeadLetter | null>;
+  cleanupStaleInvalidChatidSubscriberResiduals: (params: {
+    resolvedAt: string;
+    staleBefore: string;
+    limit?: number;
+  }) => Promise<HetangAnalysisDeadLetterCleanupResult>;
   getNextDeliverableAnalysisSubscription: (asOf?: string) => Promise<
     | (HetangAnalysisJob & {
         subscriberKey: string;
@@ -191,6 +214,10 @@ export class HetangQueueAccessControlStore {
     return this.legacy.getScheduledJobState(jobType, stateKey);
   }
 
+  deleteScheduledJobState(jobType: string, stateKey: string) {
+    return this.legacy.deleteScheduledJobState(jobType, stateKey);
+  }
+
   setScheduledJobState(
     jobType: string,
     stateKey: string,
@@ -238,6 +265,30 @@ export class HetangQueueAccessControlStore {
     return this.legacy.listInboundMessageAudits(params);
   }
 
+  createConversationReviewRun(run: HetangConversationReviewRun) {
+    return this.legacy.createConversationReviewRun(run);
+  }
+
+  createConversationReviewFinding(finding: HetangConversationReviewFinding) {
+    return this.legacy.createConversationReviewFinding(finding);
+  }
+
+  listConversationReviewRuns(params?: {
+    status?: HetangConversationReviewRun["status"];
+    limit?: number;
+  }) {
+    return this.legacy.listConversationReviewRuns(params);
+  }
+
+  listConversationReviewFindings(params?: {
+    reviewRunId?: string;
+    findingType?: HetangConversationReviewFinding["findingType"];
+    status?: HetangConversationReviewFinding["status"];
+    limit?: number;
+  }) {
+    return this.legacy.listConversationReviewFindings(params);
+  }
+
   createAnalysisJob(job: HetangAnalysisJob) {
     return this.legacy.createAnalysisJob(job);
   }
@@ -266,6 +317,10 @@ export class HetangQueueAccessControlStore {
     return this.legacy.getAnalysisQueueSummary();
   }
 
+  getAnalysisDeadLetterSummary() {
+    return this.legacy.getAnalysisDeadLetterSummary();
+  }
+
   listAnalysisDeadLetters(params?: {
     orgId?: string;
     deadLetterScope?: HetangAnalysisDeadLetter["deadLetterScope"];
@@ -277,6 +332,14 @@ export class HetangQueueAccessControlStore {
 
   replayAnalysisDeadLetter(params: { deadLetterKey: string; replayedAt: string }) {
     return this.legacy.replayAnalysisDeadLetter(params);
+  }
+
+  cleanupStaleInvalidChatidSubscriberResiduals(params: {
+    resolvedAt: string;
+    staleBefore: string;
+    limit?: number;
+  }) {
+    return this.legacy.cleanupStaleInvalidChatidSubscriberResiduals(params);
   }
 
   getNextDeliverableAnalysisSubscription(asOf?: string) {

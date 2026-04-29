@@ -1,0 +1,1174 @@
+{
+  "version": "2026-04-29.semantic-operating.v1",
+  "sources": {
+    "natural_question_library": "knowledge/150_natural_questions.html",
+    "library_notes": "docs/plans/2026-04-29-natural-question-library-notes.md",
+    "architecture_boundary": "docs/adr/2026-04-29-structured-data-knowledge-base-agent-boundary.md"
+  },
+  "question_families": [
+    {
+      "id": "boss-daily-revenue",
+      "role": "boss",
+      "family": "今日营收",
+      "question_count": 5,
+      "sample_questions": ["今天进账多少？", "今天实际到手多少钱？", "今天折扣送出去多少？"],
+      "source_api_tags": ["1.2"],
+      "mappings": [
+        {
+          "id": "cash-in",
+          "label": "今日进账/实收",
+          "capability_id": "store_metric_summary_v1",
+          "recipe_refs": ["metric:daily_cash_in"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "discount-outflow",
+          "label": "今日折扣/反结",
+          "capability_id": "store_metric_summary_v1",
+          "recipe_refs": ["metric:daily_discount_given"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "boss-period-compare",
+      "role": "boss",
+      "family": "周期对比",
+      "question_count": 6,
+      "sample_questions": ["这周比上周怎么样？", "本月跟上月比强还是弱？", "最近三个月的趋势怎么样？"],
+      "source_api_tags": ["1.2", "1.3"],
+      "mappings": [
+        {
+          "id": "weekly-compare",
+          "label": "本周 vs 上周经营对比",
+          "capability_id": "store_compare_v1",
+          "recipe_refs": ["analysis:week_vs_last_week_store"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "monthly-trend",
+          "label": "本月 vs 上月/近三月趋势",
+          "capability_id": "store_trend_v1",
+          "recipe_refs": ["analysis:month_vs_last_month_store"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "boss-recharge-health",
+      "role": "boss",
+      "family": "充值健康",
+      "question_count": 5,
+      "sample_questions": ["本月充了多少钱进来？", "今天有人充值吗？充了多少？", "充值赠送比高不高，合不合理？"],
+      "source_api_tags": ["1.3"],
+      "mappings": [
+        {
+          "id": "recharge-cash",
+          "label": "充值本金/实充",
+          "capability_id": "store_metric_summary_v1",
+          "recipe_refs": ["metric:recharge_cash"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "recharge-total-bonus",
+          "label": "充值总额与赠送比",
+          "capability_id": "store_metric_summary_v1",
+          "recipe_refs": ["metric:recharge_total_with_bonus", "metric:recharge_bonus_value", "analysis:recharge_health_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "boss-stored-balance-pressure",
+      "role": "boss",
+      "family": "钱趴在卡里",
+      "question_count": 5,
+      "sample_questions": ["现在客人卡里还压着多少钱？", "有没有余额很多但很久没来的客人？", "沉睡资金大概有多少？"],
+      "source_api_tags": ["1.1", "1.3"],
+      "mappings": [
+        {
+          "id": "current-balance",
+          "label": "当前储值余额",
+          "capability_id": "store_metric_summary_v1",
+          "recipe_refs": ["metric:stored_balance"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "high-balance-silent",
+          "label": "高余额沉默会员",
+          "capability_id": "customer_segment_list_v1",
+          "recipe_refs": ["segment:high_balance_silent_customer", "analysis:member_churn_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "boss-member-churn",
+      "role": "boss",
+      "family": "会员流失",
+      "question_count": 5,
+      "sample_questions": ["哪些会员快跑了？", "哪些老客最近突然不来了？", "我们老客的留存率大概是多少？"],
+      "source_api_tags": ["1.1"],
+      "mappings": [
+        {
+          "id": "sleeping-members",
+          "label": "沉默/沉睡会员名单",
+          "capability_id": "customer_segment_list_v1",
+          "recipe_refs": ["segment:sleeping_customer"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "churn-review",
+          "label": "流失风险解释",
+          "capability_id": "customer_ranked_list_lookup_v1",
+          "recipe_refs": ["analysis:member_churn_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "boss-tech-output",
+      "role": "boss",
+      "family": "技师产出",
+      "question_count": 7,
+      "sample_questions": ["哪个技师最能赚钱？", "谁的指名率最高？", "谁的副项推销做得最好？"],
+      "source_api_tags": ["1.6", "1.7"],
+      "mappings": [
+        {
+          "id": "tech-revenue-ranking",
+          "label": "技师营收/人效排名",
+          "capability_id": "tech_leaderboard_ranking_v1",
+          "recipe_refs": ["metric:tech_service_revenue", "metric:tech_clock_efficiency", "analysis:tech_earnings_fairness_review"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "tech-addon-sales",
+          "label": "技师副项推销",
+          "recipe_refs": ["metric:market_revenue", "analysis:market_attach_review"],
+          "support_status": "capability_gap"
+        }
+      ]
+    },
+    {
+      "id": "boss-risk-anomaly",
+      "role": "boss",
+      "family": "风险异常",
+      "question_count": 5,
+      "sample_questions": ["今天有没有异常交易？", "最近有没有反结情况？", "有没有什么财务风险要提前注意的？"],
+      "source_api_tags": ["1.2", "1.4"],
+      "mappings": [
+        {
+          "id": "anti-settle-scan",
+          "label": "反结/异常交易巡检",
+          "capability_id": "store_anomaly_v1",
+          "recipe_refs": ["metric:anti_settle_amount", "analysis:anti_settle_anomaly_review"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "store-risk-scan",
+          "label": "经营风险扫描",
+          "capability_id": "store_risk_v1",
+          "recipe_refs": ["analysis:store_health_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "boss-channel-growth",
+      "role": "boss",
+      "family": "渠道与增长",
+      "question_count": 6,
+      "sample_questions": ["美团的客人回头率怎么样？", "团购客人转成会员的有多少？", "哪个项目卖得最好？"],
+      "source_api_tags": ["1.1", "1.2"],
+      "mappings": [
+        {
+          "id": "groupbuy-conversion",
+          "label": "团购复到店/转会员",
+          "capability_id": "store_metric_summary_v1",
+          "recipe_refs": ["metric:groupbuy_revisit_rate", "analysis:groupbuy_conversion_review"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "project-sales-mix",
+          "label": "项目/副项销售结构",
+          "recipe_refs": ["analysis:market_attach_review"],
+          "support_status": "capability_gap"
+        }
+      ]
+    },
+    {
+      "id": "boss-overall-health",
+      "role": "boss",
+      "family": "综合经营判断",
+      "question_count": 6,
+      "sample_questions": ["现在门店整体健不健康？", "最近生意有什么规律吗？", "门店现在最大的隐患是什么？"],
+      "source_api_tags": ["全量"],
+      "mappings": [
+        {
+          "id": "store-report",
+          "label": "门店经营情况快答",
+          "capability_id": "store_report_v1",
+          "recipe_refs": ["analysis:store_health_review"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "deep-review",
+          "label": "门店异步复盘",
+          "capability_id": "store_review_async_v1",
+          "recipe_refs": ["analysis:store_health_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "manager-realtime-floor",
+      "role": "manager",
+      "family": "当前实时状态",
+      "question_count": 6,
+      "sample_questions": ["现在几个人在上钟？", "还有几个技师是空的？", "现在后台有几张待结账的单？"],
+      "source_api_tags": ["1.5", "1.6"],
+      "mappings": [
+        {
+          "id": "realtime-tech-current",
+          "label": "当前上钟/空闲技师状态",
+          "capability_id": "tech_current_runtime_v1",
+          "recipe_refs": ["analysis:realtime_floor_state"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "realtime-queue-and-settlement-gap",
+          "label": "等位/待结账实时态",
+          "recipe_refs": ["analysis:realtime_floor_state"],
+          "support_status": "data_gap_realtime"
+        }
+      ]
+    },
+    {
+      "id": "manager-today-summary",
+      "role": "manager",
+      "family": "今日汇总数据",
+      "question_count": 7,
+      "sample_questions": ["今天到目前为止上了多少钟？", "今天来了几个客人？", "今天进账多少了？"],
+      "source_api_tags": ["1.2", "1.6"],
+      "mappings": [
+        {
+          "id": "today-running-summary",
+          "label": "今日营收/客流/钟数",
+          "capability_id": "store_metric_summary_v1",
+          "recipe_refs": ["metric:daily_cash_in", "metric:customer_count", "metric:total_clock_count"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "today-add-clock",
+          "label": "今日加钟",
+          "capability_id": "store_metric_summary_v1",
+          "recipe_refs": ["metric:add_clock_rate"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "manager-tech-daily",
+      "role": "manager",
+      "family": "技师今日动态",
+      "question_count": 7,
+      "sample_questions": ["今天谁上钟最多？", "谁今天还没开过单？", "小李今天接了几个客人？"],
+      "source_api_tags": ["1.5", "1.6"],
+      "mappings": [
+        {
+          "id": "tech-ranking",
+          "label": "技师今日排行",
+          "capability_id": "tech_leaderboard_ranking_v1",
+          "recipe_refs": ["metric:tech_service_revenue", "metric:total_clock_count"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "tech-profile",
+          "label": "单技师画像/表现",
+          "capability_id": "tech_profile_lookup_v1",
+          "recipe_refs": ["analysis:tech_daily_state_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "manager-market-attach",
+      "role": "manager",
+      "family": "副项推销",
+      "question_count": 5,
+      "sample_questions": ["今天卖出什么副项了？", "谁今天推销做得好？", "哪个技师今天一单副项都没推？"],
+      "source_api_tags": ["1.7"],
+      "mappings": [
+        {
+          "id": "market-attach-breakdown",
+          "label": "副项/茶饮/精油销售明细",
+          "capability_id": "store_market_breakdown_v1",
+          "recipe_refs": ["metric:market_revenue", "analysis:market_attach_review"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "market-attach-ranking",
+          "label": "技师推销排行",
+          "capability_id": "tech_leaderboard_ranking_v1",
+          "recipe_refs": ["metric:market_revenue", "analysis:market_attach_review"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "market-attach-zero-sales-gap",
+          "label": "高钟数零副项异常样本",
+          "recipe_refs": ["metric:market_revenue", "analysis:market_attach_review"],
+          "support_status": "capability_gap"
+        }
+      ]
+    },
+    {
+      "id": "manager-customer-events",
+      "role": "manager",
+      "family": "客人情况",
+      "question_count": 7,
+      "sample_questions": ["今天有没有第一次来的新客？", "今天有没有退款的单？", "今天有没有大客户或VIP来？"],
+      "source_api_tags": ["1.1", "1.2"],
+      "mappings": [
+        {
+          "id": "new-customer-today",
+          "label": "今日新客/首访客",
+          "capability_id": "store_metric_summary_v1",
+          "recipe_refs": ["metric:new_member_count", "segment:first_visit_new_customer"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "refund-abnormal",
+          "label": "退款/反结客情",
+          "capability_id": "store_anomaly_v1",
+          "recipe_refs": ["analysis:anti_settle_anomaly_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "manager-shift-arrangement",
+      "role": "manager",
+      "family": "排班与安排",
+      "question_count": 5,
+      "sample_questions": ["今晚还需要几个人在场？", "下午场人手够不够？", "今天哪个技师状态不太好，要留意？"],
+      "source_api_tags": ["1.5"],
+      "mappings": [
+        {
+          "id": "shift-capacity",
+          "label": "班次容量与空闲状态",
+          "recipe_refs": ["analysis:shift_capacity_review"],
+          "support_status": "data_gap_realtime"
+        }
+      ]
+    },
+    {
+      "id": "manager-target-progress",
+      "role": "manager",
+      "family": "业绩进度追踪",
+      "question_count": 8,
+      "sample_questions": ["今天目标完成多少了？", "距离今天目标还差多少钱？", "今天下班前能到目标吗？"],
+      "source_api_tags": ["1.2", "1.6"],
+      "mappings": [
+        {
+          "id": "today-progress",
+          "label": "今日进度和时段强弱",
+          "capability_id": "store_report_v1",
+          "recipe_refs": ["analysis:daily_target_progress_review"],
+          "support_status": "data_gap_model"
+        },
+        {
+          "id": "today-running-summary",
+          "label": "今日过程指标",
+          "capability_id": "store_metric_summary_v1",
+          "recipe_refs": ["metric:daily_cash_in", "metric:customer_count", "metric:total_clock_count"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "manager-person-or-order-lookup",
+      "role": "manager",
+      "family": "具体查人查单",
+      "question_count": 5,
+      "sample_questions": ["小王今天上了几钟？", "大李今天的提成大概有多少？", "今天的点钟率是多少？"],
+      "source_api_tags": ["1.2", "1.6"],
+      "mappings": [
+        {
+          "id": "single-tech-lookup",
+          "label": "单技师表现查看",
+          "capability_id": "tech_profile_lookup_v1",
+          "recipe_refs": ["analysis:tech_daily_state_review"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "point-add-clock",
+          "label": "点钟率/加钟率",
+          "capability_id": "store_metric_summary_v1",
+          "recipe_refs": ["metric:point_clock_rate", "metric:add_clock_rate"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "crm-silent-layering",
+      "role": "crm",
+      "family": "会员沉默分层",
+      "question_count": 6,
+      "sample_questions": ["哪些客人很久没来了？", "有余额但不来的客人有多少？", "沉默会员里谁的余额最多？"],
+      "source_api_tags": ["1.1"],
+      "mappings": [
+        {
+          "id": "sleeping-list",
+          "label": "沉默会员名单/分层",
+          "capability_id": "customer_segment_list_v1",
+          "recipe_refs": ["segment:sleeping_customer", "segment:silent_member_with_balance"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "crm-today-followup",
+      "role": "crm",
+      "family": "今日触达任务",
+      "question_count": 5,
+      "sample_questions": ["今天要联系哪些客人？", "哪些客人最值得打电话唤回？", "有没有客人快到生日了？"],
+      "source_api_tags": ["1.1"],
+      "mappings": [
+        {
+          "id": "recall-queue",
+          "label": "唤回队列/跟进名单",
+          "capability_id": "customer_ranked_list_lookup_v1",
+          "recipe_refs": ["segment:high_value_member", "analysis:customer_followup_task_review"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "birthday-window",
+          "label": "生日窗口成员",
+          "capability_id": "birthday_member_list_v1",
+          "recipe_refs": ["analysis:birthday_window_followup_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "crm-tech-loyalty-risk",
+      "role": "crm",
+      "family": "点钟黏性与风险",
+      "question_count": 6,
+      "sample_questions": ["指名小李的客人有多少？", "如果小李离职，会带走多少客人的余额？", "哪些客人从来不指名，随便轮？"],
+      "source_api_tags": ["1.1", "1.6"],
+      "mappings": [
+        {
+          "id": "tech-customer-relation",
+          "label": "技师-顾客绑定关系",
+          "capability_id": "customer_relation_lookup_v1",
+          "recipe_refs": ["segment:tech_loyal_customer", "analysis:tech_dependency_risk_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "crm-coupon-effect",
+      "role": "crm",
+      "family": "优惠券效果",
+      "question_count": 5,
+      "sample_questions": ["上次发的券有多少人用了？", "还有多少券快过期了没用？", "发券前后，到店率有没有变化？"],
+      "source_api_tags": ["1.1"],
+      "mappings": [
+        {
+          "id": "coupon-redemption",
+          "label": "优惠券使用与临期提醒",
+          "capability_id": "member_marketing_analysis_v1",
+          "recipe_refs": ["segment:coupon_received_unused_customer", "analysis:coupon_redemption_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "crm-recharge-behavior",
+      "role": "crm",
+      "family": "充值行为分析",
+      "question_count": 5,
+      "sample_questions": ["谁充了钱还没来过？", "最近充值的都是什么类型的客人？", "高价值会员最近活不活跃？"],
+      "source_api_tags": ["1.1", "1.3"],
+      "mappings": [
+      {
+        "id": "recharge-not-visited",
+        "label": "充值未到店人群",
+        "capability_id": "customer_segment_list_v1",
+        "recipe_refs": ["segment:recharge_not_visited_member", "analysis:recharge_activation_review"],
+        "support_status": "implemented"
+      },
+        {
+          "id": "high-value-activity",
+          "label": "高价值会员活跃度",
+          "capability_id": "customer_segment_list_v1",
+          "recipe_refs": ["segment:high_value_member"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "crm-groupbuy-conversion",
+      "role": "crm",
+      "family": "团购客转化",
+      "question_count": 5,
+      "sample_questions": ["美团来的客人回头了吗？", "上个月团购客有多少转成了正式会员？", "抖音来的客人质量怎么样？"],
+      "source_api_tags": ["1.1", "1.2"],
+      "mappings": [
+        {
+          "id": "groupbuy-revisit-conversion",
+          "label": "团购复到店/转会员",
+          "capability_id": "store_metric_summary_v1",
+          "recipe_refs": ["metric:groupbuy_revisit_rate", "segment:groupbuy_revisit_customer", "analysis:groupbuy_conversion_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "crm-new-customer-followup",
+      "role": "crm",
+      "family": "新客跟进",
+      "question_count": 5,
+      "sample_questions": ["本月新注册的客人来消费了吗？", "上周新来的客人有没有第二次到店？", "新客人最主要是从哪个渠道来的？"],
+      "source_api_tags": ["1.1", "1.2"],
+      "mappings": [
+        {
+          "id": "first-visit-followup",
+          "label": "新客首访到二访转化",
+          "capability_id": "customer_segment_list_v1",
+          "recipe_refs": ["segment:first_visit_new_customer", "analysis:first_visit_conversion_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "crm-tech-customer-history",
+      "role": "crm",
+      "family": "技师与客人关系",
+      "question_count": 6,
+      "sample_questions": ["小李最近有没有新的忠实客人？", "哪个客人换过好几个技师？", "某个技师离职后，他的客人都去哪了？"],
+      "source_api_tags": ["1.1", "1.6"],
+      "mappings": [
+        {
+          "id": "tech-customer-history",
+          "label": "顾客-技师关系轨迹",
+          "capability_id": "customer_relation_lookup_v1",
+          "recipe_refs": ["analysis:tech_dependency_risk_review"],
+          "support_status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "crm-member-insight-profile",
+      "role": "crm",
+      "family": "会员洞察与画像",
+      "question_count": 7,
+      "sample_questions": ["常来的客人一般多久来一次？", "最高价值的前10个客人是谁？", "哪些客人喜欢下午来，哪些喜欢晚上来？"],
+      "source_api_tags": ["1.1", "1.2"],
+      "mappings": [
+        {
+          "id": "customer-profile",
+          "label": "顾客画像/高价值客群",
+          "capability_id": "customer_profile_lookup_v1",
+          "recipe_refs": ["segment:high_value_member", "analysis:customer_profile_review"],
+          "support_status": "implemented"
+        },
+        {
+          "id": "arrival-pattern",
+          "label": "到店时段偏好",
+          "capability_id": "arrival_profile_timeseries_v1",
+          "recipe_refs": ["analysis:arrival_pattern_review"],
+          "support_status": "implemented"
+        }
+      ]
+    }
+  ],
+  "operating_contracts": {
+    "metrics": [
+      {
+        "id": "metric:daily_cash_in",
+        "label": "今日进账/实收",
+        "metric_key": "serviceRevenue",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.serviceRevenue",
+        "upstream_apis": ["1.2"],
+        "upstream_fields": ["Pay", "CTime"],
+        "calculation_logic": "按营业日汇总实付 Pay；默认对比上一营业日；不把充值金额混入服务实收。",
+        "human_definition": "老板要的是真金白银收进来了多少，不是标价。",
+        "compare_baseline": "previous_day"
+      },
+      {
+        "id": "metric:daily_discount_given",
+        "label": "今日折扣/反结流出",
+        "metric_key": "antiServiceRevenue",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.antiServiceRevenue",
+        "upstream_apis": ["1.2", "1.4"],
+        "upstream_fields": ["IsAnti", "CardOptType"],
+        "calculation_logic": "汇总反结/退款类金额，并按异常金额、频次、操作人做审查。",
+        "human_definition": "大额或频繁反结是财务和经营风险信号。",
+        "compare_baseline": "previous_day"
+      },
+      {
+        "id": "metric:order_average_ticket",
+        "label": "客单价",
+        "metric_key": "averageTicket",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.averageTicket",
+        "upstream_apis": ["1.2"],
+        "upstream_fields": ["Pay", "CustomerId"],
+        "calculation_logic": "服务实收 / 消费人数。",
+        "human_definition": "判断今天来的客人买得深不深。",
+        "compare_baseline": "previous_day"
+      },
+      {
+        "id": "metric:recharge_cash",
+        "label": "充值本金/实充",
+        "metric_key": "rechargeCash",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.rechargeCash",
+        "upstream_apis": ["1.3"],
+        "upstream_fields": ["Reality", "CTime"],
+        "calculation_logic": "汇总 Reality；默认与上月同口径对比。",
+        "human_definition": "老板要先看充值本金，再看赠送。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:recharge_total_with_bonus",
+        "label": "充值总额（含赠送）",
+        "metric_key": "rechargeStoredValue",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.rechargeStoredValue",
+        "upstream_apis": ["1.3"],
+        "upstream_fields": ["Reality", "Donate", "CTime"],
+        "calculation_logic": "本金 + 赠送，适合做卡金入账观察，不适合替代实收。",
+        "human_definition": "显示卡金规模，但不能当营业额。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:recharge_bonus_value",
+        "label": "充值赠送金额",
+        "metric_key": "rechargeBonusValue",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.rechargeBonusValue",
+        "upstream_apis": ["1.3"],
+        "upstream_fields": ["Donate"],
+        "calculation_logic": "单独汇总赠送金额，用来计算赠送比。",
+        "human_definition": "赠送比过高会透支未来耗卡压力。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:stored_balance",
+        "label": "当前储值余额",
+        "metric_key": "currentStoredBalance",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.currentStoredBalance",
+        "upstream_apis": ["1.1", "1.3"],
+        "upstream_fields": ["StoredAmount"],
+        "calculation_logic": "按当前会员余额汇总，用作沉睡资金和续充压力底盘。",
+        "human_definition": "老板关心有多少钱趴在卡里，还能不能被激活回来。",
+        "compare_baseline": "as_of"
+      },
+      {
+        "id": "metric:tech_service_revenue",
+        "label": "技师营收",
+        "metric_key": "serviceRevenue",
+        "current_capability_id": "tech_leaderboard_ranking_v1",
+        "local_truth_surface": "Tech leaderboard / up-clock aggregate",
+        "upstream_apis": ["1.6"],
+        "upstream_fields": ["Income", "PersonName"],
+        "calculation_logic": "按技师汇总 Income，再与钟数、点钟率一起解释。",
+        "human_definition": "单看赚钱多少不够，还要看效率和结构。",
+        "compare_baseline": "window_peer"
+      },
+      {
+        "id": "metric:tech_clock_efficiency",
+        "label": "技师人效/钟效",
+        "metric_key": "clockEffect",
+        "current_capability_id": "tech_leaderboard_ranking_v1",
+        "local_truth_surface": "DailyStoreMetrics.clockEffect / tech aggregates",
+        "upstream_apis": ["1.6"],
+        "upstream_fields": ["Income", "Count"],
+        "calculation_logic": "营收 / 上钟数，作为技师效率对照指标。",
+        "human_definition": "区分是钟多堆出来，还是单钟质量高。",
+        "compare_baseline": "window_peer"
+      },
+      {
+        "id": "metric:tech_point_clock_rate",
+        "label": "点钟率",
+        "metric_key": "pointClockRate",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.pointClockRate",
+        "upstream_apis": ["1.6"],
+        "upstream_fields": ["ClockType"],
+        "calculation_logic": "点钟条数 / 上钟条数。",
+        "human_definition": "看技师是靠口碑点名，还是主要靠排钟承接。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:point_clock_rate",
+        "label": "门店点钟率",
+        "metric_key": "pointClockRate",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.pointClockRate",
+        "upstream_apis": ["1.6"],
+        "upstream_fields": ["ClockType"],
+        "calculation_logic": "点钟记录数 / 上钟记录数。",
+        "human_definition": "店长常用来判断今天点名承接强不强。",
+        "compare_baseline": "previous_day"
+      },
+      {
+        "id": "metric:customer_count",
+        "label": "到店/消费人数",
+        "metric_key": "customerCount",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.customerCount",
+        "upstream_apis": ["1.2"],
+        "upstream_fields": ["CustomerId", "CTime"],
+        "calculation_logic": "按营业日去重消费人数。",
+        "human_definition": "用于区分营收变化是人少了还是客单弱了。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:total_clock_count",
+        "label": "总钟数",
+        "metric_key": "totalClockCount",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.totalClockCount",
+        "upstream_apis": ["1.6"],
+        "upstream_fields": ["Count"],
+        "calculation_logic": "按技师上钟明细累计钟数。",
+        "human_definition": "店长常用来判断今天忙不忙、技师承接够不够。",
+        "compare_baseline": "previous_day"
+      },
+      {
+        "id": "metric:add_clock_rate",
+        "label": "加钟率",
+        "metric_key": "addClockRate",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.addClockRate",
+        "upstream_apis": ["1.6"],
+        "upstream_fields": ["AddClockType"],
+        "calculation_logic": "加钟记录数 / 上钟记录数。",
+        "human_definition": "服务后半程承接强不强的直接信号。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:market_revenue",
+        "label": "副项/附加项收入",
+        "metric_key": "marketRevenue",
+        "current_capability_id": null,
+        "local_truth_surface": "DailyStoreMetrics.marketRevenue + TechMarketRecord",
+        "upstream_apis": ["1.7"],
+        "upstream_fields": ["ItemTypeName", "Commission", "Amount"],
+        "calculation_logic": "按副项类别、技师、日期聚合。",
+        "human_definition": "表扬谁会卖副项，或者谁忙了一天却一单没带出。",
+        "compare_baseline": "previous_day"
+      },
+      {
+        "id": "metric:new_member_count",
+        "label": "新客/新注册会员数",
+        "metric_key": "newMembers",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.newMembers",
+        "upstream_apis": ["1.1", "1.2"],
+        "upstream_fields": ["CTime", "first_consume_time"],
+        "calculation_logic": "区分注册新客和首次消费新客两种口径。",
+        "human_definition": "注册不等于真正到店，新客跟进要以首次到店为准。",
+        "compare_baseline": "previous_day"
+      },
+      {
+        "id": "metric:groupbuy_revisit_rate",
+        "label": "团购回头率/复到店率",
+        "metric_key": "groupbuy7dRevisitRate",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "DailyStoreMetrics.groupbuy7dRevisitRate",
+        "upstream_apis": ["1.2"],
+        "upstream_fields": ["Payments.Name", "UserId", "CTime"],
+        "calculation_logic": "识别美团/抖音来源后，统计 7 天或 30 天内非团购二次到店。",
+        "human_definition": "决定团购是不是只带来一次性流量，还是能留下人。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:anti_settle_amount",
+        "label": "异常反结金额",
+        "metric_key": "antiServiceRevenue",
+        "current_capability_id": "store_anomaly_v1",
+        "local_truth_surface": "DailyStoreMetrics.antiServiceRevenue",
+        "upstream_apis": ["1.2", "1.4"],
+        "upstream_fields": ["IsAnti", "CardOptType", "OperatorId"],
+        "calculation_logic": "找出金额大、同日多次、操作人异常的反结/退款。",
+        "human_definition": "这类不是普通经营波动，是需要老板先看的风控线索。",
+        "compare_baseline": "previous_day"
+      }
+    ],
+    "segments": [
+      {
+        "id": "segment:sleeping_customer",
+        "label": "沉默/沉睡会员",
+        "current_segment_key": "sleeping-customer",
+        "current_capability_id": "customer_segment_list_v1",
+        "upstream_apis": ["1.1"],
+        "upstream_fields": ["SilentDays"],
+        "filter_logic": "SilentDays >= 30; 30-60 轻度沉默, 60-90 预警, 90+ 高风险。",
+        "human_definition": "运营需要先知道谁很久没来了，再决定触达节奏。"
+      },
+      {
+        "id": "segment:silent_member_with_balance",
+        "label": "有余额但不来的会员",
+        "current_segment_key": "sleeping-customer",
+        "current_capability_id": "customer_segment_list_v1",
+        "upstream_apis": ["1.1"],
+        "upstream_fields": ["SilentDays", "StoredAmount"],
+        "filter_logic": "SilentDays > 60 && StoredAmount > 0。",
+        "human_definition": "这是账上负债，也是优先级最高的召回对象。"
+      },
+      {
+        "id": "segment:high_balance_silent_customer",
+        "label": "高余额沉默会员",
+        "current_segment_key": "sleeping-customer",
+        "current_capability_id": "customer_segment_list_v1",
+        "upstream_apis": ["1.1"],
+        "upstream_fields": ["SilentDays", "StoredAmount"],
+        "filter_logic": "SilentDays > 180 && StoredAmount > 500。",
+        "human_definition": "AI 主动发现里最该先推给老板的沉睡资金样本。"
+      },
+      {
+        "id": "segment:high_value_member",
+        "label": "高价值会员",
+        "current_segment_key": "important-reactivation-member",
+        "current_capability_id": "customer_ranked_list_lookup_v1",
+        "upstream_apis": ["1.1", "1.2", "1.3"],
+        "upstream_fields": ["pay_amount_90d", "visit_count_90d", "StoredAmount"],
+        "filter_logic": "结合近 90 天支付、到店频次、余额和沉默风险计算优先级。",
+        "human_definition": "不只是消费高，还要兼顾流失风险和可唤回价值。"
+      },
+      {
+        "id": "segment:recharge_not_visited_member",
+        "label": "充值未到店会员",
+        "current_segment_key": null,
+        "current_capability_id": "customer_segment_list_v1",
+        "upstream_apis": ["1.2", "1.3"],
+        "upstream_fields": ["Reality", "CTime", "first_consume_time"],
+        "filter_logic": "有充值记录但无消费记录，且充值后超过 7 天未到店。",
+        "human_definition": "冲动充值但没有形成消费动机，是高成功率触达对象。"
+      },
+      {
+        "id": "segment:groupbuy_revisit_customer",
+        "label": "团购回头客户",
+        "current_segment_key": "groupbuy-retain-candidate",
+        "current_capability_id": "customer_segment_list_v1",
+        "upstream_apis": ["1.2"],
+        "upstream_fields": ["Payments.Name", "UserId", "CTime"],
+        "filter_logic": "识别团购来源后，判断 7 天/30 天内是否完成非团购二次到店。",
+        "human_definition": "团购不是终点，关键看有没有二次关系。"
+      },
+      {
+        "id": "segment:tech_loyal_customer",
+        "label": "单技师忠诚客",
+        "current_segment_key": null,
+        "current_capability_id": "customer_relation_lookup_v1",
+        "upstream_apis": ["1.6"],
+        "upstream_fields": ["PersonName", "CustomerId", "ClockType"],
+        "filter_logic": "同一顾客连续多次指名同一技师，且主服务技师占比显著高。",
+        "human_definition": "衡量技师离职会不会带走客人和余额。"
+      },
+      {
+        "id": "segment:first_visit_new_customer",
+        "label": "首访新客",
+        "current_segment_key": null,
+        "current_capability_id": "customer_segment_list_v1",
+        "upstream_apis": ["1.1", "1.2"],
+        "upstream_fields": ["CTime", "first_consume_time"],
+        "filter_logic": "首次注册或首次消费发生在目标窗口内。",
+        "human_definition": "新客跟进应先围绕首访到二访，而不是只看注册量。"
+      },
+      {
+        "id": "segment:coupon_received_unused_customer",
+        "label": "领券未核销客",
+        "current_segment_key": null,
+        "current_capability_id": "member_marketing_analysis_v1",
+        "upstream_apis": ["1.1"],
+        "upstream_fields": ["Coupons.IsUsed", "Coupons.ExpireTime", "Coupons.Source"],
+        "filter_logic": "已领券但未使用，或临近过期仍未使用。",
+        "human_definition": "运营最关心的是领了不用和快过期还没用的人。"
+      }
+    ],
+    "analysis_recipes": [
+      {
+        "id": "analysis:week_vs_last_week_store",
+        "label": "本周 vs 上周经营对比",
+        "current_capability_id": "store_compare_v1",
+        "supporting_metric_keys": ["serviceRevenue", "rechargeCash", "totalClockCount", "newMembers"],
+        "decomposition_logic": ["先看营收/客流/客单", "再看充值与耗卡", "再看新客/老客结构", "最后给出向好/承压/异常判断"]
+      },
+      {
+        "id": "analysis:month_vs_last_month_store",
+        "label": "本月 vs 上月趋势拆解",
+        "current_capability_id": "store_trend_v1",
+        "supporting_metric_keys": ["serviceRevenue", "rechargeCash", "customerCount", "clockEffect"],
+        "decomposition_logic": ["看整体趋势", "看高峰/低峰时段", "看营收和充值是否背离", "补充需要继续追的风险点"]
+      },
+      {
+        "id": "analysis:recharge_health_review",
+        "label": "充值健康诊断",
+        "current_capability_id": "store_report_v1",
+        "supporting_metric_keys": ["rechargeCash", "rechargeStoredValue", "rechargeBonusValue"],
+        "decomposition_logic": ["本金与赠送拆开", "算赠送比", "与上月对比", "解释续充意愿变化"]
+      },
+      {
+        "id": "analysis:member_churn_review",
+        "label": "会员流失/回流诊断",
+        "current_capability_id": "customer_ranked_list_lookup_v1",
+        "supporting_metric_keys": ["sleepingMembers", "sleepingMemberRate", "currentStoredBalance"],
+        "decomposition_logic": ["先看沉默人数", "再看余额压仓金额", "按沉默层级排序", "给出召回优先级"]
+      },
+      {
+        "id": "analysis:tech_earnings_fairness_review",
+        "label": "技师赚钱能力公平比较",
+        "current_capability_id": "tech_leaderboard_ranking_v1",
+        "supporting_metric_keys": ["serviceRevenue", "clockEffect", "pointClockRate"],
+        "decomposition_logic": ["收入排名", "单钟效率", "点钟率结构", "区分口碑型和转台型技师"]
+      },
+      {
+        "id": "analysis:anti_settle_anomaly_review",
+        "label": "反结/退款异常诊断",
+        "current_capability_id": "store_anomaly_v1",
+        "supporting_metric_keys": ["antiServiceRevenue"],
+        "decomposition_logic": ["先按金额排序", "再看同日重复", "再看操作人异常", "输出需要人工复核的样本"]
+      },
+      {
+        "id": "analysis:groupbuy_conversion_review",
+        "label": "团购回头与转会员诊断",
+        "current_capability_id": "store_metric_summary_v1",
+        "supporting_metric_keys": ["groupbuy7dRevisitRate", "groupbuy30dMemberPayConversionRate"],
+        "decomposition_logic": ["看团购样本量", "看 7 天回头", "看 30 天转会员", "解释渠道质量高低"]
+      },
+      {
+        "id": "analysis:store_health_review",
+        "label": "门店整体经营健康复盘",
+        "current_capability_id": "store_review_async_v1",
+        "supporting_metric_keys": ["serviceRevenue", "customerCount", "averageTicket", "rechargeCash", "sleepingMemberRate"],
+        "decomposition_logic": ["营收 = 客流 x 客单", "会员面看沉默/回流", "供给面看钟效/加钟", "给出优先动作"]
+      },
+      {
+        "id": "analysis:market_attach_review",
+        "label": "副项/附加项承接诊断",
+        "current_capability_id": null,
+        "supporting_metric_keys": ["marketRevenue", "addClockRate"],
+        "decomposition_logic": ["看副项收入和附加项单量", "按技师和品类拆", "找高钟数零副项样本", "给班组表扬/辅导名单"]
+      },
+      {
+        "id": "analysis:daily_target_progress_review",
+        "label": "今日目标进度诊断",
+        "current_capability_id": "store_report_v1",
+        "supporting_metric_keys": ["serviceRevenue", "customerCount", "totalClockCount"],
+        "decomposition_logic": ["先看当前完成额", "再看时段节奏", "如果缺目标配置则只做过程盘点", "不伪造预测值"]
+      },
+      {
+        "id": "analysis:realtime_floor_state",
+        "label": "实时楼面状态",
+        "current_capability_id": null,
+        "supporting_metric_keys": [],
+        "decomposition_logic": ["需要实时在钟/空闲/待结/等位状态源", "没有稳定实时源时不做编造式回答"]
+      },
+      {
+        "id": "analysis:shift_capacity_review",
+        "label": "班次人手与承接容量",
+        "current_capability_id": null,
+        "supporting_metric_keys": [],
+        "decomposition_logic": ["需要实时班次、在岗、预约、排队和房间状态", "当前无稳定实时面时只允许提示缺口"]
+      },
+      {
+        "id": "analysis:tech_daily_state_review",
+        "label": "单技师日内表现",
+        "current_capability_id": "tech_profile_lookup_v1",
+        "supporting_metric_keys": ["serviceRevenue", "totalClockCount", "pointClockRate"],
+        "decomposition_logic": ["看接客/上钟", "看收入和提成", "看点钟结构", "给出是否需要店长关注"]
+      },
+      {
+        "id": "analysis:customer_followup_task_review",
+        "label": "顾客今日跟进任务",
+        "current_capability_id": "customer_ranked_list_lookup_v1",
+        "supporting_metric_keys": ["sleepingMembers", "currentStoredBalance"],
+        "decomposition_logic": ["先按唤回优先级排序", "再补生日窗口", "最后输出今日触达名单"]
+      },
+      {
+        "id": "analysis:birthday_window_followup_review",
+        "label": "生日窗口触达",
+        "current_capability_id": "birthday_member_list_v1",
+        "supporting_metric_keys": [],
+        "decomposition_logic": ["识别生日窗口", "结合近 90 天活跃度", "给出当天适合的提醒名单"]
+      },
+      {
+        "id": "analysis:coupon_redemption_review",
+        "label": "优惠券核销效果",
+        "current_capability_id": "member_marketing_analysis_v1",
+        "supporting_metric_keys": [],
+        "decomposition_logic": ["看领券人数", "看核销率", "看临期未用样本", "给触达节奏建议"]
+      },
+      {
+        "id": "analysis:recharge_activation_review",
+        "label": "充值后到店激活诊断",
+        "current_capability_id": null,
+        "supporting_metric_keys": ["rechargeCash"],
+        "decomposition_logic": ["先找充值未到店人群", "再看充值后首访延迟", "再按门店/客服排序"]
+      },
+      {
+        "id": "analysis:first_visit_conversion_review",
+        "label": "首访到二访转化",
+        "current_capability_id": "customer_segment_list_v1",
+        "supporting_metric_keys": ["newMembers", "groupbuy7dRevisitRate"],
+        "decomposition_logic": ["区分注册新客和首访新客", "看一访到二访时间差", "看渠道来源差异"]
+      },
+      {
+        "id": "analysis:tech_dependency_risk_review",
+        "label": "技师依赖和离职风险",
+        "current_capability_id": "customer_relation_lookup_v1",
+        "supporting_metric_keys": ["pointClockRate", "currentStoredBalance"],
+        "decomposition_logic": ["先看点钟绑定客数", "再看绑定客余额", "再看是否集中在单一技师"]
+      },
+      {
+        "id": "analysis:customer_profile_review",
+        "label": "顾客价值画像",
+        "current_capability_id": "customer_profile_lookup_v1",
+        "supporting_metric_keys": ["currentStoredBalance", "serviceRevenue"],
+        "decomposition_logic": ["看最近一次到店", "看近 90 天频次和金额", "看偏好和主服务技师", "给一句经营判断"]
+      },
+      {
+        "id": "analysis:arrival_pattern_review",
+        "label": "顾客到店时段偏好",
+        "current_capability_id": "arrival_profile_timeseries_v1",
+        "supporting_metric_keys": [],
+        "decomposition_logic": ["看常来时段", "看工作日/周末偏好", "支持运营约访时间选择"]
+      }
+    ]
+  },
+  "proactive_diagnoses": [
+    {
+      "id": "scheduled-high-balance-silent-members",
+      "label": "高余额沉默会员预警",
+      "recipe_refs": ["segment:high_balance_silent_customer", "analysis:member_churn_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "send-reactivation-push",
+        "delivery_surface": "reactivation_queue + doctor/admin summary"
+      },
+      "objective": "主动指出余额大、沉默久、最值得先唤回的会员。"
+    },
+    {
+      "id": "scheduled-recharge-consume-divergence",
+      "label": "充值下滑但消费未掉的背离诊断",
+      "recipe_refs": ["metric:recharge_cash", "metric:daily_cash_in", "analysis:recharge_health_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "build-report",
+        "delivery_surface": "daily report enrichment"
+      },
+      "objective": "解释老客仍在消费但新充值意愿下降的情况。"
+    },
+    {
+      "id": "scheduled-anti-settle-watch",
+      "label": "异常反结巡检",
+      "recipe_refs": ["metric:anti_settle_amount", "analysis:anti_settle_anomaly_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "audit-daily-report-window",
+        "delivery_surface": "admin/doctor anomaly summary"
+      },
+      "objective": "让异常交易在管理读面里稳定可见。"
+    },
+    {
+      "id": "interactive-tech-dependency-risk",
+      "label": "技师依赖风险查看",
+      "recipe_refs": ["segment:tech_loyal_customer", "analysis:tech_dependency_risk_review"],
+      "execution": {
+        "mode": "interactive_capability",
+        "capability_id": "customer_relation_lookup_v1",
+        "delivery_surface": "query answer"
+      },
+      "objective": "需要时可直接问出单技师依赖风险。"
+    },
+    {
+      "id": "planned-high-clock-zero-attach",
+      "label": "高钟数零副项样本",
+      "recipe_refs": ["metric:market_revenue", "analysis:market_attach_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "build-report",
+        "delivery_surface": "planned manager exception brief"
+      },
+      "objective": "识别忙了一天但一单副项都没推的技师样本。"
+    }
+  ],
+  "knowledge_registry": {
+    "boundary": {
+      "allowed_domains": [
+        "metric_definition",
+        "report_scope_definition",
+        "store_sop",
+        "service_sop",
+        "membership_policy",
+        "refund_rule",
+        "coupon_rule",
+        "training_manual",
+        "policy_rule"
+      ],
+      "blocked_fact_classes": [
+        "transaction_facts",
+        "member_raw_detail",
+        "tech_payroll_detail",
+        "realtime_floor_state",
+        "report_cache_rows"
+      ],
+      "current_meta_tools": ["explain_metric_definition", "search_operating_knowledge"],
+      "notes": [
+        "知识检索只承载规则、SOP、口径解释，不承载经营流水真相。",
+        "结构化事实继续走 PostgreSQL / metric semantic layer / safe execution。"
+      ]
+    },
+    "documents": [
+      {
+        "id": "metrics-dictionary",
+        "title": "何棠经营指标字典",
+        "domain": "metric_definition",
+        "doc_path": "docs/plans/2026-03-31-hetang-ops-data-and-metrics-dictionary.md",
+        "tags": ["指标", "口径", "营收口径", "充值口径", "团购口径"],
+        "summary": "沉淀营收、充值、团购、客流等常用经营指标的定义和解释，不包含经营流水明细。"
+      },
+      {
+        "id": "store-manager-reporting-guide",
+        "title": "门店经理报表阅读指南",
+        "domain": "report_scope_definition",
+        "doc_path": "docs/store-manager-reporting-guide.md",
+        "tags": ["日报", "周报", "口径解释", "管理读面"],
+        "summary": "说明日报和门店经营读面的解读方式，适合回答“这张报表怎么看”。"
+      },
+      {
+        "id": "ops-runbook",
+        "title": "何棠运维运行手册",
+        "domain": "store_sop",
+        "doc_path": "docs/plans/2026-03-31-hetang-ops-operations-runbook.md",
+        "tags": ["SOP", "运行手册", "故障处理", "操作流程"],
+        "summary": "给交付和运维团队的操作流程和异常处理手册。"
+      },
+      {
+        "id": "knowledge-boundary-adr",
+        "title": "结构化数据 / 知识库 / Agent 边界 ADR",
+        "domain": "policy_rule",
+        "doc_path": "docs/adr/2026-04-29-structured-data-knowledge-base-agent-boundary.md",
+        "tags": ["知识边界", "权限审计", "结构化事实", "Agent 边界"],
+        "summary": "明确知识检索不能替代结构化事实查询，是知识层的总边界文档。"
+      },
+      {
+        "id": "semantic-operating-contract-doc",
+        "title": "自然问题家族与经营 contract 对照表",
+        "domain": "report_scope_definition",
+        "doc_path": "docs/plans/2026-04-29-semantic-operating-contract.md",
+        "tags": ["question family", "人话映射", "经营口径", "主动发现"],
+        "summary": "把 150 个自然问题和老板/店长/运营的人话问题收成 question family、metric/segment/analysis recipe 对照表。"
+      }
+    ]
+  }
+}

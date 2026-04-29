@@ -1,5 +1,6 @@
 import { resolveStoreOrgId } from "./config.js";
 import { resolveMetricIntent } from "./metric-query.js";
+import { resolveAiLaneConfig } from "./ai-lanes/resolver.js";
 import type {
   HetangQueryIntent,
   HetangQueryIntentKind,
@@ -34,6 +35,14 @@ const SUPPORTED_INTENT_KINDS = new Set<HetangQueryIntentKind>([
   "recharge_attribution",
 ]);
 
+const METRIC_DEPENDENT_FALLBACK_INTENT_KINDS = new Set<HetangQueryIntentKind>([
+  "metric",
+  "compare",
+  "ranking",
+  "trend",
+  "anomaly",
+]);
+
 type HetangAiSemanticTimeMode =
   | "report_default"
   | "today"
@@ -65,6 +74,17 @@ const SUPPORTED_TIME_MODES = new Set<HetangAiSemanticTimeMode>([
   "explicit_range",
 ]);
 
+const AMBIGUOUS_METRIC_PHRASE_PATTERNS = [
+  /盘里收/iu,
+  /盘收/iu,
+  /收了多少/iu,
+  /搞了多少/iu,
+  /做了多少/iu,
+];
+
+const EXPLICIT_METRIC_TOKENS_PATTERN =
+  /营收|业绩|流水|收入|储值|充值|现金|实收|耗卡|客单价|钟数|钟效|点钟|加钟|复购|到店|会员/iu;
+
 type HetangAiSemanticFallbackPayload = {
   intent_kind?: string;
   confidence?: number;
@@ -88,6 +108,7 @@ type HetangAiSemanticFallbackPayload = {
 export type HetangSemanticFallbackResolution = {
   intent?: HetangQueryIntent;
   clarificationText?: string;
+  clarificationReason?: string;
 };
 
 function asStringArray(value: unknown): string[] {
@@ -180,6 +201,14 @@ function normalizeTimeMode(value: unknown): HetangAiSemanticTimeMode {
 function resolveConfidence(value: unknown): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function requiresMetricClarification(text: string): boolean {
+  const normalized = text.replace(/\s+/gu, "");
+  return (
+    AMBIGUOUS_METRIC_PHRASE_PATTERNS.some((pattern) => pattern.test(normalized)) &&
+    !EXPLICIT_METRIC_TOKENS_PATTERN.test(normalized)
+  );
 }
 
 function normalizePhoneSuffix(value: unknown, fallbackText: string): string | undefined {
@@ -502,11 +531,18 @@ export async function resolveAiSemanticFallback(params: {
   logger?: HetangLogger;
 }): Promise<HetangSemanticFallbackResolution | null> {
   const fallbackConfig = params.config.semanticFallback;
+  const semanticFallbackLane = params.config.aiLanes["semantic-fallback"]
+    ? resolveAiLaneConfig(params.config, "semantic-fallback")
+    : null;
+  const requestBaseUrl = semanticFallbackLane?.baseUrl ?? fallbackConfig.baseUrl;
+  const requestApiKey = semanticFallbackLane?.apiKey ?? fallbackConfig.apiKey;
+  const requestModel = semanticFallbackLane?.model ?? fallbackConfig.model;
+  const requestTimeoutMs = semanticFallbackLane?.timeoutMs ?? fallbackConfig.timeoutMs;
   if (
     !fallbackConfig.enabled ||
-    !fallbackConfig.baseUrl ||
-    !fallbackConfig.apiKey ||
-    !fallbackConfig.model
+    !requestBaseUrl ||
+    !requestApiKey ||
+    !requestModel
   ) {
     return null;
   }
@@ -523,7 +559,7 @@ export async function resolveAiSemanticFallback(params: {
     cutoffLocalTime: params.config.sync.businessDayCutoffLocalTime,
   });
   const body = {
-    model: fallbackConfig.model,
+    model: requestModel,
     temperature: 0,
     messages: [
       {
@@ -534,6 +570,7 @@ export async function resolveAiSemanticFallback(params: {
           `intent_kind 只能是: ${Array.from(SUPPORTED_INTENT_KINDS).join(", ")}, unknown`,
           `time_mode 只能是: ${Array.from(SUPPORTED_TIME_MODES).join(", ")}`,
           "当门店范围、时间范围或关键指标不清楚时，设置 needs_clarification=true，不要猜。",
+          "像“盘里收了多少”“收了多少”“搞了多少”这类金额口语，如果不能明确对应到营收、储值、充值现金等标准指标，必须 needs_clarification=true。",
           "store_names 只能从已知门店中选；all_stores_requested=true 表示总部/五店全景。",
           "metric_hints 只放中文经营指标短语，比如 营收、储值、7天复到店率、加钟率。",
         ].join("\n"),
@@ -576,14 +613,14 @@ export async function resolveAiSemanticFallback(params: {
   };
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), fallbackConfig.timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
   let response: Response;
   try {
-    response = await fetch(`${fallbackConfig.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    response = await fetch(`${requestBaseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${fallbackConfig.apiKey}`,
+        authorization: `Bearer ${requestApiKey}`,
       },
       body: JSON.stringify(body),
       signal: controller.signal,
@@ -634,12 +671,26 @@ export async function resolveAiSemanticFallback(params: {
   );
   const representativeStoreName = resolvedStoreNames[0];
 
+  if (requiresMetricClarification(params.text)) {
+    return {
+      clarificationText: renderSemanticClarificationText({
+        reason: "missing_metric",
+        storeName: representativeStoreName,
+      }),
+      clarificationReason: "missing-metric",
+    };
+  }
+
   if (structured.needs_clarification === true && confidence >= fallbackConfig.clarifyConfidence) {
     return {
       clarificationText: renderSemanticClarificationText({
         reason: structured.clarification_reason,
         storeName: representativeStoreName,
       }),
+      clarificationReason:
+        typeof structured.clarification_reason === "string"
+          ? structured.clarification_reason.replace(/_/gu, "-")
+          : undefined,
     };
   }
 
@@ -652,9 +703,24 @@ export async function resolveAiSemanticFallback(params: {
     return null;
   }
 
+  const metricHints = asStringArray(structured.metric_hints);
   const metrics = resolveMetricIntent(
-    [params.text, ...asStringArray(structured.metric_hints)].join(" ").trim(),
+    [params.text, ...metricHints].join(" ").trim(),
   );
+  if (
+    METRIC_DEPENDENT_FALLBACK_INTENT_KINDS.has(kind) &&
+    metrics.supported.length === 0 &&
+    metrics.unsupported.length === 0 &&
+    (metricHints.length > 0 || EXPLICIT_METRIC_TOKENS_PATTERN.test(params.text))
+  ) {
+    return {
+      clarificationText: renderSemanticClarificationText({
+        reason: "missing_metric",
+        storeName: representativeStoreName,
+      }),
+      clarificationReason: "missing-metric",
+    };
+  }
   const { timeFrame, comparisonTimeFrame } = resolveFallbackTimeFrames({
     config: params.config,
     kind,

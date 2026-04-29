@@ -17,10 +17,14 @@ export function resolveHetangCommandAction(rawArgs: string): HetangCommandAction
   if (
     action === "action" ||
     action === "analysis" ||
+    action === "chart" ||
     action === "intel" ||
     action === "learning" ||
+    action === "observation" ||
     action === "queue" ||
     action === "report" ||
+    action === "reactivation" ||
+    action === "review" ||
     action === "query" ||
     action === "status" ||
     action === "sync" ||
@@ -33,6 +37,13 @@ export function resolveHetangCommandAction(rawArgs: string): HetangCommandAction
 }
 
 export function resolveQuotaLimits(binding: HetangEmployeeBinding | null): {
+  hourlyLimit: number;
+  dailyLimit: number;
+};
+export function resolveQuotaLimits(
+  binding: HetangEmployeeBinding | null,
+  overrides: HetangQuotaOverrides,
+): {
   hourlyLimit: number;
   dailyLimit: number;
 };

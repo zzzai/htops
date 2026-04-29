@@ -20,6 +20,7 @@ import type {
   HetangExternalBriefItem,
   HetangExternalEventCandidate,
   HetangExternalEventCard,
+  HetangExternalSourceDocumentScopeType,
   HetangExternalSourceTier,
   HetangLogger,
   HetangOpsConfig,
@@ -30,6 +31,9 @@ export type ExternalSourceDocumentInput = {
   sourceId: string;
   sourceTier: HetangExternalSourceTier;
   sourceUrl?: string;
+  scopeType?: HetangExternalSourceDocumentScopeType;
+  orgId?: string;
+  platformStoreId?: string;
   title: string;
   summary?: string;
   contentText?: string;

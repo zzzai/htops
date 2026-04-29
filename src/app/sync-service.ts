@@ -1,11 +1,11 @@
 import { HetangApiClient } from "../client.js";
 import { getStoreByOrgId } from "../config.js";
-import { rebuildMemberDailySnapshotsForDateRange } from "../customer-history-backfill.js";
-import { rebuildCustomerIntelligenceForDateRange } from "../customer-intelligence.js";
+import { rebuildMemberDailySnapshotsForDateRange } from "../customer-growth/history-backfill.js";
+import { rebuildCustomerIntelligenceForDateRange } from "../customer-growth/intelligence.js";
 import { resolveHistoryCatchupOrgIds, resolveHistoryCatchupRange } from "../history-catchup.js";
-import { rebuildMemberReactivationFeaturesForDateRange } from "../reactivation-features.js";
-import { rebuildMemberReactivationQueueForDateRange } from "../reactivation-queue.js";
-import { rebuildMemberReactivationStrategiesForDateRange } from "../reactivation-strategy.js";
+import { rebuildMemberReactivationFeaturesForDateRange } from "../customer-growth/reactivation/features.js";
+import { rebuildMemberReactivationQueueForDateRange } from "../customer-growth/reactivation/queue.js";
+import { rebuildMemberReactivationStrategiesForDateRange } from "../customer-growth/reactivation/strategy.js";
 import { HetangOpsStore } from "../store.js";
 import {
   estimateUserTradeSyncDurationMs,
@@ -19,12 +19,15 @@ import {
   resolveReportBizDate,
   shiftBizDate,
 } from "../time.js";
+import { HetangConversationReviewService } from "./conversation-review-service.js";
 import type {
   EndpointCode,
   HetangClientLike,
+  HetangConversationReviewRunResult,
   HetangHistoricalCoverageSnapshot,
   HetangLogger,
   HetangOpsConfig,
+  HetangStoreConfig,
 } from "../types.js";
 
 const STORE_SYNC_GAP_MS = 3_000;
@@ -40,6 +43,9 @@ const NIGHTLY_SYNC_PRIORITY_STORE_MATCHERS = ["迎宾"] as const;
 const NIGHTLY_USER_TRADE_LOOKBACK_DAYS = 30;
 const NIGHTLY_SYNC_RESERVED_BACKFILL_MS = 10 * 60_000;
 const NIGHTLY_SYNC_RESERVED_PROBE_MS = 4 * 60_000;
+const YINGBIN_FULL_HISTORY_START_BIZ_DATE = "2018-12-02";
+const SHARED_HISTORY_BACKFILL_FLOOR_BIZ_DATE = "2025-10-06";
+const SHARED_HISTORY_BACKFILL_FLOOR_STORE_MATCHERS = ["义乌", "华美", "锦苑", "园中园"] as const;
 const NIGHTLY_API_DEPTH_PROBE_JOB_TYPE = "nightly-api-depth-probe";
 const NIGHTLY_API_DEPTH_PROBE_STATE_KEY = "latest";
 const NIGHTLY_API_DEPTH_PROBE_LOOKBACK_DAYS = [540, 365, 270, 180, 90, 30] as const;
@@ -57,6 +63,7 @@ const ALL_SYNC_ENDPOINTS: EndpointCode[] = [
   "1.8",
 ];
 const LOCAL_HISTORY_CATCHUP_INTELLIGENCE_CHUNK_DAYS = 14;
+const STALE_SYNC_RUN_RECLAIM_HOURS = 4;
 const NIGHTLY_HISTORY_BACKFILL_JOB_TYPE = "nightly-history-backfill";
 const NIGHTLY_HISTORY_BACKFILL_STATE_KEY = "default";
 const FEBRUARY_2026_BACKFILL_RANGE = {
@@ -116,10 +123,20 @@ type BizDateRange = {
   endBizDate: string;
 };
 
+type CustomerHistoryCatchupCoverageTarget = {
+  status: "rebuild" | "complete" | "blocked";
+  rebuildRange?: BizDateRange;
+};
+
 type SyncStoreLike = Pick<
   HetangOpsStore,
   "getScheduledJobState" | "setScheduledJobState" | "publishAnalyticsViews" | "forceRebuildAnalyticsViews"
 > & {
+  reclaimStaleSyncRuns?: (params: {
+    staleBefore: string;
+    reclaimedAt: string;
+    modes?: string[];
+  }) => Promise<number>;
   listRecentUserTradeCandidateCardIds?: (params: {
     orgId: string;
     startBizDate: string;
@@ -280,6 +297,95 @@ function resolveCoverageGapStart(
   return null;
 }
 
+function countBizDatesInRange(startBizDate: string, endBizDate: string): number {
+  const start = new Date(`${startBizDate}T00:00:00Z`);
+  const end = new Date(`${endBizDate}T00:00:00Z`);
+  return Math.max(0, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
+}
+
+function resolveTailOnlyGapStart(
+  span:
+    | {
+        minBizDate?: string;
+        maxBizDate?: string;
+        rowCount: number;
+        dayCount?: number;
+      }
+    | null
+    | undefined,
+  startBizDate: string,
+  endBizDate: string,
+): string | null {
+  if (
+    !span ||
+    span.rowCount <= 0 ||
+    !span.minBizDate ||
+    !span.maxBizDate ||
+    span.minBizDate > startBizDate ||
+    span.maxBizDate >= endBizDate
+  ) {
+    return null;
+  }
+  const contiguousDayCount = countBizDatesInRange(startBizDate, span.maxBizDate);
+  if ((span.dayCount ?? 0) !== contiguousDayCount) {
+    return null;
+  }
+  return shiftBizDate(span.maxBizDate, 1);
+}
+
+function resolveIncrementalCustomerHistoryTailRange(params: {
+  snapshot: HetangHistoricalCoverageSnapshot;
+  startBizDate: string;
+  endBizDate: string;
+}): BizDateRange | null {
+  if (
+    !spanCoversRange(
+      params.snapshot.derivedLayers.factMemberDailySnapshot,
+      params.startBizDate,
+      params.endBizDate,
+    )
+  ) {
+    return null;
+  }
+
+  const previousBizDate = shiftBizDate(params.endBizDate, -1);
+  const rawTailReady = (["1.2", "1.3", "1.6"] as const).every((endpoint) => {
+    const span = params.snapshot.rawFacts[endpoint];
+    return (
+      Boolean(span) &&
+      (span?.rowCount ?? 0) > 0 &&
+      typeof span?.maxBizDate === "string" &&
+      span.maxBizDate >= previousBizDate
+    );
+  });
+  if (!rawTailReady) {
+    return null;
+  }
+
+  const gapStarts = [
+    resolveTailOnlyGapStart(
+      params.snapshot.derivedLayers.martCustomerSegments,
+      params.startBizDate,
+      params.endBizDate,
+    ),
+    resolveTailOnlyGapStart(
+      params.snapshot.derivedLayers.mvCustomerProfile90d,
+      params.startBizDate,
+      params.endBizDate,
+    ),
+  ].filter((value): value is string => typeof value === "string");
+
+  if (gapStarts.length === 0) {
+    return null;
+  }
+
+  const rebuildStartBizDate = gapStarts.sort((left, right) => left.localeCompare(right))[0]!;
+  return {
+    startBizDate: rebuildStartBizDate,
+    endBizDate: params.endBizDate,
+  };
+}
+
 function formatNightlyApiDepthProbeSummary(params: {
   storeName: string;
   endpoints: Partial<Record<EndpointCode, NightlyApiDepthProbeEndpointState>>;
@@ -325,6 +431,11 @@ export class HetangSyncService {
         apiConfig: HetangOpsConfig["api"],
       ) => NightlyApiDepthProbeClient;
       markAnalyticsViewsVerified?: () => void;
+      runConversationReview?: (params: {
+        reviewDate: string;
+        sourceWindowStart: string;
+        sourceWindowEnd: string;
+      }) => Promise<HetangConversationReviewRunResult>;
     },
   ) {}
 
@@ -364,9 +475,10 @@ export class HetangSyncService {
   }
 
   private resolveServingPublicationStore(store: SyncStoreLike) {
-    return typeof store.getServingPublicationStore === "function"
-      ? store.getServingPublicationStore()
-      : store;
+    if (typeof store.getServingPublicationStore !== "function") {
+      throw new Error("sync-service requires store.getServingPublicationStore()");
+    }
+    return store.getServingPublicationStore();
   }
 
   private markAnalyticsViewsVerified(): void {
@@ -454,6 +566,68 @@ export class HetangSyncService {
     return [...orderedOrgIds, ...remainingOrgIds];
   }
 
+  private resolveStoreNightlyHistoryBackfillCandidateRanges(params: {
+    entry: HetangStoreConfig;
+    globalStartBizDate: string;
+    globalEndBizDate: string;
+  }): Array<{ startBizDate: string; endBizDate: string }> {
+    const recentPriorityStartBizDate = shiftBizDate(
+      params.globalEndBizDate,
+      -(NIGHTLY_USER_TRADE_LOOKBACK_DAYS - 1),
+    );
+    const clippedRecentPriorityStartBizDate =
+      recentPriorityStartBizDate < params.globalStartBizDate
+        ? params.globalStartBizDate
+        : recentPriorityStartBizDate;
+    const dedupedRanges: Array<{ startBizDate: string; endBizDate: string }> = [];
+    const addRange = (startBizDate: string, endBizDate: string) => {
+      if (startBizDate > endBizDate) {
+        return;
+      }
+      if (
+        dedupedRanges.some(
+          (range) =>
+            range.startBizDate === startBizDate && range.endBizDate === endBizDate,
+        )
+      ) {
+        return;
+      }
+      dedupedRanges.push({ startBizDate, endBizDate });
+    };
+
+    if (
+      NIGHTLY_SYNC_PRIORITY_STORE_MATCHERS.some((matcher) =>
+        params.entry.storeName.includes(matcher),
+      )
+    ) {
+      addRange(clippedRecentPriorityStartBizDate, params.globalEndBizDate);
+      addRange(YINGBIN_FULL_HISTORY_START_BIZ_DATE, params.globalEndBizDate);
+      return dedupedRanges;
+    }
+
+    if (
+      SHARED_HISTORY_BACKFILL_FLOOR_STORE_MATCHERS.some((matcher) =>
+        params.entry.storeName.includes(matcher),
+      )
+    ) {
+      addRange(
+        SHARED_HISTORY_BACKFILL_FLOOR_BIZ_DATE,
+        params.globalEndBizDate,
+      );
+      return dedupedRanges;
+    }
+
+    const priorityOrgId = this.deps.config.stores.find((storeEntry) => storeEntry.isActive)?.orgId;
+    if (params.entry.orgId === priorityOrgId) {
+      addRange(clippedRecentPriorityStartBizDate, params.globalEndBizDate);
+      addRange(params.globalStartBizDate, params.globalEndBizDate);
+      return dedupedRanges;
+    }
+
+    addRange(clippedRecentPriorityStartBizDate, params.globalEndBizDate);
+    return dedupedRanges;
+  }
+
   private buildSkipEndpointsForExclusiveRun(endpoint: EndpointCode): EndpointCode[] {
     return ALL_SYNC_ENDPOINTS.filter((candidate) => candidate !== endpoint);
   }
@@ -468,7 +642,8 @@ export class HetangSyncService {
       timeZone: this.deps.config.timeZone,
       cutoffLocalTime: this.deps.config.sync.businessDayCutoffLocalTime,
     });
-    const startBizDate = shiftBizDate(endBizDate, -(NIGHTLY_USER_TRADE_LOOKBACK_DAYS - 1));
+    const lookbackDays = Math.max(1, this.deps.config.sync.overlapDays);
+    const startBizDate = shiftBizDate(endBizDate, -(lookbackDays - 1));
     if (typeof params.store.listRecentUserTradeCandidateCardIds === "function") {
       return await params.store.listRecentUserTradeCandidateCardIds({
         orgId: params.orgId,
@@ -562,6 +737,50 @@ export class HetangSyncService {
     this.markAnalyticsViewsVerified();
   }
 
+  private async reclaimStaleSyncRuns(params: {
+    store: SyncStoreLike;
+    now: Date;
+    modes: string[];
+    contextLabel: string;
+  }): Promise<void> {
+    const { store, now, modes, contextLabel } = params;
+    if (typeof store.reclaimStaleSyncRuns !== "function") {
+      return;
+    }
+    const reclaimedAt = now.toISOString();
+    const staleBefore = new Date(
+      now.getTime() - STALE_SYNC_RUN_RECLAIM_HOURS * 3_600_000,
+    ).toISOString();
+    const reclaimedCount = await store.reclaimStaleSyncRuns({
+      staleBefore,
+      reclaimedAt,
+      modes,
+    });
+    if (reclaimedCount > 0) {
+      this.deps.logger.warn(
+        `hetang-ops: reclaimed ${reclaimedCount} stale ${modes.join("/")} sync runs ${contextLabel}`,
+      );
+    }
+  }
+
+  private async reclaimStaleDailySyncRuns(store: SyncStoreLike, now: Date): Promise<void> {
+    await this.reclaimStaleSyncRuns({
+      store,
+      now,
+      modes: ["daily"],
+      contextLabel: "before nightly sync",
+    });
+  }
+
+  private async reclaimStaleBackfillSyncRuns(store: SyncStoreLike, now: Date): Promise<void> {
+    await this.reclaimStaleSyncRuns({
+      store,
+      now,
+      modes: ["backfill"],
+      contextLabel: "before nightly history backfill",
+    });
+  }
+
   async syncStores(
     params: { orgIds?: string[]; now?: Date; publishAnalytics?: boolean } = {},
   ): Promise<string[]> {
@@ -577,6 +796,10 @@ export class HetangSyncService {
     const failedOrgErrors = new Map<string, string>();
     let activeOrgIds = [...orgIds];
     const deferredTradeOrgIds = new Set<string>();
+
+    if (!params.orgIds) {
+      await this.reclaimStaleDailySyncRuns(store, now);
+    }
 
     for (const endpoint of NIGHTLY_SYNC_ENDPOINT_ORDER) {
       const phaseFailures = await this.runSyncWave({
@@ -955,35 +1178,13 @@ export class HetangSyncService {
         .filter((storeEntry) => storeEntry.isActive)
         .map((storeEntry) => storeEntry.orgId),
     });
-    const priorityOrgId = this.deps.config.stores.find((storeEntry) => storeEntry.isActive)?.orgId;
-    const recentPriorityStartBizDate = shiftBizDate(
-      params.endBizDate,
-      -(NIGHTLY_USER_TRADE_LOOKBACK_DAYS - 1),
-    );
-    const clippedRecentPriorityStartBizDate =
-      recentPriorityStartBizDate < params.startBizDate
-        ? params.startBizDate
-        : recentPriorityStartBizDate;
-
     for (const entry of this.deps.config.stores.filter((storeEntry) => storeEntry.isActive)) {
-      const candidateRanges =
-        entry.orgId === priorityOrgId
-          ? [
-              {
-                startBizDate: clippedRecentPriorityStartBizDate,
-                endBizDate: params.endBizDate,
-              },
-              {
-                startBizDate: params.startBizDate,
-                endBizDate: params.endBizDate,
-              },
-            ]
-          : [
-              {
-                startBizDate: clippedRecentPriorityStartBizDate,
-                endBizDate: params.endBizDate,
-              },
-            ];
+      const candidateRanges = this.resolveStoreNightlyHistoryBackfillCandidateRanges({
+        entry,
+        globalStartBizDate: params.startBizDate,
+        globalEndBizDate: params.endBizDate,
+      });
+      const preferredRecentRangeStartBizDate = candidateRanges[0]?.startBizDate;
 
       let selectedRange: { startBizDate: string; endBizDate: string } | null = null;
       let selectedSnapshot: HetangHistoricalCoverageSnapshot | null = null;
@@ -998,7 +1199,8 @@ export class HetangSyncService {
           if (
             endpoint === "1.4" &&
             largeStoreDeferredUserTrades.has(entry.orgId) &&
-            range.startBizDate !== clippedRecentPriorityStartBizDate
+            preferredRecentRangeStartBizDate &&
+            range.startBizDate !== preferredRecentRangeStartBizDate
           ) {
             return false;
           }
@@ -1027,7 +1229,7 @@ export class HetangSyncService {
           typeof params.store.listRecentUserTradeCandidateCardIds === "function"
             ? await params.store.listRecentUserTradeCandidateCardIds({
                 orgId: entry.orgId,
-                startBizDate: selectedRange?.startBizDate ?? clippedRecentPriorityStartBizDate,
+                startBizDate: selectedRange?.startBizDate ?? params.startBizDate,
                 endBizDate: selectedRange?.endBizDate ?? params.endBizDate,
               })
             : [];
@@ -1177,10 +1379,19 @@ export class HetangSyncService {
 
   async runNightlyHistoryBackfill(
     now: Date,
-    options: { publishAnalytics?: boolean } = {},
+    options: { publishAnalytics?: boolean; maxPasses?: number; maxPlans?: number } = {},
   ): Promise<string[]> {
     const store = await this.getStore();
+    await this.reclaimStaleBackfillSyncRuns(store, now);
     const backfillDeadline = this.resolveNightlyBackfillDeadline(now);
+    const requestedMaxPasses =
+      typeof options.maxPasses === "number" && Number.isFinite(options.maxPasses)
+        ? Math.max(1, Math.floor(options.maxPasses))
+        : undefined;
+    const requestedMaxPlans =
+      typeof options.maxPlans === "number" && Number.isFinite(options.maxPlans)
+        ? Math.max(1, Math.floor(options.maxPlans))
+        : undefined;
     if (this.deps.config.sync.historyBackfillEnabled && hasCoverageHelper(store)) {
       const sleepImpl = this.deps.sleep ?? sleep;
       const lines: string[] = [];
@@ -1193,13 +1404,15 @@ export class HetangSyncService {
         anchorEndBizDate,
         -(this.deps.config.sync.historyBackfillDays - 1),
       );
-      const maxPasses = Math.max(
-        1,
-        Math.ceil(
-          this.deps.config.sync.historyBackfillDays /
-            this.deps.config.sync.historyBackfillSliceDays,
-        ),
-      );
+      const maxPasses =
+        requestedMaxPasses ??
+        Math.max(
+          1,
+          Math.ceil(
+            this.deps.config.sync.historyBackfillDays /
+              this.deps.config.sync.historyBackfillSliceDays,
+          ),
+        );
 
       for (let pass = 0; pass < maxPasses; pass += 1) {
         if (this.resolveNow().getTime() >= backfillDeadline.getTime()) {
@@ -1210,12 +1423,16 @@ export class HetangSyncService {
           startBizDate: anchorStartBizDate,
           endBizDate: anchorEndBizDate,
         });
-        if (!plans || plans.length === 0) {
+        const selectedPlans =
+          requestedMaxPlans && requestedMaxPlans > 0
+            ? (plans ?? []).slice(0, requestedMaxPlans)
+            : plans;
+        if (!selectedPlans || selectedPlans.length === 0) {
           break;
         }
 
         const syncStore = this.deps.syncStore ?? syncHetangStore;
-        for (const [index, plan] of plans.entries()) {
+        for (const [index, plan] of selectedPlans.entries()) {
           await syncStore({
             config: this.deps.config,
             store: store as unknown as HetangOpsStore,
@@ -1240,7 +1457,7 @@ export class HetangSyncService {
             `${storeConfig.storeName} ${plan.startBizDate}..${plan.endBizDate}: nightly backfill complete`,
           );
 
-          if (index < plans.length - 1) {
+          if (index < selectedPlans.length - 1) {
             await sleepImpl(STORE_SYNC_GAP_MS);
           }
         }
@@ -1269,7 +1486,9 @@ export class HetangSyncService {
 
     const sleepImpl = this.deps.sleep ?? sleep;
     const lines: string[] = [];
-    const maxPasses = Math.max(1, Math.ceil(this.deps.config.sync.historyBackfillDays / state.sliceDays));
+    const maxPasses =
+      requestedMaxPasses ??
+      Math.max(1, Math.ceil(this.deps.config.sync.historyBackfillDays / state.sliceDays));
 
     for (let pass = 0; pass < maxPasses; pass += 1) {
       if (!this.isNightlyHistoryBackfillPending(state) || state.completedAt) {
@@ -1487,12 +1706,12 @@ export class HetangSyncService {
     startBizDate: string;
     endBizDate: string;
     orgIds: string[];
-  }): Promise<Map<string, "rebuild" | "complete" | "blocked"> | null> {
+  }): Promise<Map<string, CustomerHistoryCatchupCoverageTarget> | null> {
     if (!hasCoverageHelper(params.store)) {
       return null;
     }
 
-    const statuses = new Map<string, "rebuild" | "complete" | "blocked">();
+    const statuses = new Map<string, CustomerHistoryCatchupCoverageTarget>();
     for (const orgId of params.orgIds) {
       const snapshot = await params.store.getHistoricalCoverageSnapshot({
         orgId,
@@ -1518,25 +1737,39 @@ export class HetangSyncService {
           params.endBizDate,
         ) &&
         spanCoversRange(
-          snapshot.derivedLayers.martCustomerConversionCohorts,
-          params.startBizDate,
-          params.endBizDate,
-        ) &&
-        spanCoversRange(
           snapshot.derivedLayers.mvCustomerProfile90d,
           params.startBizDate,
           params.endBizDate,
         );
 
-      if (!rawReady) {
-        statuses.set(orgId, "blocked");
-        continue;
-      }
       if (derivedReady) {
-        statuses.set(orgId, "complete");
+        statuses.set(orgId, { status: "complete" });
         continue;
       }
-      statuses.set(orgId, "rebuild");
+
+      if (!rawReady) {
+        const incrementalRange = resolveIncrementalCustomerHistoryTailRange({
+          snapshot,
+          startBizDate: params.startBizDate,
+          endBizDate: params.endBizDate,
+        });
+        if (incrementalRange) {
+          statuses.set(orgId, {
+            status: "rebuild",
+            rebuildRange: incrementalRange,
+          });
+          continue;
+        }
+        statuses.set(orgId, { status: "blocked" });
+        continue;
+      }
+      statuses.set(orgId, {
+        status: "rebuild",
+        rebuildRange: {
+          startBizDate: params.startBizDate,
+          endBizDate: params.endBizDate,
+        },
+      });
     }
     return statuses;
   }
@@ -1584,8 +1817,8 @@ export class HetangSyncService {
         );
         continue;
       }
-      const coverageStatus = coverageAwareStatuses?.get(orgId);
-      if (coverageStatus === "complete") {
+      const coverageTarget = coverageAwareStatuses?.get(orgId);
+      if (coverageTarget?.status === "complete") {
         state.completedAtByOrgId[orgId] = new Date().toISOString();
         state.updatedAt = state.completedAtByOrgId[orgId]!;
         await this.persistCustomerHistoryCatchupState(store, runKey, state);
@@ -1594,55 +1827,59 @@ export class HetangSyncService {
         );
         continue;
       }
-      if (coverageStatus === "blocked") {
+      if (coverageTarget?.status === "blocked") {
         allComplete = false;
         lines.push(
           `${storeConfig.storeName}: customer history catchup waiting for raw facts (${range.startBizDate}..${range.endBizDate})`,
         );
         continue;
       }
+      const rebuildRange = coverageTarget?.rebuildRange ?? range;
       try {
         await rebuildMemberDailySnapshotsForDateRange({
           store: store as unknown as HetangOpsStore,
           orgId,
-          startBizDate: range.startBizDate,
-          endBizDate: range.endBizDate,
+          startBizDate: rebuildRange.startBizDate,
+          endBizDate: rebuildRange.endBizDate,
         });
         await rebuildCustomerIntelligenceForDateRange({
           store: store as unknown as HetangOpsStore,
           orgId,
-          startBizDate: range.startBizDate,
-          endBizDate: range.endBizDate,
+          startBizDate: rebuildRange.startBizDate,
+          endBizDate: rebuildRange.endBizDate,
           refreshViews: false,
           chunkDays: LOCAL_HISTORY_CATCHUP_INTELLIGENCE_CHUNK_DAYS,
+          storeConfig,
         });
         await rebuildMemberReactivationFeaturesForDateRange({
           store: store as unknown as HetangOpsStore,
           orgId,
-          startBizDate: range.startBizDate,
-          endBizDate: range.endBizDate,
+          startBizDate: rebuildRange.startBizDate,
+          endBizDate: rebuildRange.endBizDate,
           refreshViews: false,
         });
         await rebuildMemberReactivationStrategiesForDateRange({
           store: store as unknown as HetangOpsStore,
           orgId,
-          startBizDate: range.startBizDate,
-          endBizDate: range.endBizDate,
+          startBizDate: rebuildRange.startBizDate,
+          endBizDate: rebuildRange.endBizDate,
           refreshViews: false,
+          storeConfig,
         });
         await rebuildMemberReactivationQueueForDateRange({
           store: store as unknown as HetangOpsStore,
           orgId,
-          startBizDate: range.startBizDate,
-          endBizDate: range.endBizDate,
+          startBizDate: rebuildRange.startBizDate,
+          endBizDate: rebuildRange.endBizDate,
           refreshViews: false,
+          storeConfig,
         });
         rebuiltAny = true;
         state.completedAtByOrgId[orgId] = new Date().toISOString();
         state.updatedAt = state.completedAtByOrgId[orgId]!;
         await this.persistCustomerHistoryCatchupState(store, runKey, state);
         lines.push(
-          `${storeConfig.storeName}: customer history catchup complete (${range.startBizDate}..${range.endBizDate})`,
+          `${storeConfig.storeName}: customer history catchup complete (${rebuildRange.startBizDate}..${rebuildRange.endBizDate})`,
         );
       } catch (error) {
         allComplete = false;
@@ -1686,5 +1923,34 @@ export class HetangSyncService {
       publishedAt: now.toISOString(),
       notes: `nightly-api-window:${now.toISOString()}`,
     });
+  }
+
+  async runNightlyConversationReview(now: Date): Promise<string[]> {
+    const reviewDate = resolveLocalDate(now, this.deps.config.timeZone);
+    const sourceWindowEnd = resolveLocalDayStartIso(now, this.deps.config.timeZone);
+    const sourceWindowStart = new Date(Date.parse(sourceWindowEnd) - 86_400_000).toISOString();
+    const runConversationReview =
+      this.deps.runConversationReview ??
+      (async (params: {
+        reviewDate: string;
+        sourceWindowStart: string;
+        sourceWindowEnd: string;
+      }) =>
+        await new HetangConversationReviewService({
+          logger: this.deps.logger,
+          getStore: this.deps.getStore,
+          now: () => this.resolveNow(),
+        }).runNightlyConversationReview(params));
+    const result = await runConversationReview({
+      reviewDate,
+      sourceWindowStart,
+      sourceWindowEnd,
+    });
+    const topFindingTypes = result.summary.prioritizedFindingTypes ?? result.summary.topFindingTypes;
+    return [
+      `conversation review completed: ${result.findingCount} findings${
+        topFindingTypes.length > 0 ? ` (${topFindingTypes.join(", ")})` : ""
+      }`,
+    ];
   }
 }

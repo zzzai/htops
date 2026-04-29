@@ -16,6 +16,7 @@ import {
   resolveHetangQuerySemanticContext,
 } from "./query-semantics.js";
 import { isHetangAnalysisQueueLimitError } from "./runtime.js";
+import { resolveFirstMatchedStoreName } from "./store-aliases.js";
 import {
   resolveBusinessGuidanceIntent,
   resolveClarifierIntentKind,
@@ -85,6 +86,8 @@ const SCHEDULE_DETAIL_LOOKUP_KEYWORDS =
   /(排班表|排班明细|班表|班次安排|明天排班|下周排班|预约排班|出勤安排)/u;
 const FORECAST_LOOKUP_KEYWORDS =
   /(预测|预估|预计|估计|明天客流|下周客流|明天营收|下周营收|明天单数|下周单数)/u;
+const REALTIME_QUEUE_LOOKUP_KEYWORDS = /(等位|排队|候钟|等钟)/u;
+const PENDING_SETTLEMENT_LOOKUP_KEYWORDS = /(待结账|未结账|待结算|未结算)/u;
 const BUSINESS_DOMAIN_KEYWORDS =
   /(营收|业绩|经营|复盘|顾客|会员|客户|技师|总部|门店|团购|储值|开卡|复购|留存|流失|唤回|跟进|名单|画像|点钟|加钟|钟效|人效|排班|风险|危险|盘子|大盘)/u;
 const STRATEGY_GUIDE_KEYWORDS = /(策略|打法|方向|方案|抓手|怎么抓|怎么推|怎么落|怎么安排)/u;
@@ -198,20 +201,7 @@ function asksCapabilitySurface(text: string): boolean {
 }
 
 function resolveMentionedStoreName(config: HetangOpsConfig, text: string): string | undefined {
-  const normalized = normalizeText(text);
-  const match = config.stores
-    .flatMap((store) =>
-      [store.storeName, ...store.rawAliases].filter(Boolean).map((alias) => ({
-        storeName: store.storeName,
-        position: normalized.indexOf(normalizeText(alias)),
-        aliasLength: alias.length,
-      })),
-    )
-    .filter((entry) => entry.position >= 0)
-    .sort(
-      (left, right) => left.position - right.position || right.aliasLength - left.aliasLength,
-    )[0];
-  return match?.storeName;
+  return resolveFirstMatchedStoreName(config, text);
 }
 
 function resolveUnsupportedBirthdayLookupReply(params: {
@@ -272,6 +262,24 @@ function resolveUnsupportedBusinessLookupReply(params: {
       binding: params.binding,
       lead: "当前先基于历史经营数据做复盘，还没开放未来客流 / 营收预测口径。",
       detail: "你可以先用日报和复盘把最近的经营走势看清，我再帮你收成动作建议。",
+    });
+  }
+
+  if (REALTIME_QUEUE_LOOKUP_KEYWORDS.test(params.content)) {
+    return formatCapabilitySurfaceReply({
+      config: params.config,
+      binding: params.binding,
+      lead: `当前还没接入${scopedTarget}等位 / 候钟实时状态，暂时不能严肃回答有没有客人在等位。`,
+      detail: "现在已支持：上钟中技师人数、空闲技师名单。等位和排队要等实时队列事实源接通后再开放。",
+    });
+  }
+
+  if (PENDING_SETTLEMENT_LOOKUP_KEYWORDS.test(params.content)) {
+    return formatCapabilitySurfaceReply({
+      config: params.config,
+      binding: params.binding,
+      lead: `当前还没接入${scopedTarget}待结账 / 待结算实时单据状态，暂时不能严肃回答后台还有几张待结账的单。`,
+      detail: "现在已支持：当前上钟中人数、空闲技师名单、日报和经营复盘。待结账状态要等实时结算态事实源接通。",
     });
   }
 
@@ -617,6 +625,8 @@ export function resolveSemanticMetaReply(params: {
     case "unsupported_customer_satisfaction":
     case "unsupported_schedule_detail":
     case "unsupported_forecast":
+    case "unsupported_realtime_queue":
+    case "unsupported_pending_settlement":
     case "unsupported_lookup":
       return (
         resolveUnsupportedBusinessLookupReply({
@@ -1269,7 +1279,9 @@ export function createHetangInboundClaimHandler(params: {
         },
         now: currentNow,
       });
-      params.observeMetaQueryProbeOutcome?.(semanticFrontDoorAction.probeOutcome);
+      if (semanticFrontDoorAction.probeOutcome) {
+        params.observeMetaQueryProbeOutcome?.(semanticFrontDoorAction.probeOutcome);
+      }
 
       if (semanticFrontDoorAction.decision !== "continue") {
         params.observeRoute?.({

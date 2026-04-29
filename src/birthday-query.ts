@@ -326,27 +326,25 @@ export async function executeBirthdayMemberQuery(params: {
     };
   });
 
-  const candidates = sortCandidates(
-    params.intent.rawText,
-    preparedMembers
-      .map((row) => {
-        if (!row.birthdayMonthDay || !row.matchedDate) {
-          return null;
-        }
-        if (!shouldIncludeCandidate(params.intent.rawText, row.profile, row.member)) {
-          return null;
-        }
-        return {
-          member: row.member,
-          profile: row.profile,
-          queue: row.queue,
-          matchedDate: row.matchedDate,
-          birthdayMonthDay: row.birthdayMonthDay,
-          operatingLabel: resolveOperatingLabel(row.profile, row.member),
-        };
-      })
-      .filter((row): row is BirthdayCandidate => Boolean(row)),
-  );
+  const birthdayCandidates: BirthdayCandidate[] = [];
+  for (const row of preparedMembers) {
+    if (!row.birthdayMonthDay || !row.matchedDate) {
+      continue;
+    }
+    if (!shouldIncludeCandidate(params.intent.rawText, row.profile, row.member)) {
+      continue;
+    }
+    birthdayCandidates.push({
+      member: row.member,
+      profile: row.profile,
+      queue: row.queue,
+      matchedDate: row.matchedDate,
+      birthdayMonthDay: row.birthdayMonthDay,
+      operatingLabel: resolveOperatingLabel(row.profile, row.member),
+    });
+  }
+
+  const candidates = sortCandidates(params.intent.rawText, birthdayCandidates);
 
   const lines = [formatHeader(storeName, params.intent, candidates.length)];
   if (candidates.length === 0) {

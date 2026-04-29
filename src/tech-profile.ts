@@ -3,6 +3,11 @@ import {
   type TechCustomerBindingState,
 } from "./business-score.js";
 import { buildCustomerTechServiceLinks } from "./customer-intelligence.js";
+import {
+  pickPrimaryMetric,
+  renderTechRankingText,
+  resolveTechMetricScore,
+} from "./query-engine-renderer.js";
 import type { HetangQueryIntent, HetangQueryTimeFrame } from "./query-intent.js";
 import { shiftBizDate } from "./time.js";
 import type {
@@ -12,12 +17,20 @@ import type {
   CustomerTechLinkRecord,
   HetangOpsConfig,
   MemberCardCurrentRecord,
+  TechCurrentRecord,
+  TechLeaderboardRow,
   TechProfile30dRow,
   TechMarketRecord,
   TechUpClockRecord,
 } from "./types.js";
 
 type TechProfileRuntime = {
+  listCurrentTech?: (orgId: string) => Promise<TechCurrentRecord[]>;
+  listTechLeaderboard?: (params: {
+    orgId: string;
+    startBizDate: string;
+    endBizDate: string;
+  }) => Promise<TechLeaderboardRow[]>;
   listTechProfile30dByDateRange?: (params: {
     orgId: string;
     startBizDate: string;
@@ -106,6 +119,136 @@ function enumerateBizDates(frame: HetangQueryTimeFrame): string[] {
 
 function getStoreName(config: HetangOpsConfig, orgId: string): string {
   return config.stores.find((entry) => entry.orgId === orgId)?.storeName ?? orgId;
+}
+
+function parseCurrentTechState(row: TechCurrentRecord): "busy" | "idle" | "unknown" | "off" {
+  if (!row.isJob || !row.isWork) {
+    return "off";
+  }
+  try {
+    const raw = JSON.parse(row.rawJson) as Record<string, unknown>;
+    const stateName = typeof raw.PersonStateName === "string" ? raw.PersonStateName.trim() : "";
+    if (/(上钟|服务中|上钟中|忙)/u.test(stateName)) {
+      return "busy";
+    }
+    if (/(空闲|待钟|待客|空档|可接)/u.test(stateName)) {
+      return "idle";
+    }
+  } catch {
+    // noop
+  }
+  return "unknown";
+}
+
+function extractCurrentTechItems(row: TechCurrentRecord): string[] {
+  try {
+    const raw = JSON.parse(row.rawJson) as Record<string, unknown>;
+    const itemList = Array.isArray(raw.ItemList) ? raw.ItemList : [];
+    return Array.from(
+      new Set(
+        itemList
+          .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === "object")
+          .map((entry) =>
+            typeof entry.ItemTypeName === "string"
+              ? entry.ItemTypeName.trim()
+              : typeof entry.ItemName === "string"
+                ? entry.ItemName.trim()
+                : "",
+          )
+          .filter(Boolean),
+      ),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export async function executeTechLeaderboardRankingQuery(params: {
+  runtime: TechProfileRuntime;
+  config: HetangOpsConfig;
+  intent: HetangQueryIntent;
+  effectiveOrgIds: string[];
+}): Promise<string | null> {
+  if (!params.runtime.listTechLeaderboard) {
+    return "当前环境还未接通技师排行榜查询能力。";
+  }
+  const [orgId] = params.effectiveOrgIds;
+  if (!orgId) {
+    return null;
+  }
+
+  const metric = pickPrimaryMetric(params.intent);
+  const rows = await params.runtime.listTechLeaderboard({
+    orgId,
+    startBizDate:
+      params.intent.timeFrame.kind === "single"
+        ? params.intent.timeFrame.bizDate
+        : params.intent.timeFrame.startBizDate,
+    endBizDate:
+      params.intent.timeFrame.kind === "single"
+        ? params.intent.timeFrame.bizDate
+        : params.intent.timeFrame.endBizDate,
+  });
+  const sorted = [...rows].sort((left, right) =>
+    params.intent.rankingOrder === "asc"
+      ? resolveTechMetricScore(metric, left) - resolveTechMetricScore(metric, right)
+      : resolveTechMetricScore(metric, right) - resolveTechMetricScore(metric, left),
+  );
+  return renderTechRankingText({
+    storeName: getStoreName(params.config, orgId),
+    frame: params.intent.timeFrame,
+    metric,
+    rows: sorted,
+  });
+}
+
+export async function executeTechCurrentQuery(params: {
+  runtime: TechProfileRuntime;
+  config: HetangOpsConfig;
+  intent: HetangQueryIntent;
+  effectiveOrgIds: string[];
+}): Promise<string | null> {
+  if (!params.runtime.listCurrentTech) {
+    return "当前环境还未接通技师当前状态查询能力。";
+  }
+  const [orgId] = params.effectiveOrgIds;
+  if (!orgId) {
+    return null;
+  }
+
+  const rows = await params.runtime.listCurrentTech(orgId);
+  const activeRows = rows.filter((row) => row.isJob && row.isWork);
+  const busyRows = activeRows.filter((row) => parseCurrentTechState(row) === "busy");
+  const idleRows = activeRows.filter((row) => parseCurrentTechState(row) === "idle");
+  const storeName = getStoreName(params.config, orgId);
+  const asOfLabel =
+    params.intent.timeFrame.kind === "single" ? params.intent.timeFrame.bizDate : params.intent.timeFrame.label;
+
+  if (/(谁|哪些|哪几位|有哪些)/u.test(params.intent.rawText)) {
+    const targetRows = /(空的|空闲|没事干|有空|待钟|待客)/u.test(params.intent.rawText)
+      ? idleRows
+      : /(上钟|忙|服务中)/u.test(params.intent.rawText)
+        ? busyRows
+        : activeRows;
+    if (targetRows.length === 0) {
+      return `${storeName} ${asOfLabel} 当前没有匹配的技师状态记录。`;
+    }
+    return [
+      `${storeName} ${asOfLabel} 当前技师状态`,
+      ...targetRows.slice(0, 8).map((row, index) => {
+        const items = extractCurrentTechItems(row);
+        return `${index + 1}. ${row.techName}${items.length > 0 ? ` | 擅长 ${items.slice(0, 2).join("、")}` : ""}`;
+      }),
+    ].join("\n");
+  }
+
+  if (/(上钟|忙|服务中)/u.test(params.intent.rawText)) {
+    return `${storeName} ${asOfLabel} 当前上钟中技师 ${busyRows.length} 人，在岗技师 ${activeRows.length} 人。`;
+  }
+  if (/(空的|空闲|没事干|有空|待钟|待客)/u.test(params.intent.rawText)) {
+    return `${storeName} ${asOfLabel} 当前空闲技师 ${idleRows.length} 人，在岗技师 ${activeRows.length} 人。`;
+  }
+  return `${storeName} ${asOfLabel} 当前在岗技师 ${activeRows.length} 人，其中上钟中 ${busyRows.length} 人，空闲 ${idleRows.length} 人。`;
 }
 
 function rankPreferences(source: Map<string, { count: number; amount: number }>): RankedRow[] {

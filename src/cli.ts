@@ -285,6 +285,86 @@ export function registerHetangCli(params: { program: Command; runtime: HetangOps
       },
     );
 
+  const fiveStoreDailyOverview = root
+    .command("five-store-daily-overview")
+    .description("Preview or confirm the shared five-store daily overview");
+
+  fiveStoreDailyOverview
+    .command("render")
+    .description("Render the shared five-store daily overview locally without sending")
+    .option("--date <YYYY-MM-DD>", "Overview date, defaults to previous business day")
+    .action(async (options: { date?: string }) => {
+      console.log(
+        await params.runtime.renderFiveStoreDailyOverview({
+          bizDate: options.date,
+        }),
+      );
+    });
+
+  fiveStoreDailyOverview
+    .command("preview")
+    .description("Send the daily overview preview to ZhangZhen and keep it pending confirmation")
+    .option("--date <YYYY-MM-DD>", "Overview date, defaults to previous business day")
+    .option("--channel <channel>", "Override final send channel", "wecom")
+    .option("--target <target>", "Override final shared target")
+    .option("--account <accountId>", "Override final send account id")
+    .option("--thread-id <threadId>", "Override final send thread id")
+    .action(
+      async (options: {
+        date?: string;
+        channel: string;
+        target?: string;
+        account?: string;
+        threadId?: string;
+      }) => {
+        const notificationOverride = options.target
+          ? {
+              channel: options.channel,
+              target: options.target,
+              accountId: options.account,
+              threadId: options.threadId,
+              enabled: true,
+            }
+          : undefined;
+
+        console.log(
+          await params.runtime.sendFiveStoreDailyOverview({
+            bizDate: options.date,
+            deliveryMode: "preview",
+            notificationOverride,
+          }),
+        );
+      },
+    );
+
+  fiveStoreDailyOverview
+    .command("cancel")
+    .description("Cancel the pending preview and suppress any further send for that business date")
+    .option("--date <YYYY-MM-DD>", "Overview date, defaults to previous business day")
+    .requiredOption("--canceled-by <actor>", "Human/operator cancellation source")
+    .action(async (options: { date?: string; canceledBy: string }) => {
+      console.log(
+        await params.runtime.cancelFiveStoreDailyOverviewSend({
+          bizDate: options.date,
+          canceledBy: options.canceledBy,
+        }),
+      );
+    });
+
+  fiveStoreDailyOverview
+    .command("confirm")
+    .description("Confirm the pending preview and send the exact stored version to the manager group")
+    .option("--date <YYYY-MM-DD>", "Overview date, defaults to previous business day")
+    .requiredOption("--confirmed-by <actor>", "Human/operator confirmation source")
+    .action(async (options: { date?: string; confirmedBy: string }) => {
+      console.log(
+        await params.runtime.confirmFiveStoreDailyOverviewSend({
+          bizDate: options.date,
+          confirmedBy: options.confirmedBy,
+        }),
+      );
+    });
+
   root
     .command("query <question...>")
     .description("Run a deterministic Hetang query as a bound channel user")

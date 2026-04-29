@@ -14,7 +14,16 @@ export type PublishAnalyticsViewsParams = {
 
 export function resolveGeneratedServingVersion(publishedAt: string): string {
   const compact = publishedAt.replace(/[-:.TZ+]/gu, "");
-  return `serving-${compact.slice(0, 14) || Date.now().toString()}`;
+  return `serving-${compact.slice(0, 17) || Date.now().toString()}`;
+}
+
+function resolveAutoPublicationNotes(params: {
+  publishedAt: string;
+  rebuild?: boolean;
+}): string {
+  return params.rebuild
+    ? `analytics-views:rebuild:${params.publishedAt}`
+    : `analytics-views:refresh:${params.publishedAt}`;
 }
 
 export class HetangServingPublicationStore {
@@ -89,6 +98,16 @@ export class HetangServingPublicationStore {
       if (!(await this.relationExists(relation))) {
         await this.params.rebuildAnalyticsViews();
         this.params.markClean();
+        const publishedAt = new Date().toISOString();
+        const servingStore = createServingQueryStore(this.params.queryable);
+        await servingStore.publishServingManifest(
+          resolveGeneratedServingVersion(publishedAt),
+          publishedAt,
+          resolveAutoPublicationNotes({
+            publishedAt,
+            rebuild: true,
+          }),
+        );
         return;
       }
     }
@@ -122,6 +141,7 @@ export class HetangServingPublicationStore {
     }
 
     const shouldPublishManifest =
+      needsRefresh ||
       typeof params.publishedAt === "string" ||
       typeof params.servingVersion === "string" ||
       typeof params.notes === "string";
@@ -132,7 +152,17 @@ export class HetangServingPublicationStore {
     const publishedAt = params.publishedAt ?? new Date().toISOString();
     const servingVersion = params.servingVersion ?? resolveGeneratedServingVersion(publishedAt);
     const servingStore = createServingQueryStore(this.params.queryable);
-    await servingStore.publishServingManifest(servingVersion, publishedAt, params.notes);
+    await servingStore.publishServingManifest(
+      servingVersion,
+      publishedAt,
+      params.notes ??
+        (needsRefresh
+          ? resolveAutoPublicationNotes({
+              publishedAt,
+              rebuild: params.rebuild,
+            })
+          : undefined),
+    );
     return servingVersion;
   }
 

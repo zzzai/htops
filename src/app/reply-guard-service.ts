@@ -1,4 +1,5 @@
 import { resolveIntentClarifierDecision } from "./intent-clarifier-service.js";
+import { resolveMatchedStores } from "../store-aliases.js";
 import type { HetangOpsConfig } from "../types.js";
 
 const IDENTITY_ASK_KEYWORDS =
@@ -24,38 +25,7 @@ function normalizeText(value: string): string {
 }
 
 function resolveMatchedStoreNames(config: HetangOpsConfig, text: string): string[] {
-  const normalized = normalizeText(text);
-  const matches = config.stores
-    .map((store) => {
-      const aliases = [store.storeName, ...store.rawAliases].filter(Boolean);
-      const found = aliases
-        .map((alias) => ({
-          alias,
-          position: normalized.indexOf(normalizeText(alias)),
-        }))
-        .filter((entry) => entry.position >= 0)
-        .sort((left, right) => left.position - right.position || right.alias.length - left.alias.length)[0];
-      return found
-        ? {
-            storeName: store.storeName,
-            position: found.position,
-            length: found.alias.length,
-          }
-        : null;
-    })
-    .filter((entry): entry is { storeName: string; position: number; length: number } => Boolean(entry))
-    .sort((left, right) => left.position - right.position || right.length - left.length);
-
-  const seen = new Set<string>();
-  const ordered: string[] = [];
-  for (const match of matches) {
-    if (seen.has(match.storeName)) {
-      continue;
-    }
-    seen.add(match.storeName);
-    ordered.push(match.storeName);
-  }
-  return ordered;
+  return resolveMatchedStores(config, text).map((match) => match.storeName);
 }
 
 function resolveExampleStoreName(config: HetangOpsConfig, userText: string): string {

@@ -1,13 +1,14 @@
 import { getStoreByOrgId } from "./config.js";
 import { resolveAsyncAnalysisCapability } from "./capability-graph.js";
 import { resolveHetangQueryIntent } from "./query-intent.js";
+import { mentionsConfiguredStore } from "./store-aliases.js";
 import type { HetangAnalysisJobType, HetangEmployeeBinding, HetangOpsConfig } from "./types.js";
 
 const DEEP_ANALYSIS_KEYWORDS =
   /(复盘|深度分析|经营诊断|经营分析|问题所在|哪里有问题|有什么问题|全面分析|指导意见|改进建议)/u;
 const WEEKLY_DIAGNOSIS_KEYWORDS = /(经营数据|经营情况|周报|周度情况|一周情况)/u;
 const CROSS_STORE_SCOPE_KEYWORDS =
-  /(五店|5店|全部门店|所有门店|各店|所有店|全部店|五家店|五个店|哪家店|哪一家店|哪个店|哪家门店|哪一家门店|哪个门店)/u;
+  /(五店|5店|5个店|5家店|全部门店|所有门店|各店|所有店|全部店|五家店|五个店|哪家店|哪一家店|哪个店|哪家门店|哪一家门店|哪个门店)/u;
 const ANALYSIS_SCOPE_PREFIX = "scope:";
 export const HETANG_BINDING_SCOPE_ORG_ID = "__binding_scope__";
 
@@ -202,12 +203,6 @@ function applyDefaultStoreContext(
     return text;
   }
   return `${store.storeName}${text}`;
-}
-
-function mentionsConfiguredStore(config: HetangOpsConfig, text: string): boolean {
-  return config.stores.some((store) =>
-    [store.storeName, ...store.rawAliases].filter(Boolean).some((alias) => text.includes(alias)),
-  );
 }
 
 export function resolveHetangNaturalLanguageRoute(params: {

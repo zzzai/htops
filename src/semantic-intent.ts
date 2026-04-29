@@ -3,14 +3,23 @@ import { resolveIntentClarifierDecision } from "./app/intent-clarifier-service.j
 import { resolveHetangNaturalLanguageRoute } from "./analysis-router.js";
 import { buildQueryPlanFromIntent, type QueryPlan } from "./query-plan.js";
 import { resolveAccessScopeKind } from "./query-engine-router.js";
-import { resolveHetangQueryIntent, type HetangQueryIntent } from "./query-intent.js";
+import {
+  resolveConversationSemanticEffectiveText,
+  resolveHetangQueryIntent,
+  type HetangQueryIntent,
+} from "./query-intent.js";
 import {
   normalizeHetangSemanticText,
   resolveHetangQuerySemanticContext,
   type HetangQuerySemanticContext,
   type HetangSemanticObject as HetangQuerySemanticObject,
 } from "./query-semantics.js";
-import type { HetangEmployeeBinding, HetangOpsConfig } from "./types.js";
+import type {
+  HetangAnalysisJobType,
+  HetangConversationSemanticStateSnapshot,
+  HetangEmployeeBinding,
+  HetangOpsConfig,
+} from "./types.js";
 
 const IDENTITY_ASK_KEYWORDS =
   /(你是谁|你是干嘛的|你能做什么|你可以做什么|你是什么角色|介绍一下你自己|自我介绍一下|你主要负责什么)/u;
@@ -25,7 +34,7 @@ const CONCEPT_EXPLAIN_KEYWORDS =
 const TIME_SCOPE_HINT_KEYWORDS =
   /(今天|今日|昨天|昨日|明天|本周|本月|上周|上月|下周|下月|最近|近期|这几天|近几天|最近这几天|前几天|近\d+[天周月年]|过去\d+[天周月年]|最近\d+[天周月年]|\d{4}-\d{2}-\d{2}|\d{4}年\s*\d{1,2}月\s*\d{1,2}日|\d{1,2}月\s*\d{1,2}日)/u;
 const BUSINESS_GUIDANCE_PROMPT_KEYWORDS =
-  /(怎么样|如何|哪里有问题|重点看什么|该看什么|看什么指标|什么情况|有啥问题|有什么问题|重点抓什么|该抓什么)/u;
+  /(怎么样|如何|哪里有问题|重点看什么|该看什么|看什么指标|什么情况|有啥问题|有什么问题|重点抓什么|该抓什么|盘里收了多少|盘里收|收了多少|搞了多少|做了多少)/u;
 const NEGATIVE_REPORT_CONSTRAINT_KEYWORDS =
   /(不要|别|不用).*(经营复盘|复盘)|不是.*(经营复盘|复盘)/u;
 const CUSTOMER_SATISFACTION_LOOKUP_KEYWORDS = /(满意度|满意率|好评率|差评率|评价|口碑)/u;
@@ -33,6 +42,8 @@ const SCHEDULE_DETAIL_LOOKUP_KEYWORDS =
   /(排班表|排班明细|班表|班次安排|明天排班|下周排班|预约排班|出勤安排)/u;
 const FORECAST_LOOKUP_KEYWORDS =
   /(预测|预估|预计|估计|明天客流|下周客流|明天营收|下周营收|明天单数|下周单数)/u;
+const REALTIME_QUEUE_LOOKUP_KEYWORDS = /(等位|排队|候钟|等钟)/u;
+const PENDING_SETTLEMENT_LOOKUP_KEYWORDS = /(待结账|未结账|待结算|未结算)/u;
 
 export type HetangSemanticLane = "meta" | "query" | "analysis";
 
@@ -43,6 +54,8 @@ export type HetangSemanticIntentKind =
   | "unsupported_customer_satisfaction"
   | "unsupported_schedule_detail"
   | "unsupported_forecast"
+  | "unsupported_realtime_queue"
+  | "unsupported_pending_settlement"
   | "structured_report_draft"
   | "negative_constraint"
   | "concept_explain"
@@ -105,7 +118,7 @@ export type HetangSemanticIntent = HetangRouteSnapshot & {
   clarificationText?: string;
   timeFrameLabel?: string;
   analysisRequest?: {
-    jobType: string;
+    jobType: HetangAnalysisJobType;
     orgId: string;
     storeName: string;
     rawText: string;
@@ -121,7 +134,9 @@ type HetangUnsupportedPreRouteResolution =
       kind:
         | "unsupported_customer_satisfaction"
         | "unsupported_schedule_detail"
-        | "unsupported_forecast";
+        | "unsupported_forecast"
+        | "unsupported_realtime_queue"
+        | "unsupported_pending_settlement";
       object: HetangSemanticIntentObject;
       action: HetangSemanticIntentAction;
       clarificationNeeded: boolean;
@@ -359,7 +374,7 @@ function resolveSemanticScopeOrgIds(params: {
   }
   const boundScopeOrgIds = resolveBindingScopedOrgIds(params.binding);
   if (params.allStores) {
-    return boundScopeOrgIds;
+    return boundScopeOrgIds.length > 0 ? boundScopeOrgIds : (params.fallbackOrgIds ?? []);
   }
   if (params.defaultOrgId) {
     return [params.defaultOrgId];
@@ -499,6 +514,26 @@ export function resolveUnsupportedPreRouteIntent(params: {
     };
   }
 
+  if (REALTIME_QUEUE_LOOKUP_KEYWORDS.test(params.text)) {
+    return {
+      kind: "unsupported_realtime_queue",
+      object: "store",
+      action: "clarify",
+      clarificationNeeded: false,
+      reason: "unsupported-realtime-queue",
+    };
+  }
+
+  if (PENDING_SETTLEMENT_LOOKUP_KEYWORDS.test(params.text)) {
+    return {
+      kind: "unsupported_pending_settlement",
+      object: "store",
+      action: "clarify",
+      clarificationNeeded: false,
+      reason: "unsupported-pending-settlement",
+    };
+  }
+
   if (params.semanticContext.routeSignals.hqStoreMixedScope) {
     return {
       kind: "clarify_mixed_scope",
@@ -518,8 +553,14 @@ export function resolveSemanticIntent(params: {
   now: Date;
   binding?: HetangEmployeeBinding | null;
   defaultOrgId?: string;
+  semanticState?: HetangConversationSemanticStateSnapshot | null;
 }): HetangSemanticIntent {
-  const rawText = params.text.trim();
+  const rawText = resolveConversationSemanticEffectiveText({
+    config: params.config,
+    text: params.text,
+    now: params.now,
+    semanticState: params.semanticState,
+  }).effectiveText;
   const normalized = normalizeText(rawText);
   const semanticContext = resolveHetangQuerySemanticContext({
     config: params.config,
@@ -660,7 +701,9 @@ export function resolveSemanticIntent(params: {
       queryIntent,
       binding: params.binding,
       defaultOrgId: params.defaultOrgId,
-      fallbackOrgIds: semanticContext.explicitOrgIds,
+      fallbackOrgIds: queryIntent.allStoresRequested
+        ? params.config.stores.filter((store) => store.isActive).map((store) => store.orgId)
+        : semanticContext.explicitOrgIds,
     });
     return {
       lane: "query",
@@ -670,7 +713,10 @@ export function resolveSemanticIntent(params: {
         orgIds: queryExecution.scopeOrgIds,
         allStores: queryIntent.allStoresRequested,
       },
-      object: resolveIntentObject(semanticContext.semanticSlots.object, "store"),
+      object:
+        queryIntent.kind === "hq_portfolio"
+          ? "hq"
+          : resolveIntentObject(semanticContext.semanticSlots.object, "store"),
       action: queryExecution.planAction,
       clarificationNeeded: false,
       timeFrameLabel: queryIntent.timeFrame.label,
@@ -686,7 +732,7 @@ export function resolveSemanticIntent(params: {
   });
   if (businessGuidanceIntent) {
     return buildMetaIntent(businessGuidanceIntent.kind, {
-      confidence: queryIntent?.routeConfidence ?? "medium",
+      confidence: "medium",
       object: businessGuidanceIntent.object,
       action: businessGuidanceIntent.action,
       scopeOrgIds: businessGuidanceIntent.scopeOrgIds,

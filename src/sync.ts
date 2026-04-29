@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { HetangApiClient } from "./client.js";
 import { getStoreByOrgId, hasHetangApiCredentials } from "./config.js";
 import {
@@ -71,6 +71,11 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function resolveSyncExecutionLockKey(orgId: string, mode: string): number {
+  const digest = createHash("sha1").update(`${mode}:${orgId}`).digest("hex");
+  return Number.parseInt(digest.slice(0, 13), 16);
 }
 
 export function estimateUserTradeSyncDurationMs(memberCardCount: number): number {
@@ -831,25 +836,43 @@ export async function syncHetangStore(params: {
   }
   const client = params.client ?? new HetangApiClient(params.config.api);
   const sleepImpl = params.sleep ?? sleep;
+  const mode = params.syncPlan?.mode ?? "daily";
   await params.store.initialize();
   getStoreByOrgId(params.config, params.orgId);
-  const syncRunId = await params.store.beginSyncRun({
-    orgId: params.orgId,
-    mode: params.syncPlan?.mode ?? "daily",
-    startedAt: now.toISOString(),
-  });
-  const errors: Array<{ endpoint: string; error: string }> = [];
-  const skippedEndpoints = new Set(params.syncPlan?.skipEndpoints ?? []);
-  const scheduledTechEndpoints = (["1.5", "1.6", "1.7", "1.8"] as const).filter(
-    (endpoint) => !skippedEndpoints.has(endpoint),
-  );
-  const shouldPaceAfterTechEndpoint = (endpoint: "1.5" | "1.6" | "1.7" | "1.8") => {
-    const endpointIndex = scheduledTechEndpoints.indexOf(endpoint);
-    return endpointIndex !== -1 && endpointIndex < scheduledTechEndpoints.length - 1;
-  };
-  let fatalError: string | undefined;
-
+  const syncExecutionLockKey = resolveSyncExecutionLockKey(params.orgId, mode);
+  const syncExecutionLockAcquired = await params.store.tryAdvisoryLock(syncExecutionLockKey);
+  if (!syncExecutionLockAcquired) {
+    throw new Error(`sync already running for ${params.orgId} (${mode})`);
+  }
   try {
+    const syncRunId = await params.store.beginSyncRun({
+      orgId: params.orgId,
+      mode,
+      startedAt: now.toISOString(),
+    });
+    const reclaimedSupersededRuns = await params.store.reclaimSupersededSyncRuns({
+      orgId: params.orgId,
+      mode,
+      reclaimedAt: now.toISOString(),
+      supersededBySyncRunId: syncRunId,
+      supersededByStartedAt: now.toISOString(),
+    });
+    if (reclaimedSupersededRuns > 0) {
+      params.logger?.warn?.(
+        `hetang-ops: reclaimed ${reclaimedSupersededRuns} superseded ${mode} sync runs for ${params.orgId}`,
+      );
+    }
+    const errors: Array<{ endpoint: string; error: string }> = [];
+    const skippedEndpoints = new Set(params.syncPlan?.skipEndpoints ?? []);
+    const scheduledTechEndpoints = (["1.5", "1.6", "1.7", "1.8"] as const).filter(
+      (endpoint) => !skippedEndpoints.has(endpoint),
+    );
+    const shouldPaceAfterTechEndpoint = (endpoint: "1.5" | "1.6" | "1.7" | "1.8") => {
+      const endpointIndex = scheduledTechEndpoints.indexOf(endpoint);
+      return endpointIndex !== -1 && endpointIndex < scheduledTechEndpoints.length - 1;
+    };
+    let fatalError: string | undefined;
+
     const runStep = async (endpoint: string, task: () => Promise<void>) => {
       if (skippedEndpoints.has(endpoint as EndpointCode)) {
         params.logger?.info?.(`hetang-ops: skipped ${params.orgId} endpoint ${endpoint}`);
@@ -874,173 +897,177 @@ export async function syncHetangStore(params: {
       }
     };
 
-    await runStep(
-      "1.1",
-      async () =>
-        await syncPagedEndpoint({
-          endpoint: "1.1",
-          orgId: params.orgId,
-          config: params.config,
-          store: params.store,
-          client,
-          syncRunId,
-          now,
-          sleepImpl,
-          syncPlan: params.syncPlan,
-        }),
-    );
-    await runStep(
-      "1.2",
-      async () =>
-        await syncPagedEndpoint({
-          endpoint: "1.2",
-          orgId: params.orgId,
-          config: params.config,
-          store: params.store,
-          client,
-          syncRunId,
-          now,
-          sleepImpl,
-          syncPlan: params.syncPlan,
-        }),
-    );
-    await runStep(
-      "1.3",
-      async () =>
-        await syncPagedEndpoint({
-          endpoint: "1.3",
-          orgId: params.orgId,
-          config: params.config,
-          store: params.store,
-          client,
-          syncRunId,
-          now,
-          sleepImpl,
-          syncPlan: params.syncPlan,
-        }),
-    );
-    await runStep(
-      "1.4",
-      async () =>
-        await syncUserTrades({
-          orgId: params.orgId,
-          config: params.config,
-          store: params.store,
-          client,
-          syncRunId,
-          now,
-          sleepImpl,
-          syncPlan: params.syncPlan,
-        }),
-    );
+    try {
+      await runStep(
+        "1.1",
+        async () =>
+          await syncPagedEndpoint({
+            endpoint: "1.1",
+            orgId: params.orgId,
+            config: params.config,
+            store: params.store,
+            client,
+            syncRunId,
+            now,
+            sleepImpl,
+            syncPlan: params.syncPlan,
+          }),
+      );
+      await runStep(
+        "1.2",
+        async () =>
+          await syncPagedEndpoint({
+            endpoint: "1.2",
+            orgId: params.orgId,
+            config: params.config,
+            store: params.store,
+            client,
+            syncRunId,
+            now,
+            sleepImpl,
+            syncPlan: params.syncPlan,
+          }),
+      );
+      await runStep(
+        "1.3",
+        async () =>
+          await syncPagedEndpoint({
+            endpoint: "1.3",
+            orgId: params.orgId,
+            config: params.config,
+            store: params.store,
+            client,
+            syncRunId,
+            now,
+            sleepImpl,
+            syncPlan: params.syncPlan,
+          }),
+      );
+      await runStep(
+        "1.4",
+        async () =>
+          await syncUserTrades({
+            orgId: params.orgId,
+            config: params.config,
+            store: params.store,
+            client,
+            syncRunId,
+            now,
+            sleepImpl,
+            syncPlan: params.syncPlan,
+          }),
+      );
 
-    let techCodes: string[] = [];
-    await runStep("1.5", async () => {
-      techCodes = await syncTechSnapshot({
-        orgId: params.orgId,
-        config: params.config,
-        store: params.store,
-        client,
-        syncRunId,
-        now,
-        sleepImpl,
+      let techCodes: string[] = [];
+      await runStep("1.5", async () => {
+        techCodes = await syncTechSnapshot({
+          orgId: params.orgId,
+          config: params.config,
+          store: params.store,
+          client,
+          syncRunId,
+          now,
+          sleepImpl,
+        });
       });
-    });
-    if (shouldPaceAfterTechEndpoint("1.5")) {
-      await paceTechEndpoint({ sleepImpl, isLast: false });
-    }
-    await runStep(
-      "1.6",
-      async () =>
-        await syncTechUpClock({
-          orgId: params.orgId,
-          config: params.config,
-          store: params.store,
-          client,
-          syncRunId,
-          now,
-          techCodes:
-            techCodes.length > 0 ? techCodes : await params.store.listActiveTechCodes(params.orgId),
-          sleepImpl,
-          syncPlan: params.syncPlan,
-        }),
-    );
-    if (shouldPaceAfterTechEndpoint("1.6")) {
-      await paceTechEndpoint({ sleepImpl, isLast: false });
-    }
-    await runStep(
-      "1.7",
-      async () =>
-        await syncTechMarket({
-          orgId: params.orgId,
-          config: params.config,
-          store: params.store,
-          client,
-          syncRunId,
-          now,
-          techCodes:
-            techCodes.length > 0 ? techCodes : await params.store.listActiveTechCodes(params.orgId),
-          sleepImpl,
-          syncPlan: params.syncPlan,
-        }),
-    );
-    if (shouldPaceAfterTechEndpoint("1.7")) {
-      await paceTechEndpoint({ sleepImpl, isLast: false });
-    }
-    await runStep(
-      "1.8",
-      async () =>
-        await syncTechCommissionSnapshot({
-          orgId: params.orgId,
-          config: params.config,
-          store: params.store,
-          client,
-          syncRunId,
-          now,
-          sleepImpl,
-        }),
-    );
-    if (
-      params.publishAnalytics !== false &&
-      typeof (params.store as { publishAnalyticsViews?: unknown }).publishAnalyticsViews ===
-        "function"
-    ) {
-      await (
-        params.store as {
-          publishAnalyticsViews: (params?: {
-            publishedAt?: string;
-            notes?: string;
-            servingVersion?: string;
-          }) => Promise<string | null>;
-        }
-      ).publishAnalyticsViews({
-        publishedAt: now.toISOString(),
-        notes: `sync-run:${syncRunId}:${params.orgId}:${params.syncPlan?.mode ?? "daily"}`,
-      });
-    }
-  } catch (error) {
-    fatalError = error instanceof Error ? error.message : String(error);
-    await params.store.recordSyncError({
-      syncRunId,
-      orgId: params.orgId,
-      endpoint: "sync",
-      errorAt: new Date().toISOString(),
-      errorMessage: fatalError,
-    });
-    throw error;
-  } finally {
-    await params.store.finishSyncRun({
-      syncRunId,
-      status: fatalError ? "failed" : errors.length > 0 ? "partial" : "success",
-      finishedAt: new Date().toISOString(),
-      details: fatalError
-        ? {
-            fatalError,
-            errors,
+      if (shouldPaceAfterTechEndpoint("1.5")) {
+        await paceTechEndpoint({ sleepImpl, isLast: false });
+      }
+      await runStep(
+        "1.6",
+        async () =>
+          await syncTechUpClock({
+            orgId: params.orgId,
+            config: params.config,
+            store: params.store,
+            client,
+            syncRunId,
+            now,
+            techCodes:
+              techCodes.length > 0 ? techCodes : await params.store.listActiveTechCodes(params.orgId),
+            sleepImpl,
+            syncPlan: params.syncPlan,
+          }),
+      );
+      if (shouldPaceAfterTechEndpoint("1.6")) {
+        await paceTechEndpoint({ sleepImpl, isLast: false });
+      }
+      await runStep(
+        "1.7",
+        async () =>
+          await syncTechMarket({
+            orgId: params.orgId,
+            config: params.config,
+            store: params.store,
+            client,
+            syncRunId,
+            now,
+            techCodes:
+              techCodes.length > 0 ? techCodes : await params.store.listActiveTechCodes(params.orgId),
+            sleepImpl,
+            syncPlan: params.syncPlan,
+          }),
+      );
+      if (shouldPaceAfterTechEndpoint("1.7")) {
+        await paceTechEndpoint({ sleepImpl, isLast: false });
+      }
+      await runStep(
+        "1.8",
+        async () =>
+          await syncTechCommissionSnapshot({
+            orgId: params.orgId,
+            config: params.config,
+            store: params.store,
+            client,
+            syncRunId,
+            now,
+            sleepImpl,
+          }),
+      );
+      if (
+        params.publishAnalytics !== false &&
+        typeof (params.store as { publishAnalyticsViews?: unknown }).publishAnalyticsViews ===
+          "function"
+      ) {
+        await (
+          params.store as {
+            publishAnalyticsViews: (params?: {
+              publishedAt?: string;
+              notes?: string;
+              servingVersion?: string;
+            }) => Promise<string | null>;
           }
-        : errors.length > 0
-          ? { errors }
-          : { ok: true },
-    });
+        ).publishAnalyticsViews({
+          publishedAt: now.toISOString(),
+          notes: `sync-run:${syncRunId}:${params.orgId}:${params.syncPlan?.mode ?? "daily"}`,
+        });
+      }
+    } catch (error) {
+      fatalError = error instanceof Error ? error.message : String(error);
+      await params.store.recordSyncError({
+        syncRunId,
+        orgId: params.orgId,
+        endpoint: "sync",
+        errorAt: new Date().toISOString(),
+        errorMessage: fatalError,
+      });
+      throw error;
+    } finally {
+      await params.store.finishSyncRun({
+        syncRunId,
+        status: fatalError ? "failed" : errors.length > 0 ? "partial" : "success",
+        finishedAt: new Date().toISOString(),
+        details: fatalError
+          ? {
+              fatalError,
+              errors,
+            }
+          : errors.length > 0
+            ? { errors }
+            : { ok: true },
+      });
+    }
+  } finally {
+    await params.store.releaseAdvisoryLock(syncExecutionLockKey);
   }
 }

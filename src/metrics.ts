@@ -258,6 +258,23 @@ function extractCanonicalRechargeCustomerKey(
   });
 }
 
+function resolveConsumeBillCustomerCount(
+  consumeBill: ConsumeBillRecord,
+  indexes: MemberIdentityIndexes,
+): number {
+  const canonicalCustomerKeys = extractCanonicalConsumeCustomerKeys(consumeBill.rawJson, indexes);
+  if (canonicalCustomerKeys.length > 0) {
+    return canonicalCustomerKeys.length;
+  }
+
+  const fallbackIdentityKeys = extractConsumeCustomerIdentityKeys(consumeBill.rawJson);
+  if (fallbackIdentityKeys.length > 0) {
+    return fallbackIdentityKeys.length;
+  }
+
+  return 1;
+}
+
 function extractTradeMemberId(rawJson: string, indexes: MemberIdentityIndexes): string | undefined {
   const parsed = parseRawRecord(rawJson);
   return resolveMemberIdFromIdentity({
@@ -408,7 +425,7 @@ type MemberIdentityRecord = Pick<
 
 type MemberCardIdentityRecord = Pick<MemberCardCurrentRecord, "memberId" | "cardId" | "cardNo">;
 
-type GroupbuyCohortMetrics = {
+export type GroupbuyCohortMetrics = {
   groupbuyCohortCustomerCount: number;
   groupbuyRevisitCustomerCount: number;
   groupbuyRevisitRate: number | null;
@@ -472,6 +489,37 @@ function extractPaymentAmount(
       return sum + payment.amount;
     }, 0),
   );
+}
+
+function hasExplicitConsumeCustomerSignal(rawJson: string): boolean {
+  if (extractConsumeCustomerRefs(rawJson).length > 0) {
+    return true;
+  }
+  const parsed = parseRawRecord(rawJson);
+  return (
+    String(
+      parsed.MemberPhone ??
+        parsed.Phone ??
+        parsed.CardNo ??
+        parsed.CardId ??
+        parsed.MemberName ??
+        parsed.Name ??
+        "",
+    ).trim().length > 0
+  );
+}
+
+function isCountableServiceConsumeBill(row: ConsumeBillRecord): boolean {
+  if (row.antiFlag) {
+    return false;
+  }
+  if (row.payAmount > 0 || row.consumeAmount > 0 || row.discountAmount > 0) {
+    return true;
+  }
+  if (extractPayments(row.rawJson).some((payment) => payment.amount > 0)) {
+    return true;
+  }
+  return hasExplicitConsumeCustomerSignal(row.rawJson);
 }
 
 function isMemberPayment(payment: ParsedPayment): boolean {
@@ -597,11 +645,23 @@ function buildGroupbuyPlatformBreakdown(params: {
   });
 }
 
-function buildGroupbuyCohortMetrics(params: {
+export function buildGroupbuyCohortMetrics(params: {
   consume: ConsumeBillRecord[];
   recharge: RechargeBillRecord[];
-  currentMembers: MemberIdentityRecord[];
-  currentMemberCards: MemberCardIdentityRecord[];
+  currentMembers: Array<
+    Pick<
+      MemberCurrentRecord,
+      | "memberId"
+      | "name"
+      | "phone"
+      | "storedAmount"
+      | "consumeAmount"
+      | "createdTime"
+      | "lastConsumeTime"
+      | "silentDays"
+    >
+  >;
+  currentMemberCards: Array<Pick<MemberCardCurrentRecord, "memberId" | "cardId" | "cardNo">>;
 }): GroupbuyCohortMetrics {
   const indexes = buildMemberIdentityIndexes({
     currentMembers: params.currentMembers,
@@ -1124,16 +1184,23 @@ export async function computeDailyStoreMetrics(params: {
     memberDailySnapshots.length > 0 ? memberDailySnapshots : currentMembers;
   const memberCardsAtBizDate: MemberCardIdentityRecord[] =
     memberCardDailySnapshots.length > 0 ? memberCardDailySnapshots : currentMemberCards;
+  const memberIndexes = buildMemberIdentityIndexes({
+    currentMembers: memberStateAtBizDate,
+    currentMemberCards: memberCardsAtBizDate,
+  });
 
-  const serviceRevenue = round(
-    consume.filter((row) => !row.antiFlag).reduce((sum, row) => sum + row.payAmount, 0),
-  );
+  const nonAntiConsume = consume.filter((row) => !row.antiFlag);
+  const serviceConsume = consume.filter(isCountableServiceConsumeBill);
+  const serviceRevenue = round(nonAntiConsume.reduce((sum, row) => sum + row.payAmount, 0));
   const antiServiceRevenue = round(
     consume.filter((row) => row.antiFlag).reduce((sum, row) => sum + row.payAmount, 0),
   );
-  const serviceOrderCount = consume.filter((row) => !row.antiFlag).length;
-  const customerCount = serviceOrderCount;
-  const averageTicket = round(serviceRevenue / Math.max(serviceOrderCount, 1));
+  const serviceOrderCount = serviceConsume.length;
+  const customerCount = serviceConsume.reduce(
+    (sum, row) => sum + resolveConsumeBillCustomerCount(row, memberIndexes),
+    0,
+  );
+  const averageTicket = round(serviceRevenue / Math.max(customerCount, 1));
   const rechargeCash = round(
     recharge.filter((row) => !row.antiFlag).reduce((sum, row) => sum + row.realityAmount, 0),
   );

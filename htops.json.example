@@ -16,7 +16,10 @@
     "enabled": true,
     "initialBackfillDays": 3,
     "overlapDays": 7,
-    "runAtLocalTime": "03:00"
+    "runAtLocalTime": "03:00",
+    "accessWindowStartLocalTime": "03:00",
+    "accessWindowEndLocalTime": "18:00",
+    "businessDayCutoffLocalTime": "03:00"
   },
   "reporting": {
     "enabled": true,
@@ -27,9 +30,15 @@
     },
     "buildAtLocalTime": "08:50",
     "sendAtLocalTime": "09:00",
+    "weeklyReportAtLocalTime": "09:15",
+    "weeklyReportStartDate": "2026-04-27",
+    "weeklyChartAtLocalTime": "09:18",
+    "weeklyChartStartDate": "2026-04-27",
     "middayBriefAtLocalTime": "12:00",
     "reactivationPushAtLocalTime": "15:00",
     "sendReportEnabled": false,
+    "sendWeeklyReportEnabled": true,
+    "sendWeeklyChartEnabled": true,
     "sendMiddayBriefEnabled": true,
     "sendReactivationPushEnabled": true
   },
@@ -92,6 +101,79 @@
     "correctionInterrupt": {
       "enabled": true,
       "recentTurnTtlMs": 180000
+    }
+  },
+  "customerGrowthAi": {
+    "enabled": false,
+    "baseUrl": "https://api.openai.com/v1",
+    "apiKey": "${OPENAI_API_KEY}",
+    "model": "gpt-5-mini",
+    "timeoutMs": 5000,
+    "profileInsight": {
+      "enabled": false
+    },
+    "tagAdvisor": {
+      "enabled": false
+    },
+    "strategyAdvisor": {
+      "enabled": false
+    },
+    "followupSummarizer": {
+      "enabled": false
+    }
+  },
+  "aiLanes": {
+    "general-lite": {
+      "model": "deepseek-v3-2-251201",
+      "reasoningMode": "off",
+      "timeoutMs": 2500,
+      "responseMode": "text",
+      "fallbackBehavior": "legacy"
+    },
+    "semantic-fallback": {
+      "model": "deepseek-v3-2-251201",
+      "reasoningMode": "off",
+      "timeoutMs": 3500,
+      "responseMode": "json",
+      "fallbackBehavior": "deterministic"
+    },
+    "customer-growth-json": {
+      "model": "deepseek-v3-2-251201",
+      "reasoningMode": "off",
+      "timeoutMs": 5000,
+      "responseMode": "json",
+      "fallbackBehavior": "deterministic"
+    },
+    "cheap-summary": {
+      "model": "doubao-seed-2.0-lite",
+      "reasoningMode": "off",
+      "timeoutMs": 5000,
+      "responseMode": "text",
+      "fallbackBehavior": "deterministic"
+    },
+    "analysis-premium": {
+      "model": "gpt-5.4",
+      "reasoningMode": "high",
+      "timeoutMs": 90000,
+      "responseMode": "json",
+      "fallbackBehavior": "deterministic"
+    },
+    "offline-review": {
+      "model": "gpt-5.4",
+      "reasoningMode": "high",
+      "timeoutMs": 120000,
+      "responseMode": "json",
+      "fallbackBehavior": "deterministic"
+    }
+  },
+  "inboundLinkReaders": {
+    "xiaohongshu": {
+      "enabled": false,
+      "autocliBin": "/usr/local/bin/autocli",
+      "timeoutMs": 45000,
+      "browserTimeoutMs": 45000,
+      "acceptText": "收到，正在读取。",
+      "maxContentChars": 1200
     }
   },
   "queue": {

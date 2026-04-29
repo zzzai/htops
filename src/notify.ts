@@ -45,6 +45,8 @@ type WeComDirectCredentials = {
   secret: string;
 };
 
+type WeComDirectSenderMode = "markdown" | "image";
+
 function normalizeCredential(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -168,6 +170,20 @@ async function sendWeComMessageViaDirectSender(params: {
   message: string;
   runCommandWithTimeout: CommandRunner;
 }): Promise<boolean> {
+  return await sendWeComPayloadViaDirectSender({
+    target: params.target,
+    mode: "markdown",
+    payload: params.message,
+    runCommandWithTimeout: params.runCommandWithTimeout,
+  });
+}
+
+async function sendWeComPayloadViaDirectSender(params: {
+  target: string;
+  mode: WeComDirectSenderMode;
+  payload: string;
+  runCommandWithTimeout: CommandRunner;
+}): Promise<boolean> {
   const senderScript = resolveConfiguredWeComSenderScript();
   if (!fs.existsSync(senderScript)) {
     return false;
@@ -178,7 +194,9 @@ async function sendWeComMessageViaDirectSender(params: {
   }
 
   const result = await params.runCommandWithTimeout(
-    [process.execPath, senderScript, params.target, params.message],
+    params.mode === "image"
+      ? [process.execPath, senderScript, "image", params.target, params.payload]
+      : [process.execPath, senderScript, params.target, params.payload],
     {
       timeoutMs: DEFAULT_SEND_TIMEOUT_MS,
       cwd: process.cwd(),
@@ -471,6 +489,45 @@ export async function sendReportMessage(params: {
       threadId: params.notification.threadId,
     },
     message: params.message,
+    runCommandWithTimeout: params.runCommandWithTimeout,
+  });
+}
+
+export async function sendHetangImage(params: {
+  notification: HetangMessageTarget;
+  filePath: string;
+  runCommandWithTimeout: CommandRunner;
+}): Promise<void> {
+  if (params.notification.channel !== "wecom") {
+    throw new Error("sendHetangImage currently only supports wecom notifications.");
+  }
+
+  const resolvedTarget = resolveWeComTargetAlias(params.notification.target);
+  const sent = await sendWeComPayloadViaDirectSender({
+    target: resolvedTarget,
+    mode: "image",
+    payload: params.filePath,
+    runCommandWithTimeout: params.runCommandWithTimeout,
+  });
+
+  if (!sent) {
+    throw new Error("WeCom image sender is unavailable.");
+  }
+}
+
+export async function sendReportImage(params: {
+  notification: HetangNotificationTarget;
+  filePath: string;
+  runCommandWithTimeout: CommandRunner;
+}): Promise<void> {
+  await sendHetangImage({
+    notification: {
+      channel: params.notification.channel,
+      target: params.notification.target,
+      accountId: params.notification.accountId,
+      threadId: params.notification.threadId,
+    },
+    filePath: params.filePath,
     runCommandWithTimeout: params.runCommandWithTimeout,
   });
 }

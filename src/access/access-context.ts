@@ -179,7 +179,9 @@ export function buildHetangAccessContext(params: HetangAccessContextParams): Het
   }
 
   if (
+    params.action === "chart" ||
     params.action === "intel" ||
+    params.action === "review" ||
     params.action === "status" ||
     params.action === "sync" ||
     params.action === "tower"

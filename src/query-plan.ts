@@ -1,4 +1,5 @@
 import type { HetangQueryIntent } from "./query-intent.js";
+import { resolveQueryAnalysisLens, type QueryAnalysisLens } from "./analysis-lens.js";
 import {
   resolveFollowUpBucketAlias,
   resolveServingCustomerSegmentCountMatch,
@@ -69,6 +70,7 @@ export type QueryPlan = {
     normalized_question: string;
     clarification_needed: boolean;
   };
+  analysis?: QueryAnalysisLens;
 };
 
 function randomRequestId(intent: HetangQueryIntent): string {
@@ -80,6 +82,29 @@ function metricKey(intent: HetangQueryIntent): string {
     return "riskScore";
   }
   return intent.metrics[0]?.key ?? "serviceRevenue";
+}
+
+function resolveHqPortfolioPlanAction(intent: HetangQueryIntent): QueryPlan["action"] {
+  const rawText = intent.rawText;
+  const wantsOverview =
+    /(整体怎么样|整体表现|盘子稳不稳|哪家在拉升|总部重点关注哪家|哪个门店须重点关注)/u.test(
+      rawText,
+    );
+  const wantsRisk =
+    /(风险在哪|风险排序|风险雷达|风险最大)/u.test(rawText);
+  const wantsAdvice = /(先救哪家|哪里不对)/u.test(rawText);
+  const wantsReview = /(经营复盘|复盘一下|盘一盘|盘一下)/u.test(rawText);
+
+  if (wantsReview && !wantsOverview && !wantsRisk && !wantsAdvice) {
+    return "report";
+  }
+  if (wantsAdvice && !wantsOverview && !wantsRisk) {
+    return "advice";
+  }
+  if (wantsRisk && !wantsOverview && !wantsAdvice) {
+    return "risk";
+  }
+  return "ranking";
 }
 
 function resolveScopeKind(orgIds: string[], allStoresRequested: boolean): QueryPlan["scope"]["scope_kind"] {
@@ -119,6 +144,29 @@ function wantsMetricBreakdown(intent: HetangQueryIntent): boolean {
   );
 }
 
+function wantsMarketItemBreakdown(intent: HetangQueryIntent): boolean {
+  return (
+    intent.kind === "metric" &&
+    intent.metrics.some((metric) => metric.key === "marketRevenue") &&
+    /(副项|茶饮|饮品|精油)/u.test(intent.rawText) &&
+    /(卖出什么|卖了什么|几单|什么副项)/u.test(intent.rawText)
+  );
+}
+
+function isCombinedPointAddClockAsk(text: string): boolean {
+  return /(点钟|点加钟)/u.test(text) && /加钟/u.test(text);
+}
+
+function wantsWindowMetricStatusView(intent: HetangQueryIntent): boolean {
+  return (
+    intent.kind === "metric" &&
+    intent.timeFrame.kind === "range" &&
+    intent.metrics.length > 0 &&
+    /(情况|表现)/u.test(intent.rawText) &&
+    !isCombinedPointAddClockAsk(intent.rawText)
+  );
+}
+
 function resolveAsOfBizDate(intent: HetangQueryIntent): string {
   return intent.timeFrame.kind === "single" ? intent.timeFrame.bizDate : intent.timeFrame.endBizDate;
 }
@@ -151,6 +199,20 @@ function resolveRechargeAttributionDimension(text: string): string {
     return "sales";
   }
   return "card_type";
+}
+
+function wantsTechCurrentList(text: string): boolean {
+  return /(谁|哪些|哪几位|有哪些)/u.test(text);
+}
+
+function resolveTechCurrentStateFilter(text: string): "busy" | "idle" | null {
+  if (/(上钟|忙|服务中)/u.test(text)) {
+    return "busy";
+  }
+  if (/(空的|空闲|没事干|有空|待钟|待客)/u.test(text)) {
+    return "idle";
+  }
+  return null;
 }
 
 function resolveCompareMeta(params: {
@@ -511,6 +573,38 @@ export function buildQueryPlanFromIntent(params: {
     };
   }
 
+  if (intent.kind === "tech_current") {
+    const techState = resolveTechCurrentStateFilter(intent.rawText);
+    return {
+      plan_version: "v1",
+      request_id: randomRequestId(intent),
+      entity: "tech",
+      scope: {
+        org_ids: params.effectiveOrgIds,
+        scope_kind,
+        access_scope_kind: params.accessScopeKind,
+      },
+      time: {
+        mode: "as_of",
+        as_of_biz_date: resolveAsOfBizDate(intent),
+      },
+      action: wantsTechCurrentList(intent.rawText) ? "list" : "summary",
+      metrics: [],
+      dimensions: ["tech_state"],
+      filters: techState
+        ? [
+            {
+              field: "tech_state",
+              op: "=",
+              value: techState,
+            },
+          ]
+        : [],
+      response_shape: wantsTechCurrentList(intent.rawText) ? "ranking_list" : "scalar",
+      planner_meta,
+    };
+  }
+
   if (intent.kind === "arrival_profile") {
     return {
       plan_version: "v1",
@@ -605,6 +699,14 @@ export function buildQueryPlanFromIntent(params: {
   }
 
   if (intent.kind === "hq_portfolio") {
+    const action = resolveHqPortfolioPlanAction(intent);
+    const analysis = resolveQueryAnalysisLens({
+      intent,
+      effectiveOrgIds: params.effectiveOrgIds,
+      accessScopeKind: params.accessScopeKind,
+      entity: "hq",
+      action,
+    });
     return {
       plan_version: "v1",
       request_id: randomRequestId(intent),
@@ -626,24 +728,80 @@ export function buildQueryPlanFromIntent(params: {
               start_biz_date: intent.timeFrame.startBizDate,
               window_days: intent.timeFrame.days,
             },
-      action: "ranking",
+      action,
       metrics: ["riskScore"],
       dimensions: ["store"],
       filters: [],
-      sort: {
-        metric: "riskScore",
-        order: "desc",
-      },
-      limit: Math.max(5, params.effectiveOrgIds.length),
-      response_shape: "ranking_list",
+      sort:
+        action === "ranking" || action === "risk"
+          ? {
+              metric: "riskScore",
+              order: "desc",
+            }
+          : undefined,
+      limit:
+        action === "ranking" || action === "risk"
+          ? Math.max(5, params.effectiveOrgIds.length)
+          : undefined,
+      response_shape: action === "ranking" ? "ranking_list" : "narrative",
       planner_meta,
+      analysis,
     };
   }
+
+  const entity =
+    intent.kind === "ranking" && intent.rankingTarget === "tech" ? "tech" : "store";
+  const action = wantsMetricBreakdown(intent)
+    ? "breakdown"
+    : wantsMarketItemBreakdown(intent)
+      ? "breakdown"
+    : wantsWindowMetricStatusView(intent)
+      ? params.effectiveOrgIds.length > 1 || intent.allStoresRequested
+        ? "ranking"
+        : "trend"
+      : intent.kind === "ranking"
+        ? "ranking"
+        : intent.kind === "compare"
+          ? "compare"
+          : intent.kind === "report"
+            ? "report"
+            : intent.kind === "trend"
+              ? "trend"
+              : intent.kind === "anomaly"
+                ? "anomaly"
+                : intent.kind === "risk"
+                  ? "risk"
+                  : intent.kind === "advice"
+                    ? "advice"
+                    : "summary";
+  const response_shape = wantsMetricBreakdown(intent) || wantsMarketItemBreakdown(intent)
+    ? "table"
+    : wantsWindowMetricStatusView(intent)
+      ? params.effectiveOrgIds.length > 1 || intent.allStoresRequested
+        ? "ranking_list"
+        : "timeseries"
+      : intent.kind === "ranking"
+        ? "ranking_list"
+        : intent.kind === "trend"
+          ? "timeseries"
+          : intent.kind === "report" ||
+              intent.kind === "anomaly" ||
+              intent.kind === "risk" ||
+              intent.kind === "advice"
+            ? "narrative"
+            : "scalar";
+  const analysis = resolveQueryAnalysisLens({
+    intent,
+    effectiveOrgIds: params.effectiveOrgIds,
+    accessScopeKind: params.accessScopeKind,
+    entity,
+    action,
+  });
 
   return {
     plan_version: "v1",
     request_id: randomRequestId(intent),
-    entity: intent.kind === "ranking" && intent.rankingTarget === "tech" ? "tech" : "store",
+    entity,
     scope: {
       org_ids: params.effectiveOrgIds,
       scope_kind,
@@ -661,47 +819,28 @@ export function buildQueryPlanFromIntent(params: {
             end_biz_date: intent.timeFrame.endBizDate,
             window_days: intent.timeFrame.days,
           },
-    action: wantsMetricBreakdown(intent)
-      ? "breakdown"
-      : intent.kind === "ranking"
-        ? "ranking"
-        : intent.kind === "compare"
-          ? "compare"
-          : intent.kind === "report"
-            ? "report"
-            : intent.kind === "trend"
-              ? "trend"
-              : intent.kind === "anomaly"
-                ? "anomaly"
-                : intent.kind === "risk"
-                  ? "risk"
-                  : intent.kind === "advice"
-                    ? "advice"
-                    : "summary",
+    action,
     metrics: [metricKey(intent)],
-    dimensions: wantsMetricBreakdown(intent) ? ["clock_type"] : [],
+    dimensions: wantsMetricBreakdown(intent)
+      ? ["clock_type"]
+      : wantsMarketItemBreakdown(intent)
+        ? ["item_type", "item_name", "tech"]
+        : [],
     filters: [],
     compare,
     sort:
-      intent.kind === "ranking"
+      intent.kind === "ranking" || (wantsWindowMetricStatusView(intent) && params.effectiveOrgIds.length > 1)
         ? {
             metric: metricKey(intent),
             order: intent.rankingOrder === "asc" ? "asc" : "desc",
           }
         : undefined,
-    limit: intent.kind === "ranking" ? Math.max(params.effectiveOrgIds.length, 5) : undefined,
-    response_shape: wantsMetricBreakdown(intent)
-      ? "table"
-      : intent.kind === "ranking"
-        ? "ranking_list"
-        : intent.kind === "trend"
-          ? "timeseries"
-          : intent.kind === "report" ||
-              intent.kind === "anomaly" ||
-              intent.kind === "risk" ||
-              intent.kind === "advice"
-            ? "narrative"
-            : "scalar",
+    limit:
+      intent.kind === "ranking" || (wantsWindowMetricStatusView(intent) && params.effectiveOrgIds.length > 1)
+        ? Math.max(params.effectiveOrgIds.length, 5)
+        : undefined,
+    response_shape,
     planner_meta,
+    analysis,
   };
 }

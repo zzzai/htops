@@ -10,6 +10,7 @@ import type {
 } from "./contracts.js";
 
 const DEFAULT_DEDUPE_TTL_MS = 10 * 60 * 1000;
+const TOOLS_REQUEST_DEDUPE_KEY_FIELDS = ["request_id"] as const;
 
 function writeJson(
   response: http.ServerResponse,
@@ -112,9 +113,17 @@ export function createHetangToolsServer(params: {
       }
 
       if (method === "GET" && path === "/v1/tools/capabilities") {
+        const capabilities = tools.describeCapabilities();
         writeJson(response, 200, {
           ok: true,
-          capabilities: tools.describeCapabilities() satisfies HetangToolsCapabilities,
+          capabilities: {
+            ...capabilities,
+            request_dedupe: {
+              scope: "tools_http",
+              key_fields: Array.from(TOOLS_REQUEST_DEDUPE_KEY_FIELDS),
+              ttl_ms: dedupeTtlMs,
+            },
+          } satisfies HetangToolsCapabilities,
         });
         return;
       }

@@ -1,5 +1,11 @@
-import type { HetangMetricIntentResolution } from "./metric-query.js";
-import { resolveHetangIntentRoute } from "./query-route-registry.js";
+import {
+  resolveMetricIntent,
+  type HetangMetricIntentResolution,
+} from "./metric-query.js";
+import {
+  resolveHetangIntentRoute,
+  type HetangIntentRouteResolution,
+} from "./query-route-registry.js";
 import {
   resolveHetangQuerySemanticContext,
   type HetangQuerySemanticContext,
@@ -10,7 +16,10 @@ import {
   resolveReportBizDate,
   shiftBizDate,
 } from "./time.js";
-import type { HetangOpsConfig } from "./types.js";
+import type {
+  HetangConversationSemanticStateSnapshot,
+  HetangOpsConfig,
+} from "./types.js";
 
 export type HetangQueryTimeFrame =
   | {
@@ -41,6 +50,7 @@ export type HetangQueryIntentKind =
   | "customer_relation"
   | "customer_profile"
   | "tech_profile"
+  | "tech_current"
   | "birthday_members"
   | "arrival_profile"
   | "wait_experience"
@@ -80,10 +90,282 @@ export type HetangQueryIntent = {
   };
 };
 
+const EXPLICIT_TIME_SCOPE_KEYWORDS =
+  /(今天|今日|昨天|昨日|明天|前天|前日|前一日|前一天|上一日|上一天|本周|本月|上周|上月|下周|下月|最近|近期|这几天|近几天|最近这几天|前几天|未来\d+[天周月年]|近\d+[天周月年]|最近\d+[天周月年]|过去\d+[天周月年]|未来[一二两三四五六七八九十百零]+[天周月年]|近[一二两三四五六七八九十百零]+[天周月年]|最近[一二两三四五六七八九十百零]+[天周月年]|过去[一二两三四五六七八九十百零]+[天周月年]|\d{4}-\d{2}-\d{2}|\d{4}年\s*\d{1,2}月(?:份)?|\d{4}年\s*\d{1,2}月\s*\d{1,2}日|\d{1,2}月(?:份)?|\d{1,2}月\s*\d{1,2}日)/u;
+const WINDOW_TIME_SCOPE_KEYWORDS =
+  /(最近|近期|这几天|近几天|最近这几天|前几天|本周|本月|上周|上月|下周|下月|近\d+[天周月年]|最近\d+[天周月年]|过去\d+[天周月年]|近[一二两三四五六七八九十百零]+[天周月年]|最近[一二两三四五六七八九十百零]+[天周月年]|过去[一二两三四五六七八九十百零]+[天周月年]|近一周|最近一周|过去一周)/u;
+const COLLOQUIAL_METRIC_SUPPLEMENT_KEYWORDS =
+  /(营收|业绩|储值|复购|客流|客单价|点钟率|加钟率|点钟|加钟|钟效|人效|卡里还有多少|盘里收了多少|收了多少)/u;
+const SAFE_OPEN_STORE_REPORT_KEYWORDS = /(怎么样|如何|咋样|什么情况)/u;
+const SAFE_OPEN_STORE_ADVICE_KEYWORDS =
+  /(重点看什么|该看什么|看什么指标|重点抓什么|该抓什么)/u;
+const AMBIGUOUS_COLLOQUIAL_AMOUNT_KEYWORDS =
+  /(盘里收了多少|盘里收|收了多少|搞了多少|做了多少)/u;
+
+type ConversationSemanticTurnResolution = {
+  effectiveText: string;
+  stateCarriedForward: boolean;
+  topicSwitchDetected: boolean;
+};
+
+function normalizeCarryText(value: string): string {
+  return value.replace(/\s+/gu, "").trim();
+}
+
+function resolvePendingConversationText(
+  semanticState?: HetangConversationSemanticStateSnapshot | null,
+): string | null {
+  const pendingText = semanticState?.beliefState.pendingText;
+  return typeof pendingText === "string" && pendingText.trim().length > 0
+    ? pendingText.trim()
+    : null;
+}
+
+function buildCombinedCarryText(pendingText: string, text: string): string {
+  const normalizedPendingText = normalizeCarryText(pendingText);
+  const normalizedText = normalizeCarryText(text);
+  if (!normalizedText) {
+    return pendingText.trim();
+  }
+  if (normalizedPendingText.includes(normalizedText)) {
+    return pendingText.trim();
+  }
+  if (normalizedText.includes(normalizedPendingText)) {
+    return text.trim();
+  }
+  return `${pendingText.trim()} ${text.trim()}`.trim();
+}
+
+function resolveLastEffectiveConversationText(
+  semanticState?: HetangConversationSemanticStateSnapshot | null,
+): string | null {
+  const lastEffectiveText = semanticState?.beliefState.lastEffectiveText;
+  return typeof lastEffectiveText === "string" && lastEffectiveText.trim().length > 0
+    ? lastEffectiveText.trim()
+    : null;
+}
+
+function isObjectSwitchContinuation(params: { text: string }): boolean {
+  const normalized = normalizeCarryText(params.text);
+  return /^(那|那么)?(顾客|客人|客户|会员|技师|老师|风险|建议|排行|排名|复盘)(呢|怎么样|情况|状态|如何)?$/u.test(normalized);
+}
+
+function isExplicitTopicSwitchPhrase(text: string): boolean {
+  return /(换个话题|换一个话题|不说这个了|说别的)/u.test(text);
+}
+
+function isSlotOnlyTimeSupplement(params: {
+  config: HetangOpsConfig;
+  text: string;
+}): boolean {
+  if (!EXPLICIT_TIME_SCOPE_KEYWORDS.test(params.text)) {
+    return false;
+  }
+  const semanticContext = resolveHetangQuerySemanticContext(params);
+  return (
+    semanticContext.explicitOrgIds.length === 0 &&
+    !semanticContext.allStoresRequested &&
+    semanticContext.metrics.supported.length === 0 &&
+    semanticContext.metrics.unsupported.length === 0 &&
+    !semanticContext.hasDataKeyword &&
+    semanticContext.semanticSlots.object === "unknown"
+  );
+}
+
+function isSlotOnlyStoreSupplement(params: {
+  config: HetangOpsConfig;
+  text: string;
+}): boolean {
+  const semanticContext = resolveHetangQuerySemanticContext(params);
+  return (
+    semanticContext.explicitOrgIds.length === 1 &&
+    !semanticContext.allStoresRequested &&
+    !EXPLICIT_TIME_SCOPE_KEYWORDS.test(params.text) &&
+    semanticContext.metrics.supported.length === 0 &&
+    semanticContext.metrics.unsupported.length === 0 &&
+    (semanticContext.semanticSlots.object === "unknown" ||
+      semanticContext.semanticSlots.object === "store")
+  );
+}
+
+function isSlotOnlyMetricSupplement(params: {
+  config: HetangOpsConfig;
+  text: string;
+}): boolean {
+  const semanticContext = resolveHetangQuerySemanticContext(params);
+  const metricIntent = resolveMetricIntent(params.text);
+  const normalizedText = normalizeCarryText(params.text);
+  const hasMetricSignal =
+    metricIntent.supported.length > 0 ||
+    metricIntent.unsupported.length > 0 ||
+    COLLOQUIAL_METRIC_SUPPLEMENT_KEYWORDS.test(normalizedText);
+  return (
+    hasMetricSignal &&
+    semanticContext.explicitOrgIds.length === 0 &&
+    !semanticContext.allStoresRequested &&
+    !EXPLICIT_TIME_SCOPE_KEYWORDS.test(params.text) &&
+    (semanticContext.semanticSlots.object === "unknown" ||
+      semanticContext.semanticSlots.object === "store")
+  );
+}
+
+function looksLikeStandaloneTopic(params: {
+  config: HetangOpsConfig;
+  text: string;
+  now: Date;
+}): boolean {
+  if (isExplicitTopicSwitchPhrase(params.text)) {
+    return true;
+  }
+  if (
+    resolveHetangQueryIntent({
+      config: params.config,
+      text: params.text,
+      now: params.now,
+    })
+  ) {
+    return true;
+  }
+  const semanticContext = resolveHetangQuerySemanticContext({
+    config: params.config,
+    text: params.text,
+  });
+  return (
+    (semanticContext.hasStoreContext || semanticContext.allStoresRequested) &&
+    (EXPLICIT_TIME_SCOPE_KEYWORDS.test(params.text) ||
+      semanticContext.hasDataKeyword ||
+      semanticContext.metrics.supported.length > 0 ||
+      semanticContext.metrics.unsupported.length > 0 ||
+      semanticContext.semanticSlots.object !== "unknown" ||
+      semanticContext.mentionsTrendKeyword ||
+      semanticContext.mentionsAnomalyKeyword ||
+      semanticContext.mentionsRiskKeyword ||
+      semanticContext.mentionsAdviceKeyword ||
+      semanticContext.mentionsReportKeyword)
+  );
+}
+
+export function resolveConversationSemanticEffectiveText(params: {
+  config: HetangOpsConfig;
+  text: string;
+  now: Date;
+  semanticState?: HetangConversationSemanticStateSnapshot | null;
+}): ConversationSemanticTurnResolution {
+  const rawText = params.text.trim();
+  const pendingText = resolvePendingConversationText(params.semanticState);
+  const lastEffectiveText = resolveLastEffectiveConversationText(params.semanticState);
+  const lastIntentKind = params.semanticState?.lastIntentKind;
+  if (
+    rawText &&
+    !params.semanticState?.clarificationPending &&
+    lastIntentKind === "query" &&
+    lastEffectiveText &&
+    isObjectSwitchContinuation({ text: rawText })
+  ) {
+    return {
+      effectiveText: buildCombinedCarryText(lastEffectiveText, rawText),
+      stateCarriedForward: true,
+      topicSwitchDetected: false,
+    };
+  }
+  if (rawText && isExplicitTopicSwitchPhrase(rawText)) {
+    return {
+      effectiveText: rawText,
+      stateCarriedForward: false,
+      topicSwitchDetected: true,
+    };
+  }
+  if (!rawText || !params.semanticState?.clarificationPending || !pendingText) {
+    return {
+      effectiveText: rawText,
+      stateCarriedForward: false,
+      topicSwitchDetected: false,
+    };
+  }
+
+  const reason = params.semanticState.clarificationReason;
+  if (reason === "missing-time" && isSlotOnlyTimeSupplement(params)) {
+    return {
+      effectiveText: buildCombinedCarryText(pendingText, rawText),
+      stateCarriedForward: true,
+      topicSwitchDetected: false,
+    };
+  }
+  if (reason === "missing-store" && isSlotOnlyStoreSupplement(params)) {
+    return {
+      effectiveText: buildCombinedCarryText(pendingText, rawText),
+      stateCarriedForward: true,
+      topicSwitchDetected: false,
+    };
+  }
+  if (reason === "missing-metric" && isSlotOnlyMetricSupplement(params)) {
+    return {
+      effectiveText: buildCombinedCarryText(pendingText, rawText),
+      stateCarriedForward: true,
+      topicSwitchDetected: false,
+    };
+  }
+
+  const normalizedPendingText = normalizeCarryText(pendingText);
+  const normalizedRawText = normalizeCarryText(rawText);
+  return {
+    effectiveText: rawText,
+    stateCarriedForward: false,
+    topicSwitchDetected:
+      looksLikeStandaloneTopic(params) &&
+      !normalizedPendingText.includes(normalizedRawText) &&
+      !normalizedRawText.includes(normalizedPendingText),
+  };
+}
+
 type PositionedTimeFrame = {
   frame: HetangQueryTimeFrame;
   position: number;
 };
+
+function parseRelativeTimeNumberToken(token: string): number | null {
+  if (/^\d+$/u.test(token)) {
+    const numeric = Number(token);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+  }
+
+  const digitMap: Record<string, number> = {
+    零: 0,
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+  };
+  const unitMap: Record<string, number> = {
+    十: 10,
+    百: 100,
+  };
+
+  let total = 0;
+  let current = 0;
+  for (const char of token) {
+    if (char in digitMap) {
+      current = digitMap[char] ?? 0;
+      continue;
+    }
+    if (char in unitMap) {
+      const unit = unitMap[char] ?? 0;
+      total += (current === 0 ? 1 : current) * unit;
+      current = 0;
+      continue;
+    }
+    return null;
+  }
+
+  const resolved = total + current;
+  return resolved > 0 ? resolved : null;
+}
 
 function resolveChineseCalendarDate(params: {
   year?: number;
@@ -291,23 +573,6 @@ function resolveRangeMatch(params: {
     return absoluteMonthRange;
   }
 
-  const numericRange = params.text.match(/(近|最近|过去)(\d+)(天|日|周|月)/u);
-  if (numericRange) {
-    const unit = numericRange[3];
-    const value = Number(numericRange[2]);
-    const days = unit === "周" ? value * 7 : unit === "月" ? value * 30 : value;
-    return {
-      position: numericRange.index ?? 0,
-      frame: {
-        kind: "range",
-        startBizDate: shiftBizDate(reportBizDate, -(days - 1)),
-        endBizDate: reportBizDate,
-        label: numericRange[0],
-        days,
-      },
-    };
-  }
-
   const text = params.text;
   const fixedRanges: Array<{
     pattern: RegExp;
@@ -388,6 +653,28 @@ function resolveRangeMatch(params: {
     return {
       position: match.index ?? 0,
       frame: entry.build(),
+    };
+  }
+
+  const relativeRange = params.text.match(
+    /(近|最近|过去)(\d+|[一二两三四五六七八九十百零]+)(天|日|周|月)/u,
+  );
+  if (relativeRange) {
+    const unit = relativeRange[3];
+    const value = parseRelativeTimeNumberToken(relativeRange[2]);
+    if (!value) {
+      return null;
+    }
+    const days = unit === "周" ? value * 7 : unit === "月" ? value * 30 : value;
+    return {
+      position: relativeRange.index ?? 0,
+      frame: {
+        kind: "range",
+        startBizDate: shiftBizDate(reportBizDate, -(days - 1)),
+        endBizDate: reportBizDate,
+        label: relativeRange[0],
+        days,
+      },
     };
   }
 
@@ -565,10 +852,10 @@ function resolveTimeFrames(params: {
     });
     const frame: HetangQueryTimeFrame = {
       kind: "range",
-      startBizDate: shiftBizDate(reportBizDate, -6),
+      startBizDate: shiftBizDate(reportBizDate, -14),
       endBizDate: reportBizDate,
-      label: "近7天",
-      days: 7,
+      label: "近15天",
+      days: 15,
     };
     return { timeFrame: frame };
   }
@@ -701,6 +988,85 @@ function resolvePhoneSuffix(text: string): string | undefined {
   return undefined;
 }
 
+function buildSyntheticRouteResolution(params: {
+  context: HetangQuerySemanticContext;
+  kind: HetangQueryIntentKind;
+  mentionsAdviceKeyword?: boolean;
+  mentionsReportKeyword?: boolean;
+}): HetangIntentRouteResolution {
+  return {
+    kind: params.kind,
+    confidence: "high",
+    mentionsCompareKeyword: params.context.mentionsCompareKeyword,
+    mentionsRankingKeyword: params.context.mentionsRankingKeyword,
+    mentionsTrendKeyword: params.context.mentionsTrendKeyword,
+    mentionsAnomalyKeyword: params.context.mentionsAnomalyKeyword,
+    mentionsRiskKeyword: params.context.mentionsRiskKeyword,
+    mentionsAdviceKeyword: params.mentionsAdviceKeyword ?? params.context.mentionsAdviceKeyword,
+    mentionsReportKeyword: params.mentionsReportKeyword ?? params.context.mentionsReportKeyword,
+  };
+}
+
+function resolveSafeOpenBusinessRoute(params: {
+  text: string;
+  semanticContext: HetangQuerySemanticContext;
+}): HetangIntentRouteResolution | null {
+  if (
+    !WINDOW_TIME_SCOPE_KEYWORDS.test(params.text) ||
+    AMBIGUOUS_COLLOQUIAL_AMOUNT_KEYWORDS.test(params.text)
+  ) {
+    return null;
+  }
+
+  const hqWindowAsk =
+    (params.semanticContext.allStoresRequested || params.semanticContext.explicitOrgIds.length > 1) &&
+    !params.semanticContext.routeSignals.hqStoreMixedScope;
+  if (hqWindowAsk) {
+    if (
+      SAFE_OPEN_STORE_ADVICE_KEYWORDS.test(params.text) ||
+      SAFE_OPEN_STORE_REPORT_KEYWORDS.test(params.text)
+    ) {
+      return buildSyntheticRouteResolution({
+        context: params.semanticContext,
+        kind: "hq_portfolio",
+        mentionsAdviceKeyword: SAFE_OPEN_STORE_ADVICE_KEYWORDS.test(params.text)
+          ? true
+          : params.semanticContext.mentionsAdviceKeyword,
+        mentionsReportKeyword: SAFE_OPEN_STORE_REPORT_KEYWORDS.test(params.text)
+          ? true
+          : params.semanticContext.mentionsReportKeyword,
+      });
+    }
+    return null;
+  }
+
+  const singleStoreWindowAsk =
+    params.semanticContext.semanticSlots.object === "store" &&
+    params.semanticContext.explicitOrgIds.length === 1 &&
+    !params.semanticContext.allStoresRequested;
+  if (!singleStoreWindowAsk) {
+    return null;
+  }
+
+  if (SAFE_OPEN_STORE_ADVICE_KEYWORDS.test(params.text)) {
+    return buildSyntheticRouteResolution({
+      context: params.semanticContext,
+      kind: "advice",
+      mentionsAdviceKeyword: true,
+    });
+  }
+
+  if (SAFE_OPEN_STORE_REPORT_KEYWORDS.test(params.text)) {
+    return buildSyntheticRouteResolution({
+      context: params.semanticContext,
+      kind: "report",
+      mentionsReportKeyword: true,
+    });
+  }
+
+  return null;
+}
+
 export function resolveHetangQueryIntent(params: {
   config: HetangOpsConfig;
   text: string;
@@ -714,7 +1080,15 @@ export function resolveHetangQueryIntent(params: {
     config: params.config,
     text,
   });
-  const intent = resolveHetangIntentRoute(semanticContext);
+  const resolvedRoute = resolveHetangIntentRoute(semanticContext);
+  const safeOpenRoute = resolveSafeOpenBusinessRoute({
+    text,
+    semanticContext,
+  });
+  const intent =
+    safeOpenRoute && (!resolvedRoute || resolvedRoute.kind === "metric")
+      ? safeOpenRoute
+      : resolvedRoute ?? safeOpenRoute;
   if (!intent) {
     return null;
   }

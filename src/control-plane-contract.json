@@ -1,0 +1,107 @@
+{
+  "version": "2026-04-23.control-plane.v1",
+  "scheduler_jobs": [
+    {
+      "job_type": "sync",
+      "label": "夜间同步",
+      "orchestrator": "sync",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "run-customer-history-catchup",
+      "label": "顾客历史补齐",
+      "orchestrator": "sync",
+      "surface_role": "conditional",
+      "surface_note": "仅在夜间原始事实完成后继续补顾客派生层；pending 不代表主链异常"
+    },
+    {
+      "job_type": "nightly-conversation-review",
+      "label": "对话复盘",
+      "orchestrator": "sync",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "build-store-environment-memory",
+      "label": "门店环境记忆构建",
+      "orchestrator": "sync",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "build-report",
+      "label": "日报构建",
+      "orchestrator": "sync",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "audit-daily-report-window",
+      "label": "日报窗口对账巡检",
+      "orchestrator": "sync",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "build-external-brief",
+      "label": "外部情报简报",
+      "orchestrator": "sync",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "send-report",
+      "label": "门店日报投递",
+      "orchestrator": "delivery",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "send-five-store-daily-overview",
+      "label": "5店日报总览投递",
+      "orchestrator": "delivery",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "send-weekly-report",
+      "label": "5店周报投递",
+      "orchestrator": "delivery",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "send-monthly-report",
+      "label": "5店月报投递",
+      "orchestrator": "delivery",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "send-weekly-chart",
+      "label": "5店周图投递",
+      "orchestrator": "delivery",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "send-midday-brief",
+      "label": "午报投递",
+      "orchestrator": "delivery",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "send-reactivation-push",
+      "label": "唤回推送",
+      "orchestrator": "delivery",
+      "surface_role": "primary"
+    },
+    {
+      "job_type": "nightly-history-backfill",
+      "label": "统一历史补数",
+      "orchestrator": "sync",
+      "surface_role": "primary"
+    }
+  ],
+  "service_pollers": [
+    {
+      "poller": "scheduled-sync"
+    },
+    {
+      "poller": "scheduled-delivery"
+    },
+    {
+      "poller": "analysis"
+    }
+  ]
+}

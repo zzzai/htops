@@ -42,6 +42,9 @@ function actionPriority(severity: HetangAnalysisDiagnosticSignal["severity"]): s
 }
 
 function actionCategory(signalId: string): string {
+  if (signalId.startsWith("portfolio_")) {
+    return "总部经营";
+  }
   if (signalId.includes("member")) {
     return "会员运营";
   }
@@ -56,6 +59,10 @@ function actionTitle(signal: HetangAnalysisDiagnosticSignal): string {
       return "今天统一加钟话术和离店前延钟收口，班次负责人盯加钟承接，目标把加钟率拉回健康区间。";
     case "member_silence_risk":
       return "今天拉出沉默会员名单并完成分层回访，先抢高价值沉默客回流，目标把沉默率压下来。";
+    case "portfolio_store_risk":
+      return signal.recommendedFocus?.trim() || "总部先盯风险最高门店，先止住指标继续恶化。";
+    case "portfolio_revenue_gap":
+      return signal.recommendedFocus?.trim() || "总部先复盘强弱店差距，再复制头部门店有效做法。";
     default:
       return signal.recommendedFocus?.trim() || signal.finding.trim();
   }

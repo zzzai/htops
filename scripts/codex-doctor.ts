@@ -51,9 +51,21 @@ const workflowDoctor = renderCodexWorkflowPackDoctorReport({
     existsSync(path.join(repoRoot, ".omx", "commands", "ralplan.md")) &&
     existsSync(path.join(repoRoot, ".omx", "commands", "ralph.md")) &&
     existsSync(path.join(repoRoot, ".omx", "commands", "team.md")),
-  templateReady: existsSync(
-    path.join(repoRoot, ".omx", "templates", "approved-plan-template.md"),
-  ),
+  architecturePackReady:
+    existsSync(path.join(repoRoot, ".omx", "commands", "arch-review.md")) &&
+    existsSync(path.join(repoRoot, ".omx", "commands", "arch-design.md")) &&
+    existsSync(path.join(repoRoot, ".omx", "commands", "arch-retro.md")),
+  templateReady:
+    existsSync(path.join(repoRoot, ".omx", "templates", "approved-plan-template.md")) &&
+    existsSync(path.join(repoRoot, ".omx", "templates", "architecture-review-template.md")) &&
+    existsSync(path.join(repoRoot, ".omx", "templates", "architecture-design-template.md")) &&
+    existsSync(path.join(repoRoot, ".omx", "templates", "architecture-retro-template.md")),
+  promptPackReady:
+    existsSync(path.join(repoRoot, "docs", "prompts", "chief-system-ai-architect.md")) &&
+    existsSync(path.join(repoRoot, "docs", "prompts", "project-architecture-rules.md")) &&
+    existsSync(path.join(repoRoot, "docs", "prompts", "architecture-context-pack.md")) &&
+    existsSync(path.join(repoRoot, "docs", "reviews", "README.md")) &&
+    existsSync(path.join(repoRoot, "docs", "adr", "README.md")),
   docsReady: existsSync(path.join(repoRoot, "docs", "codex-workflow-layer.md")),
 });
 

@@ -12,12 +12,14 @@ type Args = {
   until?: string;
   logFile?: string;
   json: boolean;
+  diffSamples: number;
 };
 
 function parseArgs(argv: string[]): Args {
   const parsed: Args = {
     service: "htops-bridge.service",
     json: false,
+    diffSamples: 0,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -57,6 +59,13 @@ function parseArgs(argv: string[]): Args {
       case "--json":
         parsed.json = true;
         break;
+      case "--diff-samples":
+        if (!next) {
+          throw new Error("--diff-samples requires a value");
+        }
+        parsed.diffSamples = Number(next);
+        index += 1;
+        break;
       default:
         throw new Error(`Unknown argument: ${current}`);
     }
@@ -95,7 +104,9 @@ async function main(): Promise<void> {
   const events = lines
     .map((line) => extractRouteCompareEvent(line))
     .filter((event): event is NonNullable<typeof event> => event !== null);
-  const summary = summarizeRouteCompareEvents(events);
+  const summary = summarizeRouteCompareEvents(events, {
+    diffSampleLimit: args.diffSamples,
+  });
   if (args.json) {
     console.log(JSON.stringify(summary, null, 2));
     return;

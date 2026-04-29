@@ -1,6 +1,13 @@
+import { Pool } from "pg";
 import { runCommandWithTimeout } from "../src/command-runner.js";
+import { HetangConversationSemanticStateService } from "../src/app/conversation-semantic-state-service.js";
 import { createHetangMessageEntryService } from "../src/app/message-entry-service.js";
+import { HetangSemanticQualityService } from "../src/app/semantic-quality-service.js";
+import { HetangXiaohongshuLinkService } from "../src/app/xiaohongshu-link-service.js";
 import { createHetangBridgeServer } from "../src/bridge/server.js";
+import { sendReportMessage } from "../src/notify.js";
+import { HetangConversationSemanticStateStore } from "../src/store/conversation-semantic-state-store.js";
+import { HetangSemanticExecutionAuditStore } from "../src/store/semantic-execution-audit-store.js";
 import { createHetangOpsRuntime } from "../src/runtime.js";
 import {
   loadStandaloneHetangConfig,
@@ -100,6 +107,21 @@ async function main(): Promise<void> {
     runCommandWithTimeout,
     poolRole: "app",
   });
+  const sidecarPool = new Pool({
+    connectionString: config.database.url,
+    allowExitOnIdle: true,
+    max: Math.max(1, Math.min(config.database.queryPoolMax, 2)),
+  });
+  const semanticStateStore = new HetangConversationSemanticStateStore(sidecarPool);
+  await semanticStateStore.initialize();
+  const semanticQualityAuditStore = new HetangSemanticExecutionAuditStore(sidecarPool);
+  await semanticQualityAuditStore.initialize();
+  const conversationSemanticStateService = new HetangConversationSemanticStateService({
+    store: semanticStateStore,
+  });
+  const semanticQualityService = new HetangSemanticQualityService({
+    store: semanticQualityAuditStore,
+  });
   const warmupStartedAt = Date.now();
   try {
     await runtime.listEmployeeBindings("wecom");
@@ -112,6 +134,19 @@ async function main(): Promise<void> {
     config,
     runtime,
     logger,
+    conversationSemanticStateService,
+    semanticQualityService,
+    xiaohongshuLinkService: new HetangXiaohongshuLinkService({
+      config,
+      runCommandWithTimeout,
+      logger,
+    }),
+    deliverNotificationMessage: async ({ notification, message }) =>
+      await sendReportMessage({
+        notification,
+        message,
+        runCommandWithTimeout,
+      }),
   });
   const server = createHetangBridgeServer({
     token: args.token,
@@ -130,6 +165,7 @@ async function main(): Promise<void> {
     console.log(`[htops-bridge] received ${signal}, stopping`);
     await server.close();
     await runtime.close();
+    await sidecarPool.end();
     process.exit(0);
   };
 

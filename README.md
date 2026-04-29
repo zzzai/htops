@@ -2,7 +2,26 @@
 
 > Fast enough for realtime chat. Deterministic enough for business truth. Narrow enough to evolve safely.
 
-This project syncs five Hetang stores into PostgreSQL, keeps raw API audit data, builds daily operating reports, and delivers summaries through configurable messaging adapters such as WeCom.
+Hetang Ops is an AI-native operating intelligence infrastructure for physical-store operations. It does not treat AI as a chat wrapper around reports. It treats AI as a bounded operating layer on top of a deterministic business-truth core: business facts are synchronized into PostgreSQL, transformed into a local serving layer, and then exposed through semantic understanding, capability routing, async analysis, and business-facing decision surfaces.
+
+In practical terms, the system is built around one thesis:
+
+`Deterministic business truth + semantic routing + bounded AI agents + execution feedback loop`
+
+The goal is not to generate prettier text. The goal is to turn raw operating data into a controllable decision engine for HQ and store execution.
+
+## Project Thesis
+
+The long-term direction of this repo is:
+
+1. `Build a local business-truth kernel`
+   Every serious operating judgment should rest on local facts, not on a remote model's guess.
+2. `Put a semantic operating system on top of it`
+   Natural-language inputs should be recognized as intent, routed as capabilities, and executed through safe owner paths.
+3. `Use bounded AI agents where cognition matters`
+   AI should do semantic interpretation, capability choice, async diagnosis, weak-signal explanation, and learning-loop optimization.
+4. `Close the loop back into execution`
+   The system should not stop at "answer generation". It should support action selection, delivery, review, and future correction.
 
 ## Architecture
 
@@ -71,6 +90,136 @@ flowchart LR
 - `Analysis` can be richer, but it must stay bounded and fact-first.
 - `Capability Graph` is the canonical routing surface for new query and report work.
 - `Reply Guard` is the last trust barrier, not the main router.
+- `AI` is a decision-layer amplifier, not the source of business truth.
+
+## AI-Native Direction
+
+htops is not trying to be a free-form chatbot bolted onto reports. The intended direction is an AI-native operating intelligence stack with three stable layers:
+
+1. `Deterministic core`
+   Raw ingestion, normalization, PostgreSQL facts, serving views, schedule control, report readiness, and delivery state remain the hard-truth layer.
+2. `Bounded AI harness`
+   Semantic front door, capability routing, lane selection, async analysis, and quality review let AI participate only through explicit, observable paths.
+3. `Business output surfaces`
+   Reports, HQ summaries, customer-growth actions, query answers, and weak-signal explanations are treated as outputs of the operating kernel, not the kernel itself.
+
+This is why the project uses an Ontos-lite shape instead of a heavy ontology runtime:
+
+`Text -> Semantic Intent -> Capability Graph -> Serving Semantic Layer -> Safe Execution -> Answer / Action`
+
+The system has a semantic skeleton, but truth still lands in the local fact layer and deterministic execution path. In other words: the repo is AI-native in interaction and cognition, but fact-native in truth and execution.
+
+### Current AI Footprint
+
+AI is already used in four meaningful places:
+
+1. `Semantic Intent`
+   Natural-language inputs are classified into bounded lanes such as `meta`, `query`, and `analysis`, instead of sending every message to one general model.
+2. `Capability Graph`
+   Query and runtime-render abilities are selected through an explicit capability graph rather than ad-hoc branching.
+3. `Async Analysis Lane`
+   Heavier reasoning runs out of band in the analysis worker, which keeps the primary execution path fast and deterministic.
+4. `Semantic Quality Loop`
+   Failures, review findings, lane observability, and semantic audits create a feedback loop for improving prompts, routing, and capability coverage over time.
+
+### What Makes It AI-Native
+
+The repo should be thought of as AI-native because:
+
+1. It has a `semantic front door`
+   Inputs are not treated as plain commands. They are interpreted as intent.
+2. It has a `capability router`
+   Work is dispatched through a capability graph rather than one undifferentiated model call.
+3. It has `bounded agents`
+   Async analysis and review paths already behave like constrained agents with clear execution roles.
+4. It has a `learning loop`
+   Semantic quality, review, and route drift are first-class signals for improving system behavior.
+5. It has a `truth boundary`
+   AI can think, explain, compare, and prioritize, but cannot silently overwrite business fact.
+
+### AI Framework Shape
+
+The project's AI flavor is best understood through three terms:
+
+1. `Bounded AI Harness`
+   AI is orchestrated through explicit workers, timeouts, fallbacks, and owner modules. It does not directly own truth.
+2. `Ontos-lite`
+   The repo keeps a minimal semantic structure through semantic intent, capability graph, serving semantics, semantic state, and execution audit without introducing a second ontology runtime.
+3. `Bounded AI Agent`
+   Agents here are not global autonomous operators. They are constrained role-players that do question understanding, capability selection, async diagnosis, weak-signal explanation, and quality review.
+
+### Data vs Knowledge Boundary
+
+This repo does support knowledge-driven answers, but it does **not** treat all operating data as a knowledge base.
+
+The architecture boundary is:
+
+- structured business facts stay in PostgreSQL / serving queries / metric semantics
+- rules, SOPs, policy, training, and metric definitions belong in the knowledge layer
+- the model/agent layer interprets the question, chooses tools, combines query results with retrieved knowledge, and produces the final explanation
+
+In short:
+
+`database + metric semantic layer + knowledge base + bounded agent + permission audit`
+
+This is the intended operating-intelligence stack for htops, not a pure vector-RAG chatbot.
+
+See also:
+
+- `docs/adr/2026-04-29-structured-data-knowledge-base-agent-boundary.md`
+
+### Target Form
+
+The target form is not "AI writes store reports". The target form is:
+
+- `Semantic Operating System` for store and HQ intent
+- `Capability-driven execution graph` for bounded action and answer paths
+- `Async cognitive layer` for heavier diagnosis and synthesis
+- `Quality loop` that continuously upgrades prompts, routes, and capability coverage
+- `Execution feedback loop` that grounds future AI behavior in real outcomes
+
+## Raising AI Usage And Efficiency
+
+The highest-leverage way to increase AI usage is not to spray models across the codebase. It is to deepen AI where it compounds:
+
+1. `Make the semantic front door stronger`
+   Improve semantic intent recognition, multi-turn slot inheritance, and conversation semantic state so AI can understand what the user is actually trying to do before execution starts.
+2. `Expand the Capability Graph`
+   Add more HQ, customer-growth, action-execution, and industry-context capabilities so AI selects better operating paths instead of producing generic language.
+3. `Increase AI density in the analysis worker`
+   Put richer diagnosis, explanation, and strategy synthesis into the async analysis lane where latency is acceptable and deterministic truth can still be injected as evidence.
+4. `Strengthen the semantic quality loop`
+   Turn failures, mismatches, and low-confidence outputs into sample-driven routing, prompt, and capability upgrades instead of manual guesswork.
+5. `Keep AI lanes specialized`
+   Use separate lanes for cheap summaries, semantic fallback, customer-growth JSON work, premium analysis, and offline review so usage can go up without destroying latency or cost.
+
+### Efficiency Rules
+
+AI usage should increase under these rules:
+
+1. `Do not move AI into raw fact ingestion`
+   `src/client.ts`, `src/normalize.ts`, `src/sync.ts`, and the fact-writing path should remain deterministic.
+2. `Use AI where interpretation matters`
+   Semantic intent, capability selection, analysis synthesis, weak-signal explanation, and quality review are the right places.
+3. `Prefer async analysis for heavy thinking`
+   Richer business diagnosis should accumulate in the analysis worker, not in the latency-sensitive main query path.
+4. `Treat AI as an optimizer of decision surfaces`
+   The goal is not more model calls. The goal is better HQ and store-level operating judgment with lower noise and higher trust.
+
+### Near-Term AI-Native Path
+
+The practical path to a more AI-native system is:
+
+1. `P0`
+   Strengthen `Semantic Intent` and conversation semantic state so multi-turn operating asks stop falling back to shallow routing.
+2. `P1`
+   Expand the `Capability Graph` to cover more HQ decision surfaces, customer-growth actions, and bounded industry-context reads.
+3. `P2`
+   Turn the analysis worker and semantic quality loop into a real learning system where failures, review outcomes, and action results improve future AI execution.
+
+Expanded roadmap:
+
+- `docs/plans/2026-04-29-ai-native-enhancement-roadmap.md`
 
 ## Project Boundary
 

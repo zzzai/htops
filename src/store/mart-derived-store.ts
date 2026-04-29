@@ -5,6 +5,7 @@ import type {
   DailyStoreAlert,
   DailyStoreMetrics,
   DailyStoreReport,
+  HetangReportDeliveryUpgradeEvent,
   MemberCurrentRecord,
   MemberReactivationFeatureRecord,
   MemberReactivationFeedbackRecord,
@@ -108,10 +109,15 @@ type MartDerivedLegacyStore = {
     sentAt: string;
     sendStatus: string;
   }) => Promise<void>;
+  recordReportDeliveryUpgrade: (params: HetangReportDeliveryUpgradeEvent) => Promise<void>;
   getDailyReport: (
     orgId: string,
     bizDate: string,
   ) => Promise<(DailyStoreReport & { sentAt?: string | null; sendStatus?: string | null }) | null>;
+  listRecentReportDeliveryUpgrades: (params?: {
+    since?: string;
+    limit?: number;
+  }) => Promise<HetangReportDeliveryUpgradeEvent[]>;
   listStoreManagerDailyKpiByDateRange: (
     orgId: string,
     startBizDate: string,
@@ -269,8 +275,16 @@ export class HetangMartDerivedStore {
     return this.legacy.markReportSent(params);
   }
 
+  recordReportDeliveryUpgrade(params: HetangReportDeliveryUpgradeEvent) {
+    return this.legacy.recordReportDeliveryUpgrade(params);
+  }
+
   getDailyReport(orgId: string, bizDate: string) {
     return this.legacy.getDailyReport(orgId, bizDate);
+  }
+
+  listRecentReportDeliveryUpgrades(params?: { since?: string; limit?: number }) {
+    return this.legacy.listRecentReportDeliveryUpgrades(params);
   }
 
   listStoreManagerDailyKpiByDateRange(orgId: string, startBizDate: string, endBizDate: string) {

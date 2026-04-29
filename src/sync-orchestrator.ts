@@ -1,13 +1,17 @@
 import { listDueScheduledJobs } from "./schedule.js";
+import { resolveMonthDateRange } from "./monthly-report.js";
 import type { HetangOpsStore } from "./store.js";
 import type {
+  HetangDailyReportAuditSummary,
   DailyStoreReport,
   HetangLogger,
   HetangNotificationTarget,
   HetangOpsConfig,
+  ScheduledJobOrchestrator,
 } from "./types.js";
 
-const SCHEDULED_RUNNER_ADVISORY_LOCK_KEY = 42_060_407;
+const SCHEDULED_SYNC_RUNNER_ADVISORY_LOCK_KEY = 42_060_407;
+const SCHEDULED_DELIVERY_RUNNER_ADVISORY_LOCK_KEY = 42_060_408;
 
 type ExternalBriefIssue = {
   issueDate: string;
@@ -21,7 +25,7 @@ export type HetangSyncOrchestratorDeps = {
   syncStores: (params: { now?: Date; publishAnalytics?: boolean }) => Promise<string[]>;
   runNightlyHistoryBackfill: (
     now: Date,
-    options?: { publishAnalytics?: boolean },
+    options?: { publishAnalytics?: boolean; maxPasses?: number; maxPlans?: number },
   ) => Promise<string[]>;
   runNightlyApiHistoryDepthProbe: (now: Date) => Promise<string[]>;
   publishNightlyServingViews: (now: Date) => Promise<void>;
@@ -29,10 +33,19 @@ export type HetangSyncOrchestratorDeps = {
     bizDate?: string;
     now?: Date;
   }) => Promise<{ lines: string[]; allComplete: boolean }>;
+  runNightlyConversationReview: (now: Date) => Promise<string[]>;
+  buildAllStoreEnvironmentMemory: (params: {
+    bizDate?: string;
+    now?: Date;
+  }) => Promise<string[]>;
   buildAllReports: (params: {
     bizDate?: string;
     now?: Date;
   }) => Promise<DailyStoreReport[]>;
+  auditDailyReportWindow: (params: {
+    bizDate?: string;
+    now?: Date;
+  }) => Promise<{ summary: HetangDailyReportAuditSummary; lines: string[] }>;
   buildExternalBriefIssue: (params: {
     now: Date;
     deliver: boolean;
@@ -45,6 +58,22 @@ export type HetangSyncOrchestratorDeps = {
     bizDate?: string;
     now?: Date;
   }) => Promise<{ lines: string[]; allSent: boolean }>;
+  sendFiveStoreDailyOverview: (params: {
+    bizDate?: string;
+    now?: Date;
+  }) => Promise<string>;
+  sendWeeklyReport: (params: {
+    weekEndBizDate?: string;
+    now?: Date;
+  }) => Promise<string>;
+  sendMonthlyReport?: (params: {
+    month?: string;
+    now?: Date;
+  }) => Promise<string>;
+  sendWeeklyChartImage: (params: {
+    weekEndBizDate?: string;
+    now?: Date;
+  }) => Promise<string>;
   sendNotificationMessage: (params: {
     notification: HetangNotificationTarget;
     message: string;
@@ -169,22 +198,84 @@ function buildSharedReportAnnouncementMessage(bizDate: string, storeCount: numbe
   );
 }
 
+function isFinalReportDeliveryState(
+  existing: { sentAt?: string | null; sendStatus?: string | null } | null,
+  line: string | null,
+): boolean {
+  if (existing?.sentAt && existing.sendStatus === "sent") {
+    return true;
+  }
+  if (!line) {
+    return false;
+  }
+  return (
+    line.endsWith(": report sent") ||
+    line.includes(": notification disabled by control tower")
+  );
+}
+
+function normalizeScheduledOrchestrators(
+  orchestrators?: ScheduledJobOrchestrator[],
+): ScheduledJobOrchestrator[] {
+  if (!orchestrators || orchestrators.length === 0) {
+    return ["sync", "delivery"];
+  }
+  const normalized = Array.from(
+    new Set(
+      orchestrators.filter(
+        (entry): entry is ScheduledJobOrchestrator =>
+          entry === "sync" || entry === "delivery",
+      ),
+    ),
+  );
+  return normalized.length > 0 ? normalized : ["sync", "delivery"];
+}
+
+function resolveScheduledRunnerLockKeys(
+  orchestrators: ScheduledJobOrchestrator[],
+): number[] {
+  return orchestrators.map((orchestrator) =>
+    orchestrator === "sync"
+      ? SCHEDULED_SYNC_RUNNER_ADVISORY_LOCK_KEY
+      : SCHEDULED_DELIVERY_RUNNER_ADVISORY_LOCK_KEY,
+  );
+}
+
+function formatScheduledOrchestratorScope(orchestrators: ScheduledJobOrchestrator[]): string {
+  return orchestrators.join("+");
+}
+
 export class HetangSyncOrchestrator {
   constructor(private readonly deps: HetangSyncOrchestratorDeps) {}
 
-  async runDueJobs(now = new Date()): Promise<string[]> {
+  async runDueJobs(
+    now = new Date(),
+    options: { orchestrators?: ScheduledJobOrchestrator[] } = {},
+  ): Promise<string[]> {
     const store = await this.deps.getStore();
-    const lockAcquired = await store.tryAdvisoryLock(SCHEDULED_RUNNER_ADVISORY_LOCK_KEY);
-    if (!lockAcquired) {
-      this.deps.logger.debug?.("hetang-ops: scheduled runner lease already held, skipping");
-      return [];
+    const orchestrators = normalizeScheduledOrchestrators(options.orchestrators);
+    const lockKeys = resolveScheduledRunnerLockKeys(orchestrators);
+    const acquiredLockKeys: number[] = [];
+    for (const lockKey of lockKeys) {
+      const lockAcquired = await store.tryAdvisoryLock(lockKey);
+      if (!lockAcquired) {
+        this.deps.logger.debug?.(
+          `hetang-ops: scheduled runner lease already held for ${formatScheduledOrchestratorScope(orchestrators)}, skipping`,
+        );
+        for (const acquiredLockKey of acquiredLockKeys.reverse()) {
+          await store.releaseAdvisoryLock(acquiredLockKey);
+        }
+        return [];
+      }
+      acquiredLockKeys.push(lockKey);
     }
 
     try {
+      const completedRunKeys = await store.listCompletedRunKeys();
       const jobs = listDueScheduledJobs({
         now,
         timeZone: this.deps.config.timeZone,
-        completedRunKeys: await store.listCompletedRunKeys(),
+        completedRunKeys,
         businessDayCutoffLocalTime: this.deps.config.sync.businessDayCutoffLocalTime,
         syncTime: this.deps.config.sync.runAtLocalTime,
         syncWindowStart: this.deps.config.sync.accessWindowStartLocalTime,
@@ -192,15 +283,29 @@ export class HetangSyncOrchestrator {
         historyCatchupTime: this.deps.config.sync.historyCatchupAtLocalTime,
         buildReportTime: this.deps.config.reporting.buildAtLocalTime,
         sendReportTime: this.deps.config.reporting.sendAtLocalTime,
+        fiveStoreDailyOverviewTime: this.deps.config.reporting.fiveStoreDailyOverviewAtLocalTime,
+        weeklyReportTime: this.deps.config.reporting.weeklyReportAtLocalTime,
+        weeklyReportStartDate: this.deps.config.reporting.weeklyReportStartDate,
+        monthlyReportTime: this.deps.config.reporting.monthlyReportAtLocalTime,
+        monthlyReportStartMonth: this.deps.config.reporting.monthlyReportStartMonth,
+        weeklyChartTime: this.deps.config.reporting.weeklyChartAtLocalTime,
+        weeklyChartStartDate: this.deps.config.reporting.weeklyChartStartDate,
         middayBriefTime: this.deps.config.reporting.middayBriefAtLocalTime,
         reactivationPushTime: this.deps.config.reporting.reactivationPushAtLocalTime,
         sendReportEnabled: this.deps.config.reporting.sendReportEnabled,
+        sendFiveStoreDailyOverviewEnabled:
+          this.deps.config.reporting.sendFiveStoreDailyOverviewEnabled,
+        sendWeeklyReportEnabled: this.deps.config.reporting.sendWeeklyReportEnabled,
+        sendMonthlyReportEnabled: this.deps.config.reporting.sendMonthlyReportEnabled,
+        sendWeeklyChartEnabled: this.deps.config.reporting.sendWeeklyChartEnabled,
         sendMiddayBriefEnabled: this.deps.config.reporting.sendMiddayBriefEnabled,
         sendReactivationPushEnabled: this.deps.config.reporting.sendReactivationPushEnabled,
         externalIntelligenceEnabled: this.deps.config.externalIntelligence.enabled,
         externalIntelligenceTime: this.deps.config.reporting.buildAtLocalTime,
         syncEnabled: this.deps.config.sync.enabled,
+        historyBackfillEnabled: this.deps.config.sync.historyBackfillEnabled,
         reportingEnabled: this.deps.config.reporting.enabled,
+        orchestrators,
       });
 
       const lines: string[] = [];
@@ -216,18 +321,6 @@ export class HetangSyncOrchestrator {
             "sync",
             syncStartedAtMs,
             summarizeNightlySyncLines(syncLines),
-          );
-
-          const backfillStartedAtMs = Date.now();
-          const backfillLines = await this.deps.runNightlyHistoryBackfill(now, {
-            publishAnalytics: false,
-          });
-          lines.push(...backfillLines);
-          logNightlyPhase(
-            this.deps.logger,
-            "backfill",
-            backfillStartedAtMs,
-            summarizeNightlyBackfillLines(backfillLines),
           );
 
           const probeStartedAtMs = Date.now();
@@ -247,6 +340,28 @@ export class HetangSyncOrchestrator {
             `hetang-ops: nightly window complete ${formatDurationMs(nightlyStartedAtMs)} lines=${lines.length}`,
           );
           await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+          completedRunKeys.add(`${job.jobType}:${job.runKey}`);
+          continue;
+        }
+
+        if (job.jobType === "nightly-history-backfill") {
+          const backfillStartedAtMs = Date.now();
+          const backfillLines = await this.deps.runNightlyHistoryBackfill(now, {
+            publishAnalytics: true,
+            maxPasses: 1,
+            maxPlans: 1,
+          });
+          lines.push(...backfillLines);
+          logNightlyPhase(
+            this.deps.logger,
+            "backfill",
+            backfillStartedAtMs,
+            summarizeNightlyBackfillLines(backfillLines),
+          );
+          if (backfillLines.length === 0) {
+            await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+            completedRunKeys.add(`${job.jobType}:${job.runKey}`);
+          }
           continue;
         }
 
@@ -258,14 +373,70 @@ export class HetangSyncOrchestrator {
           lines.push(...catchupResult.lines);
           if (catchupResult.allComplete) {
             await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+            completedRunKeys.add(`${job.jobType}:${job.runKey}`);
+          }
+          continue;
+        }
+
+        if (job.jobType === "nightly-conversation-review") {
+          const reviewLines = await this.deps.runNightlyConversationReview(now);
+          lines.push(...reviewLines);
+          await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+          completedRunKeys.add(`${job.jobType}:${job.runKey}`);
+          continue;
+        }
+
+        if (job.jobType === "build-store-environment-memory") {
+          const environmentMemoryLines = await this.deps.buildAllStoreEnvironmentMemory({
+            bizDate: job.runKey,
+            now,
+          });
+          lines.push(...environmentMemoryLines);
+          if (!environmentMemoryLines.some((line) => line.includes(": environment memory build failed"))) {
+            await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+            completedRunKeys.add(`${job.jobType}:${job.runKey}`);
           }
           continue;
         }
 
         if (job.jobType === "build-report") {
+          if (!completedRunKeys.has(`build-store-environment-memory:${job.runKey}`)) {
+            lines.push(`${job.runKey} build report waiting - environment memory not ready`);
+            continue;
+          }
           const reports = await this.deps.buildAllReports({ bizDate: job.runKey, now });
           lines.push(...reports.map((report) => summarizeSyncResult(report.storeName, report)));
           await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+          completedRunKeys.add(`${job.jobType}:${job.runKey}`);
+          continue;
+        }
+
+        if (job.jobType === "audit-daily-report-window") {
+          if (!completedRunKeys.has(`build-report:${job.runKey}`)) {
+            lines.push(`${job.runKey} report audit waiting - build-report not completed`);
+            continue;
+          }
+          try {
+            const auditResult = await this.deps.auditDailyReportWindow({
+              bizDate: job.runKey,
+              now,
+            });
+            await store.setScheduledJobState(
+              job.jobType,
+              job.runKey,
+              auditResult.summary as unknown as Record<string, unknown>,
+              now.toISOString(),
+            );
+            lines.push(...auditResult.lines);
+            await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+            completedRunKeys.add(`${job.jobType}:${job.runKey}`);
+          } catch (error) {
+            const message = summarizeUnknownError(error);
+            this.deps.logger.warn(
+              `hetang-ops: daily report audit failed for ${job.runKey}: ${message}`,
+            );
+            lines.push(`${job.runKey} report audit failed - ${message}`);
+          }
           continue;
         }
 
@@ -286,6 +457,7 @@ export class HetangSyncOrchestrator {
             lines.push(`HQ 外部情报 ${job.runKey}: build failed - ${message}`);
           }
           await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+          completedRunKeys.add(`${job.jobType}:${job.runKey}`);
           continue;
         }
 
@@ -294,6 +466,7 @@ export class HetangSyncOrchestrator {
           lines.push(...middayResult.lines);
           if (middayResult.allSent) {
             await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+            completedRunKeys.add(`${job.jobType}:${job.runKey}`);
           }
           continue;
         }
@@ -306,19 +479,20 @@ export class HetangSyncOrchestrator {
           lines.push(...reactivationResult.lines);
           if (reactivationResult.allSent) {
             await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+            completedRunKeys.add(`${job.jobType}:${job.runKey}`);
           }
           continue;
         }
 
         if (job.jobType === "send-report") {
           let allSent = true;
+          let allFinalized = true;
           const activeStores = this.deps.config.stores.filter((storeEntry) => storeEntry.isActive);
           const existingReports = new Map(
             await Promise.all(
-              activeStores.map(async (entry) => [
-                entry.orgId,
-                await store.getDailyReport(entry.orgId, job.runKey),
-              ]),
+              activeStores.map(async (entry) =>
+                [entry.orgId, await store.getDailyReport(entry.orgId, job.runKey)] as const,
+              ),
             ),
           );
           const sharedAnnouncementTarget = resolveSharedReportAnnouncementTarget(this.deps.config);
@@ -344,17 +518,19 @@ export class HetangSyncOrchestrator {
           for (const entry of activeStores) {
             try {
               const existing = existingReports.get(entry.orgId) ?? null;
-              if (existing?.sentAt) {
+              if (existing?.sentAt && existing.sendStatus === "sent") {
                 lines.push(`${entry.storeName}: already sent`);
                 continue;
               }
-              lines.push(
-                await this.deps.sendReport({
-                  orgId: entry.orgId,
-                  bizDate: job.runKey,
-                  now,
-                }),
-              );
+              const line = await this.deps.sendReport({
+                orgId: entry.orgId,
+                bizDate: job.runKey,
+                now,
+              });
+              lines.push(line);
+              if (!isFinalReportDeliveryState(existing, line)) {
+                allFinalized = false;
+              }
             } catch (error) {
               allSent = false;
               const message = summarizeUnknownError(error);
@@ -364,15 +540,132 @@ export class HetangSyncOrchestrator {
               lines.push(`${entry.storeName}: send failed - ${message}`);
             }
           }
-          if (allSent) {
+          if (allSent && allFinalized) {
             await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+            completedRunKeys.add(`${job.jobType}:${job.runKey}`);
           }
+          continue;
+        }
+
+        if (job.jobType === "send-weekly-report") {
+          if (!completedRunKeys.has(`send-report:${job.runKey}`)) {
+            lines.push(`${job.runKey} weekly report waiting - daily reports not fully sent yet`);
+            continue;
+          }
+          try {
+            lines.push(
+              await this.deps.sendWeeklyReport({
+                weekEndBizDate: job.runKey,
+                now,
+              }),
+            );
+            await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+            completedRunKeys.add(`${job.jobType}:${job.runKey}`);
+          } catch (error) {
+            const message = summarizeUnknownError(error);
+            this.deps.logger.warn(
+              `hetang-ops: send weekly report failed for ${job.runKey}: ${message}`,
+            );
+            lines.push(`${job.runKey} weekly report failed - ${message}`);
+          }
+          continue;
+        }
+
+        if (job.jobType === "send-five-store-daily-overview") {
+          if (!completedRunKeys.has(`send-report:${job.runKey}`)) {
+            lines.push(`${job.runKey} five-store daily overview waiting - daily reports not fully sent yet`);
+            continue;
+          }
+          try {
+            const line = await this.deps.sendFiveStoreDailyOverview({
+              bizDate: job.runKey,
+              now,
+            });
+            lines.push(line);
+            const terminalWithoutConfirmation =
+              !line.includes(": waiting -") &&
+              !line.includes("preview sent to ZhangZhen") &&
+              !line.includes(": pending confirmation");
+            if (terminalWithoutConfirmation) {
+              await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+              completedRunKeys.add(`${job.jobType}:${job.runKey}`);
+            }
+          } catch (error) {
+            const message = summarizeUnknownError(error);
+            this.deps.logger.warn(
+              `hetang-ops: send five-store daily overview failed for ${job.runKey}: ${message}`,
+            );
+            lines.push(`${job.runKey} five-store daily overview failed - ${message}`);
+          }
+          continue;
+        }
+
+        if (job.jobType === "send-monthly-report") {
+          const monthEndBizDate = resolveMonthDateRange(job.runKey).endBizDate;
+          if (!completedRunKeys.has(`send-report:${monthEndBizDate}`)) {
+            lines.push(`${job.runKey} monthly report waiting - month-end daily reports not fully sent yet`);
+            continue;
+          }
+          if (!this.deps.sendMonthlyReport) {
+            lines.push(`${job.runKey} monthly report failed - missing sender`);
+            continue;
+          }
+          try {
+            lines.push(
+              await this.deps.sendMonthlyReport({
+                month: job.runKey,
+                now,
+              }),
+            );
+            await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+            completedRunKeys.add(`${job.jobType}:${job.runKey}`);
+          } catch (error) {
+            const message = summarizeUnknownError(error);
+            this.deps.logger.warn(
+              `hetang-ops: send monthly report failed for ${job.runKey}: ${message}`,
+            );
+            lines.push(`${job.runKey} monthly report failed - ${message}`);
+          }
+          continue;
+        }
+
+        if (job.jobType === "send-weekly-chart") {
+          const waitingOnWeeklyReport =
+            this.deps.config.reporting.sendWeeklyReportEnabled &&
+            !completedRunKeys.has(`send-weekly-report:${job.runKey}`);
+          if (waitingOnWeeklyReport) {
+            lines.push(`${job.runKey} weekly chart waiting - weekly report not fully sent yet`);
+            continue;
+          }
+          if (!completedRunKeys.has(`send-report:${job.runKey}`)) {
+            lines.push(`${job.runKey} weekly chart waiting - daily reports not fully sent yet`);
+            continue;
+          }
+          try {
+            lines.push(
+              await this.deps.sendWeeklyChartImage({
+                weekEndBizDate: job.runKey,
+                now,
+              }),
+            );
+            await store.markScheduledJobCompleted(job.jobType, job.runKey, now.toISOString());
+            completedRunKeys.add(`${job.jobType}:${job.runKey}`);
+          } catch (error) {
+            const message = summarizeUnknownError(error);
+            this.deps.logger.warn(
+              `hetang-ops: send weekly chart failed for ${job.runKey}: ${message}`,
+            );
+            lines.push(`${job.runKey} weekly chart failed - ${message}`);
+          }
+          continue;
         }
       }
 
       return lines;
     } finally {
-      await store.releaseAdvisoryLock(SCHEDULED_RUNNER_ADVISORY_LOCK_KEY);
+      for (const lockKey of acquiredLockKeys.reverse()) {
+        await store.releaseAdvisoryLock(lockKey);
+      }
     }
   }
 }

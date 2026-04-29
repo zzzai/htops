@@ -218,6 +218,7 @@ async function main(): Promise<void> {
         startBizDate: options.startBizDate,
         endBizDate: options.endBizDate,
         refreshViews: false,
+        storeConfig: config.stores.find((entry) => entry.orgId === orgId),
       });
       console.log(
         `[${storeName}] member reactivation strategies rebuilt for ${reactivationStrategyCount} days`,

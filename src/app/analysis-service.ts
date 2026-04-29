@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { resolveAiLaneConfig } from "../ai-lanes/resolver.js";
 import { buildHetangAnalysisOrchestrationPlan } from "./analysis-orchestration-plan.js";
 import { buildDeterministicBoundedAnalysisResult } from "./analysis-bounded-synthesis.js";
 import {
@@ -18,6 +19,7 @@ import { decodeHetangAnalysisScopeOrgId } from "../analysis-router.js";
 import { sendReportMessage, type CommandRunner } from "../notify.js";
 import { HetangOpsStore } from "../store.js";
 import type {
+  HetangActionPriority,
   HetangAnalysisDiagnosticBundle,
   HetangAnalysisEvidencePack,
   HetangAnalysisJob,
@@ -28,6 +30,45 @@ import type {
 } from "../types.js";
 
 const CREWAI_SIDECAR_TIMEOUT_MS = 180_000;
+
+function resolveAnalysisPremiumLaneRuntime(config: HetangOpsConfig): {
+  timeoutMs: number;
+  env: Record<string, string>;
+} {
+  if (!config.aiLanes["analysis-premium"]) {
+    return {
+      timeoutMs: CREWAI_SIDECAR_TIMEOUT_MS,
+      env: {},
+    };
+  }
+
+  const laneConfig = resolveAiLaneConfig(config, "analysis-premium");
+  const env: Record<string, string> = {
+    CREWAI_MODEL: laneConfig.model,
+    OPENAI_MODEL: laneConfig.model,
+    CREWAI_TIMEOUT_SECONDS: String(Math.max(1, Math.ceil(laneConfig.timeoutMs / 1000))),
+  };
+
+  if (laneConfig.reasoningMode === "off") {
+    env.CREWAI_REASONING_EFFORT = "";
+  } else {
+    env.CREWAI_REASONING_EFFORT = laneConfig.reasoningMode;
+  }
+
+  if (laneConfig.baseUrl) {
+    env.CREWAI_BASE_URL = laneConfig.baseUrl;
+    env.OPENAI_BASE_URL = laneConfig.baseUrl;
+  }
+  if (laneConfig.apiKey) {
+    env.CREWAI_API_KEY = laneConfig.apiKey;
+    env.OPENAI_API_KEY = laneConfig.apiKey;
+  }
+
+  return {
+    timeoutMs: laneConfig.timeoutMs,
+    env,
+  };
+}
 
 function summarizeReplyError(value: string): string {
   const trimmed = value.trim();
@@ -82,6 +123,10 @@ function resolveAnalysisActionCategory(title: string): string {
     return "财务经营";
   }
   return "经营复盘";
+}
+
+function resolveStructuredActionPriority(value: unknown): HetangActionPriority | undefined {
+  return value === "high" || value === "medium" || value === "low" ? value : undefined;
 }
 
 function resolveCrewAISidecarDir(): string {
@@ -228,13 +273,15 @@ function buildDiagnosticSignalsFallbackStageTrace(reason: string): HetangAnalysi
 function buildOrchestrationPlanStageTrace(params: {
   focusAreas: string[];
   priorityActions: string[];
+  decisionSteps: string[];
 }): HetangAnalysisOrchestrationStageTrace {
   return {
     stage: "orchestration_plan",
     status: "completed",
     detail:
       `focus=${params.focusAreas.slice(0, 2).join(",") || "none"}; ` +
-      `actions=${params.priorityActions.length}`,
+      `actions=${params.priorityActions.length}; ` +
+      `steps=${params.decisionSteps.length}`,
   };
 }
 
@@ -380,14 +427,17 @@ export class HetangAnalysisService {
   ) {}
 
   private resolveQueueAccessControlStore(store: HetangOpsStore): AnalysisQueueStore {
-    return typeof (store as { getQueueAccessControlStore?: unknown }).getQueueAccessControlStore ===
+    if (
+      typeof (store as { getQueueAccessControlStore?: unknown }).getQueueAccessControlStore !==
       "function"
-      ? (
-          store as {
-            getQueueAccessControlStore: () => AnalysisQueueStore;
-          }
-        ).getQueueAccessControlStore()
-      : store;
+    ) {
+      throw new Error("analysis-service requires store.getQueueAccessControlStore()");
+    }
+    return (
+      store as {
+        getQueueAccessControlStore: () => AnalysisQueueStore;
+      }
+    ).getQueueAccessControlStore();
   }
 
   private async getQueueStore(): Promise<AnalysisQueueStore> {
@@ -623,7 +673,7 @@ export class HetangAnalysisService {
         bizDate: job.endBizDate,
         category: structuredItem?.category || resolveAnalysisActionCategory(suggestion),
         title: suggestion,
-        priority: structuredItem?.priority || "medium",
+        priority: resolveStructuredActionPriority(structuredItem?.priority) ?? "medium",
         status: "proposed",
         sourceKind: "analysis",
         sourceRef: resolveAnalysisActionSourceRef(job.jobId, index),
@@ -716,6 +766,7 @@ export class HetangAnalysisService {
     const controlTowerSettings = await (await this.getQueueStore()).resolveControlTowerSettings(
       job.orgId,
     );
+    const analysisPremiumLane = resolveAnalysisPremiumLaneRuntime(this.deps.config);
     const reviewMode =
       typeof controlTowerSettings["analysis.reviewMode"] === "string"
         ? String(controlTowerSettings["analysis.reviewMode"])
@@ -734,7 +785,7 @@ export class HetangAnalysisService {
           job.endBizDate,
         ],
         {
-          timeoutMs: CREWAI_SIDECAR_TIMEOUT_MS,
+          timeoutMs: analysisPremiumLane.timeoutMs,
           cwd: sidecarDir,
           env: {
             ...process.env,
@@ -747,6 +798,7 @@ export class HetangAnalysisService {
             HETANG_ANALYSIS_EVIDENCE_MARKDOWN: evidencePack.markdown,
             HETANG_ANALYSIS_DIAGNOSTIC_JSON: JSON.stringify(diagnosticBundle),
             HETANG_ANALYSIS_ORCHESTRATION_PLAN_JSON: JSON.stringify(orchestrationPlan),
+            ...analysisPremiumLane.env,
             ...(reviewMode ? { CREWAI_REVIEW_MODE: reviewMode } : {}),
           },
         },

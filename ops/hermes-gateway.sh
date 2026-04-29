@@ -28,6 +28,7 @@ fi
 export HERMES_ENABLE_PROJECT_PLUGINS=true
 export HOME="${HETANG_HERMES_OS_HOME:-${HERMES_HOME_DIR}}"
 export HERMES_HOME="${HERMES_HOME_DIR}"
+export MEMOS_HOME="${HERMES_HOME_DIR}/memos-plugin"
 export PATH="${HERMES_HOME_BASE}/.local/bin:${PATH}"
 export PYTHONPATH="${ROOT_DIR}/hermes_overrides${PYTHONPATH:+:${PYTHONPATH}}"
 

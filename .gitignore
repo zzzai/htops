@@ -13,6 +13,7 @@ dist/
 .hermes/
 .hermes-runtime/
 .ops-logs/
+.worktrees/
 .codex
 .claude/settings.local.json
 

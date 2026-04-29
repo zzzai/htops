@@ -58,6 +58,9 @@ async function main(): Promise<void> {
     unrefTimers: false,
   });
 
+  if (!service.start) {
+    throw new Error("worker service start handler is unavailable");
+  }
   await service.start();
   console.log(
     `[hetang-worker] started mode=${args.mode} schedulePoll=${config.service.scheduledPollIntervalMs}ms analysisPoll=${config.service.analysisPollIntervalMs}ms`,
@@ -65,7 +68,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: NodeJS.Signals) => {
     console.log(`[hetang-worker] received ${signal}, stopping`);
-    await service.stop();
+    await service.stop?.();
     process.exit(0);
   };
 

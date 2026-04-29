@@ -17,7 +17,21 @@ const report = renderCodexWorkflowPackDoctorReport({
     has(".omx/commands/ralplan.md") &&
     has(".omx/commands/ralph.md") &&
     has(".omx/commands/team.md"),
-  templateReady: has(".omx/templates/approved-plan-template.md"),
+  architecturePackReady:
+    has(".omx/commands/arch-review.md") &&
+    has(".omx/commands/arch-design.md") &&
+    has(".omx/commands/arch-retro.md"),
+  templateReady:
+    has(".omx/templates/approved-plan-template.md") &&
+    has(".omx/templates/architecture-review-template.md") &&
+    has(".omx/templates/architecture-design-template.md") &&
+    has(".omx/templates/architecture-retro-template.md"),
+  promptPackReady:
+    has("docs/prompts/chief-system-ai-architect.md") &&
+    has("docs/prompts/project-architecture-rules.md") &&
+    has("docs/prompts/architecture-context-pack.md") &&
+    has("docs/reviews/README.md") &&
+    has("docs/adr/README.md"),
   docsReady: has("docs/codex-workflow-layer.md"),
 });
 

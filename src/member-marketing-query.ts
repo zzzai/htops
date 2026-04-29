@@ -34,6 +34,15 @@ type AggregateRow = {
   totalConsumeAmount: number;
 };
 
+type MemberCouponSnapshot = {
+  memberId: string;
+  memberName: string;
+  couponLabel: string;
+  sourceLabel: string;
+  isUsed: boolean;
+  expireTime?: string;
+};
+
 function round(value: number, digits = 2): number {
   const factor = 10 ** digits;
   return Math.round((value + Number.EPSILON) * factor) / factor;
@@ -124,6 +133,80 @@ function resolveLabels(raw: Record<string, unknown> | null): string[] {
       .filter(Boolean);
   }
   return [];
+}
+
+function normalizeCouponEntries(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(
+    (entry): entry is Record<string, unknown> => !!entry && typeof entry === "object" && !Array.isArray(entry),
+  );
+}
+
+function resolveCouponBool(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "1" || normalized === "used" || normalized === "yes";
+  }
+  return false;
+}
+
+function resolveCouponLabel(raw: Record<string, unknown>): string {
+  const candidates = [raw.Name, raw.CouponName, raw.Title, raw.TypeName]
+    .map((value) => (value === null || value === undefined ? "" : String(value).trim()))
+    .filter(Boolean);
+  return candidates[0] || "未命名券";
+}
+
+function resolveCouponSourceLabel(raw: Record<string, unknown>): string {
+  const candidates = [raw.Source, raw.Channel, raw.SourceName]
+    .map((value) => (value === null || value === undefined ? "" : String(value).trim()))
+    .filter(Boolean);
+  return candidates[0] || "未标注来源";
+}
+
+function parseCouponExpiryTime(raw: Record<string, unknown>): string | undefined {
+  const candidates = [raw.ExpireTime, raw.ExpiredAt, raw.ValidEndTime, raw.EndTime]
+    .map((value) => (value === null || value === undefined ? "" : String(value).trim()))
+    .filter(Boolean);
+  return candidates[0] || undefined;
+}
+
+function parseTimestampMs(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const normalized =
+    /[zZ]$/u.test(value) || /[+-]\d{2}:\d{2}$/u.test(value)
+      ? value.replace(" ", "T")
+      : `${value.replace(" ", "T")}Z`;
+  const timestamp = Date.parse(normalized);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function collectMemberCouponSnapshots(members: MemberCurrentRecord[]): MemberCouponSnapshot[] {
+  const snapshots: MemberCouponSnapshot[] = [];
+  for (const member of members) {
+    const raw = tryParseObject(member.rawJson);
+    for (const coupon of normalizeCouponEntries(raw?.Coupons)) {
+      snapshots.push({
+        memberId: member.memberId,
+        memberName: member.name,
+        couponLabel: resolveCouponLabel(coupon),
+        sourceLabel: resolveCouponSourceLabel(coupon),
+        isUsed: resolveCouponBool(coupon.IsUsed ?? coupon.Used ?? coupon.Status),
+        expireTime: parseCouponExpiryTime(coupon),
+      });
+    }
+  }
+  return snapshots;
 }
 
 function isHighValue(profile: CustomerProfile90dRow | undefined, member: MemberCurrentRecord): boolean {
@@ -328,6 +411,95 @@ function renderCouponBoundary(storeName: string): string {
   ].join("\n");
 }
 
+function renderCouponSnapshotBoundary(storeName: string): string {
+  return [
+    `${storeName}当前会员券包快照暂不可用`,
+    "- 当前会员原始快照里没有稳定的 Coupons 子结构，暂时不能严肃回答已用/未用/临期券数量。",
+    "- 如果后续 1.1 稳定返回 Coupons 明细，就可以补成券包快照查询。",
+  ].join("\n");
+}
+
+function renderCouponUsageSnapshot(params: {
+  storeName: string;
+  snapshotBizDate: string;
+  coupons: MemberCouponSnapshot[];
+}): string {
+  const used = params.coupons.filter((coupon) => coupon.isUsed);
+  const unused = params.coupons.filter((coupon) => !coupon.isUsed);
+  const usedMembers = new Set(used.map((coupon) => coupon.memberId));
+  const unusedMembers = new Set(unused.map((coupon) => coupon.memberId));
+  const usedByCoupon = new Map<string, number>();
+  for (const coupon of used) {
+    usedByCoupon.set(coupon.couponLabel, (usedByCoupon.get(coupon.couponLabel) ?? 0) + 1);
+  }
+  const topUsed = Array.from(usedByCoupon.entries())
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 3)
+    .map(([label, count]) => `${label} ${count} 张`)
+    .join("；");
+
+  return [
+    `${params.storeName} ${params.snapshotBizDate} 当前会员券包使用快照`,
+    `- 已用券 ${used.length} 张，涉及 ${usedMembers.size} 人`,
+    `- 未用券 ${unused.length} 张，涉及 ${unusedMembers.size} 人`,
+    topUsed ? `- 已用券Top: ${topUsed}` : "- 当前还没有已用券记录。",
+    "- 说明：这里只能回答当前券包快照，不能严肃确认“上次发的那一批券”的完整核销表现。",
+  ].join("\n");
+}
+
+function renderCouponExpirySnapshot(params: {
+  storeName: string;
+  snapshotBizDate: string;
+  coupons: MemberCouponSnapshot[];
+}): string {
+  const snapshotMs = parseTimestampMs(`${params.snapshotBizDate} 00:00:00`) ?? 0;
+  const sevenDaysMs = 7 * 86_400_000;
+  const expiring = params.coupons
+    .filter((coupon) => !coupon.isUsed)
+    .map((coupon) => ({
+      ...coupon,
+      expireMs: parseTimestampMs(coupon.expireTime),
+    }))
+    .filter(
+      (coupon) =>
+        coupon.expireMs !== null &&
+        coupon.expireMs >= snapshotMs &&
+        coupon.expireMs - snapshotMs <= sevenDaysMs,
+    );
+
+  const members = new Map<string, { memberName: string; count: number; earliestExpire?: string }>();
+  for (const coupon of expiring) {
+    const current =
+      members.get(coupon.memberId) ??
+      {
+        memberName: coupon.memberName,
+        count: 0,
+        earliestExpire: coupon.expireTime,
+      };
+    current.count += 1;
+    if (
+      coupon.expireTime &&
+      (!current.earliestExpire || coupon.expireTime < current.earliestExpire)
+    ) {
+      current.earliestExpire = coupon.expireTime;
+    }
+    members.set(coupon.memberId, current);
+  }
+
+  const topMembers = Array.from(members.values())
+    .sort((left, right) => right.count - left.count || left.memberName.localeCompare(right.memberName))
+    .slice(0, 3)
+    .map((entry) => `${entry.memberName} ${entry.count} 张${entry.earliestExpire ? `，最早 ${entry.earliestExpire}` : ""}`)
+    .join("；");
+
+  return [
+    `${params.storeName} ${params.snapshotBizDate} 当前会员券包临期快照`,
+    `- 7天内快过期未用券 ${expiring.length} 张，涉及 ${members.size} 人`,
+    topMembers ? `- 临期会员Top: ${topMembers}` : "- 当前没有7天内快过期未用券。",
+    "- 说明：这里只是当前券包快照，不代表完整发券批次表现。",
+  ].join("\n");
+}
+
 function renderSexBoundary(storeName: string): string {
   return [
     `${storeName}性别偏好分析暂未接通`,
@@ -352,7 +524,10 @@ export async function executeMemberMarketingQuery(params: {
 
   const [orgId] = params.effectiveOrgIds;
   const storeName = getStoreName(params.config, orgId);
-  if (/(优惠券|优惠|券)/u.test(params.intent.rawText) && /(回店|复到店|核销|回来|效果)/u.test(params.intent.rawText)) {
+  const isCouponAsk = /(优惠券|优惠|券)/u.test(params.intent.rawText);
+  const couponEffectAsk = /(回店|复到店|核销|回来|效果)/u.test(params.intent.rawText);
+  const couponSnapshotAsk = /(用了|用掉|没用|未用|过期|快过期)/u.test(params.intent.rawText);
+  if (isCouponAsk && couponEffectAsk) {
     return renderCouponBoundary(storeName);
   }
   if (/(女宾|男宾|男客|女客|性别)/u.test(params.intent.rawText) && /(项目|偏好|差异)/u.test(params.intent.rawText)) {
@@ -373,6 +548,24 @@ export async function executeMemberMarketingQuery(params: {
       })
     : [];
   const profileByMemberId = pickLatestProfileRows(profiles);
+  if (isCouponAsk && couponSnapshotAsk) {
+    const couponSnapshots = collectMemberCouponSnapshots(members);
+    if (couponSnapshots.length === 0) {
+      return renderCouponSnapshotBoundary(storeName);
+    }
+    if (/(过期|快过期)/u.test(params.intent.rawText)) {
+      return renderCouponExpirySnapshot({
+        storeName,
+        snapshotBizDate: reportBizDate,
+        coupons: couponSnapshots,
+      });
+    }
+    return renderCouponUsageSnapshot({
+      storeName,
+      snapshotBizDate: reportBizDate,
+      coupons: couponSnapshots,
+    });
+  }
 
   const enrichedRows: EnrichedMember[] = members.map((member) => {
     const raw = tryParseObject(member.rawJson);

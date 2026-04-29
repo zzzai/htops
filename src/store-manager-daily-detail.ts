@@ -1,6 +1,7 @@
 import { evaluateStoreBusinessScore } from "./business-score.js";
 import { HetangOpsStore } from "./store.js";
 import type {
+  ConsumeBillRecord,
   DailyStoreAlert,
   DailyGroupbuyPlatformMetric,
   DailyStoreMetrics,
@@ -12,6 +13,17 @@ type ClockBucket = "queue" | "selected" | "point" | "add";
 type AttendanceBucket = "strength" | "star" | "spa" | "ear" | "small";
 type ServiceBucket = "main" | "spa" | "ear" | "small";
 type PerformerBucket = "strength" | "star";
+
+type ParsedPayment = {
+  name: string;
+  amount: number;
+  paymentType: number | null;
+};
+
+type PaymentBreakdown = {
+  name: string;
+  amount: number;
+};
 
 type ClockBreakdown = {
   queue: number;
@@ -42,6 +54,7 @@ type StoreManagerDailyDetail = {
   totalRevenue: number;
   actualRevenue: number;
   cashPerformance: number;
+  otherPaymentBreakdown?: PaymentBreakdown[];
 };
 
 type ActionCandidateCategory =
@@ -106,6 +119,78 @@ function safeJsonParse(value: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function extractPayments(rawJson: string): ParsedPayment[] {
+  const raw = safeJsonParse(rawJson);
+  const payments = Array.isArray(raw.Payments) ? raw.Payments : [];
+  return payments.reduce<ParsedPayment[]>((list, entry) => {
+    if (!entry || typeof entry !== "object") {
+      return list;
+    }
+    const payment = entry as Record<string, unknown>;
+    const name = String(payment.Name ?? "").trim();
+    const amount = Number(payment.Amount ?? 0);
+    const paymentType = Number(payment.PaymentType);
+    if (!name || !Number.isFinite(amount)) {
+      return list;
+    }
+    list.push({
+      name,
+      amount,
+      paymentType: Number.isFinite(paymentType) ? paymentType : null,
+    });
+    return list;
+  }, []);
+}
+
+function isMemberPayment(payment: ParsedPayment): boolean {
+  return payment.paymentType === 3 || payment.name.includes("会员");
+}
+
+function isCashPayment(payment: ParsedPayment): boolean {
+  return payment.paymentType === 1 || payment.name.includes("现金");
+}
+
+function isWechatPayment(payment: ParsedPayment): boolean {
+  return payment.paymentType === 4 || payment.name.includes("微信");
+}
+
+function isAlipayPayment(payment: ParsedPayment): boolean {
+  return payment.paymentType === 11 || payment.name.includes("支付宝");
+}
+
+function isGroupbuyPayment(payment: ParsedPayment): boolean {
+  return ["美团", "美团团购", "抖音", "抖音团购"].includes(payment.name);
+}
+
+function isAlreadyRenderedPayment(payment: ParsedPayment): boolean {
+  return (
+    isMemberPayment(payment) ||
+    isCashPayment(payment) ||
+    isWechatPayment(payment) ||
+    isAlipayPayment(payment) ||
+    isGroupbuyPayment(payment)
+  );
+}
+
+function buildOtherPaymentBreakdown(consumeBills: ConsumeBillRecord[]): PaymentBreakdown[] {
+  const totals = new Map<string, number>();
+  for (const row of consumeBills) {
+    if (row.antiFlag) {
+      continue;
+    }
+    for (const payment of extractPayments(row.rawJson)) {
+      if (payment.amount <= 0 || isAlreadyRenderedPayment(payment)) {
+        continue;
+      }
+      totals.set(payment.name, round((totals.get(payment.name) ?? 0) + payment.amount));
+    }
+  }
+  return Array.from(totals.entries())
+    .map(([name, amount]) => ({ name, amount: round(amount) }))
+    .filter((entry) => entry.amount > 0)
+    .sort((left, right) => right.amount - left.amount || left.name.localeCompare(right.name));
 }
 
 function parseCurrentTechProfile(row: TechCurrentRecord): CurrentTechProfile {
@@ -391,6 +476,14 @@ function renderOfflineSubtotal(metrics: DailyStoreMetrics): string {
   return formatAmount(
     round(metrics.cashPaymentAmount + metrics.wechatPaymentAmount + metrics.alipayPaymentAmount),
   );
+}
+
+function renderOtherPaymentBreakdown(otherPaymentBreakdown: PaymentBreakdown[] | undefined): string | null {
+  const entries = (otherPaymentBreakdown ?? []).filter((entry) => entry.amount > 0);
+  if (entries.length === 0) {
+    return null;
+  }
+  return `其他支付：${entries.map((entry) => `${entry.name}${formatAmount(entry.amount)}元`).join(" + ")}`;
 }
 
 function stripStorePrefix(storeName: string): string {
@@ -925,6 +1018,7 @@ export async function buildStoreManagerDailyDetail(params: {
     params.metrics.cashPaymentAmount + params.metrics.wechatPaymentAmount + params.metrics.alipayPaymentAmount,
   );
   const cashPerformance = round(params.metrics.rechargeCash + onlineSubtotal + offlineSubtotal);
+  const otherPaymentBreakdown = buildOtherPaymentBreakdown(consumeBills);
 
   return {
     attendance,
@@ -938,6 +1032,7 @@ export async function buildStoreManagerDailyDetail(params: {
     totalRevenue: totalRevenue > 0 ? totalRevenue : round(params.metrics.serviceRevenue),
     actualRevenue: round(params.metrics.serviceRevenue),
     cashPerformance,
+    otherPaymentBreakdown,
   };
 }
 
@@ -957,6 +1052,7 @@ export function renderStoreManagerDailyReport(params: {
     metrics: params.metrics,
   });
   const supplementLines = buildSupplementConversionLines(params.metrics);
+  const otherPaymentLine = renderOtherPaymentBreakdown(params.detail.otherPaymentBreakdown);
 
   return renderMarkdownHardBreaks([
     title,
@@ -978,6 +1074,8 @@ export function renderStoreManagerDailyReport(params: {
     "",
     "【核心经营】",
     `主项总钟数：${formatAmount(params.detail.mainClockCount)}个`,
+    "口径：主项总钟数只含足道主项，不含SPA/采耳/小项",
+    `预估到店人数：${formatAmount(params.metrics.customerCount)}人`,
     `采耳钟数：${formatAmount(params.detail.earClockCount)}个`,
     `小项钟数：${formatAmount(params.detail.smallClockCount)}个`,
     `点钟率：${formatPercent(params.metrics.pointClockRate)}`,
@@ -990,6 +1088,7 @@ export function renderStoreManagerDailyReport(params: {
     `线上小计：${renderOnlineSubtotal(params.metrics.groupbuyPlatformBreakdown)}元`,
     `线下：${renderOfflineChannels(params.metrics)}`,
     `线下小计：${renderOfflineSubtotal(params.metrics)}元`,
+    ...(otherPaymentLine ? [otherPaymentLine] : []),
     `营收：总${formatAmount(params.detail.totalRevenue)}元 / 实收${formatAmount(
       params.detail.actualRevenue,
     )}元`,

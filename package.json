@@ -17,9 +17,14 @@
     "worker:analysis": "node --import tsx scripts/run-worker-service.ts --mode analysis",
     "ops:route-compare-summary": "node --import tsx scripts/summarize-route-compare.ts",
     "jobs:run": "node --import tsx scripts/run-due-jobs.ts",
+    "metrics:reconcile:daily": "node --import tsx scripts/reconcile-daily-metrics.ts",
+    "report:weekly": "node --import tsx scripts/send-weekly-report.ts",
+    "report:monthly": "node --import tsx scripts/send-monthly-report.ts",
+    "chart:weekly": "node --import tsx scripts/send-weekly-chart.ts",
     "brief:midday": "node --import tsx scripts/send-midday-briefs.ts",
     "push:reactivation": "node --import tsx scripts/send-reactivation-picks.ts",
-    "import:legacy:yingbin": "node --import tsx scripts/import-legacy-yingbin.ts"
+    "import:legacy:yingbin": "node --import tsx scripts/import-legacy-yingbin.ts",
+    "import:industry-context": "node --import tsx scripts/import-industry-context.ts"
   },
   "dependencies": {
     "@wecom/aibot-node-sdk": "^1.0.6",

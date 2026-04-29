@@ -24,6 +24,7 @@ export type RouteCompareEvent = {
   semanticMetaQueryProbeOutcome?: string | null;
   clarificationNeeded?: boolean;
   replyGuardIntervened?: boolean;
+  driftTags?: string[];
   latencyMs?: number;
 };
 
@@ -34,11 +35,33 @@ export type RouteCompareSummary = {
   routeAccuracyPercent: number | null;
   capabilityDiffCount: number;
   capabilityAccuracyPercent: number | null;
+  clarificationNeededCount: number;
   replyGuardInterventionCount: number;
+  driftTagCounts: Array<{ key: string; count: number }>;
   latencyP50Ms: number | null;
   latencyP95Ms: number | null;
+  selectedLanes: Array<{ key: string; count: number }>;
+  selectedCapabilities: Array<{ key: string; count: number }>;
   topRouteDiffs: Array<{ key: string; count: number }>;
   frontDoorDecisions: Array<{ key: string; count: number }>;
+  slowSamples: Array<{
+    rawText?: string;
+    effectiveText?: string;
+    frontDoorDecision?: string;
+    selectedLane?: string | null;
+    selectedCapabilityId?: string | null;
+    latencyMs?: number;
+  }>;
+  diffSamples: Array<{
+    rawText?: string;
+    effectiveText?: string;
+    frontDoorDecision?: string;
+    legacyRoute?: string | null;
+    semanticRoute?: string | null;
+    legacyCapabilityId?: string | null;
+    selectedCapabilityId?: string | null;
+    latencyMs?: number;
+  }>;
 };
 
 function ratioPercent(numerator: number, denominator: number): number | null {
@@ -87,7 +110,25 @@ export function extractRouteCompareEvent(line: string): RouteCompareEvent | null
   }
 }
 
-export function summarizeRouteCompareEvents(events: RouteCompareEvent[]): RouteCompareSummary {
+export function summarizeRouteCompareLog(
+  logText: string,
+  options: {
+    diffSampleLimit?: number;
+  } = {},
+): RouteCompareSummary {
+  const events = logText
+    .split(/\r?\n/u)
+    .map((line) => extractRouteCompareEvent(line.trim()))
+    .filter((event): event is RouteCompareEvent => event !== null);
+  return summarizeRouteCompareEvents(events, options);
+}
+
+export function summarizeRouteCompareEvents(
+  events: RouteCompareEvent[],
+  options: {
+    diffSampleLimit?: number;
+  } = {},
+): RouteCompareSummary {
   const latencies = events
     .map((event) => event.latencyMs)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
@@ -98,6 +139,19 @@ export function summarizeRouteCompareEvents(events: RouteCompareEvent[]): RouteC
   const frontDoorDecisions = events
     .map((event) => event.frontDoorDecision)
     .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const selectedLanes = events
+    .map((event) => event.selectedLane)
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const selectedCapabilities = events
+    .map((event) => event.selectedCapabilityId)
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const driftTags = events.flatMap((event) =>
+    Array.isArray(event.driftTags)
+      ? event.driftTags.filter(
+          (value): value is string => typeof value === "string" && value.length > 0,
+        )
+      : [],
+  );
   const routeMatchCount = events.filter(
     (event) => (event.legacyRoute ?? null) === (event.semanticRoute ?? null),
   ).length;
@@ -112,12 +166,41 @@ export function summarizeRouteCompareEvents(events: RouteCompareEvent[]): RouteC
     routeAccuracyPercent: ratioPercent(routeMatchCount, events.length),
     capabilityDiffCount: events.length - capabilityMatchCount,
     capabilityAccuracyPercent: ratioPercent(capabilityMatchCount, events.length),
+    clarificationNeededCount: events.filter((event) => event.clarificationNeeded === true).length,
     replyGuardInterventionCount: events.filter((event) => event.replyGuardIntervened === true)
       .length,
+    driftTagCounts: countEntries(driftTags).slice(0, 10),
     latencyP50Ms: percentile(latencies, 0.5),
     latencyP95Ms: percentile(latencies, 0.95),
+    selectedLanes: countEntries(selectedLanes).slice(0, 10),
+    selectedCapabilities: countEntries(selectedCapabilities).slice(0, 10),
     topRouteDiffs: countEntries(routeDiffs).slice(0, 10),
     frontDoorDecisions: countEntries(frontDoorDecisions).slice(0, 10),
+    slowSamples: [...events]
+      .filter((event) => typeof event.latencyMs === "number" && Number.isFinite(event.latencyMs))
+      .sort((left, right) => (right.latencyMs ?? 0) - (left.latencyMs ?? 0))
+      .slice(0, 5)
+      .map((event) => ({
+        rawText: event.rawText,
+        effectiveText: event.effectiveText,
+        frontDoorDecision: event.frontDoorDecision,
+        selectedLane: event.selectedLane,
+        selectedCapabilityId: event.selectedCapabilityId,
+        latencyMs: event.latencyMs,
+      })),
+    diffSamples: events
+      .filter((event) => (event.legacyRoute ?? null) !== (event.semanticRoute ?? null))
+      .slice(0, Math.max(0, Math.floor(options.diffSampleLimit ?? 0)))
+      .map((event) => ({
+        rawText: event.rawText,
+        effectiveText: event.effectiveText,
+        frontDoorDecision: event.frontDoorDecision,
+        legacyRoute: event.legacyRoute,
+        semanticRoute: event.semanticRoute,
+        legacyCapabilityId: event.legacyCapabilityId,
+        selectedCapabilityId: event.selectedCapabilityId,
+        latencyMs: event.latencyMs,
+      })),
   };
 }
 
@@ -129,10 +212,29 @@ export function renderRouteCompareSummary(summary: RouteCompareSummary): string 
     `route_accuracy_pct=${summary.routeAccuracyPercent ?? "n/a"}`,
     `capability_diff=${summary.capabilityDiffCount}`,
     `capability_accuracy_pct=${summary.capabilityAccuracyPercent ?? "n/a"}`,
+    `clarification_needed=${summary.clarificationNeededCount}`,
     `reply_guard_intervened=${summary.replyGuardInterventionCount}`,
     `latency_p50_ms=${summary.latencyP50Ms ?? "n/a"}`,
     `latency_p95_ms=${summary.latencyP95Ms ?? "n/a"}`,
   ];
+  if (summary.driftTagCounts.length > 0) {
+    lines.push("drift_tags:");
+    for (const entry of summary.driftTagCounts) {
+      lines.push(`- ${entry.key}: ${entry.count}`);
+    }
+  }
+  if (summary.selectedLanes.length > 0) {
+    lines.push("selected_lanes:");
+    for (const entry of summary.selectedLanes) {
+      lines.push(`- ${entry.key}: ${entry.count}`);
+    }
+  }
+  if (summary.selectedCapabilities.length > 0) {
+    lines.push("selected_capabilities:");
+    for (const entry of summary.selectedCapabilities) {
+      lines.push(`- ${entry.key}: ${entry.count}`);
+    }
+  }
   if (summary.frontDoorDecisions.length > 0) {
     lines.push("front_door_decisions:");
     for (const entry of summary.frontDoorDecisions) {
@@ -143,6 +245,22 @@ export function renderRouteCompareSummary(summary: RouteCompareSummary): string 
     lines.push("top_route_diffs:");
     for (const entry of summary.topRouteDiffs) {
       lines.push(`- ${entry.key}: ${entry.count}`);
+    }
+  }
+  if (summary.diffSamples.length > 0) {
+    lines.push("diff_samples:");
+    for (const sample of summary.diffSamples) {
+      lines.push(
+        `- ${sample.legacyRoute ?? "null"} -> ${sample.semanticRoute ?? "null"} | capability=${sample.selectedCapabilityId ?? "null"} | latencyMs=${sample.latencyMs ?? "n/a"} | rawText=${sample.rawText ?? ""}`,
+      );
+    }
+  }
+  if (summary.slowSamples.length > 0) {
+    lines.push("slow_samples:");
+    for (const sample of summary.slowSamples) {
+      lines.push(
+        `- lane=${sample.selectedLane ?? "null"} | capability=${sample.selectedCapabilityId ?? "null"} | latencyMs=${sample.latencyMs ?? "n/a"} | rawText=${sample.rawText ?? ""}`,
+      );
     }
   }
   return lines.join("\n");

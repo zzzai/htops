@@ -1,0 +1,288 @@
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+h2.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+.tabs{display:flex;gap:8px;margin-bottom:4px}
+.tab{padding:8px 18px;border-radius:var(--border-radius-md);border:1px solid var(--color-border-tertiary);background:var(--color-background-secondary);color:var(--color-text-secondary);cursor:pointer;font-size:14px;font-weight:500;transition:all .15s;white-space:nowrap}
+.tab.active{background:#2E6B5E;color:#fff;border-color:#2E6B5E}
+.tab:hover:not(.active){border-color:var(--color-border-primary);color:var(--color-text-primary)}
+.meta{display:flex;align-items:center;justify-content:space-between;padding:10px 0 14px;border-bottom:1px solid var(--color-border-tertiary);margin-bottom:4px}
+.meta-desc{font-size:12px;color:var(--color-text-secondary)}
+.count-pill{font-size:11px;font-weight:500;background:var(--color-background-secondary);color:var(--color-text-secondary);padding:3px 10px;border-radius:20px;border:1px solid var(--color-border-tertiary)}
+.panel{display:none}
+.panel.active{display:block}
+.cat{margin-top:18px}
+.cat-hd{display:flex;align-items:center;gap:8px;margin-bottom:6px;padding-bottom:5px;border-bottom:1px solid var(--color-border-tertiary)}
+.cat-name{font-size:11px;font-weight:500;color:var(--color-text-secondary);letter-spacing:.04em;text-transform:uppercase}
+.api-tag{font-size:10px;padding:1px 7px;border-radius:20px;background:#E8F4F1;color:#0F6E56;font-weight:500;flex-shrink:0}
+.q{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;cursor:pointer;transition:background .1s;user-select:none}
+.q:hover{background:var(--color-background-secondary)}
+.q:active{background:var(--color-background-tertiary)}
+.qn{font-size:11px;color:var(--color-text-tertiary);width:22px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums}
+.qt{font-size:14px;color:var(--color-text-primary);flex:1;line-height:1.5}
+.qc{font-size:11px;color:var(--color-text-success);opacity:0;transition:opacity .25s;flex-shrink:0;min-width:32px}
+.qc.show{opacity:1}
+</style>
+
+<h2 class="sr-only">门店各角色自然语言问题库，共150题</h2>
+
+<div class="tabs">
+  <button class="tab active" onclick="sw('boss',this)">门店老板</button>
+  <button class="tab" onclick="sw('manager',this)">店长</button>
+  <button class="tab" onclick="sw('crm',this)">运营 / 会员专员</button>
+</div>
+
+<div id="boss" class="panel active"></div>
+<div id="manager" class="panel"></div>
+<div id="crm" class="panel"></div>
+
+<script>
+const D = {
+  boss:{
+    desc:'关心钱、趋势、风险 · 问题结果导向、时间跨度大',
+    cats:[
+      {n:'今日营收',api:'1.2',qs:[
+        '今天进账多少？',
+        '今天实际到手多少钱？',
+        '今天折扣送出去多少？',
+        '今天客单价多少？',
+        '今天最大的一单是多少？',
+      ]},
+      {n:'周期对比',api:'1.2 / 1.3',qs:[
+        '这周比上周怎么样？',
+        '本月跟上月比强还是弱？',
+        '最近三个月的趋势怎么样？',
+        '今年这个时间段跟去年比差多少？',
+        '周末和工作日差多少？',
+        '早中晚三个时段哪段最赚？',
+      ]},
+      {n:'充值健康',api:'1.3',qs:[
+        '本月充了多少钱进来？',
+        '今天有人充值吗？充了多少？',
+        '最近充值的势头怎么样？',
+        '充值赠送比高不高，合不合理？',
+        '这个月大额充值有几笔？',
+      ]},
+      {n:'钱趴在卡里',api:'1.1 / 1.3',qs:[
+        '现在客人卡里还压着多少钱？',
+        '有没有余额很多但很久没来的客人？',
+        '沉睡资金大概有多少？',
+        '高余额沉默客最多的是谁？',
+        '趴着不动的钱占我们总储值多大比例？',
+      ]},
+      {n:'会员流失',api:'1.1',qs:[
+        '哪些会员快跑了？',
+        '这个月流失了几个会员？',
+        '哪些老客最近突然不来了？',
+        '有多少人注册了但从来没来消费过？',
+        '我们老客的留存率大概是多少？',
+      ]},
+      {n:'技师产出',api:'1.6 / 1.7',qs:[
+        '哪个技师最能赚钱？',
+        '哪个技师最受客人喜欢？',
+        '谁的指名率最高？',
+        '谁的加钟率最高？',
+        '谁的副项推销做得最好？',
+        '最近哪个技师表现下滑了？',
+        '人效最高的技师是谁？',
+      ]},
+      {n:'风险异常',api:'1.4 / 1.2',qs:[
+        '今天有没有异常交易？',
+        '最近有没有反结情况？',
+        '有没有挂账太多的客人？',
+        '哪个技师的提成数据有没有异常？',
+        '有没有什么财务风险要提前注意的？',
+      ]},
+      {n:'渠道与增长',api:'1.1 / 1.2',qs:[
+        '美团的客人回头率怎么样？',
+        '团购客人转成会员的有多少？',
+        '小程序来的客人和线下来的哪个质量更好？',
+        '这个月拉新拉了多少？',
+        '哪个项目卖得最好？',
+        '副项收入占整体多大比例？',
+      ]},
+      {n:'综合经营判断',api:'全量',qs:[
+        '现在门店整体健不健康？',
+        '最近生意有什么规律吗？',
+        '如果要提高收入，从哪下手最快？',
+        '门店现在最大的隐患是什么？',
+        '最近有没有什么好势头值得继续放大？',
+        '给我一个整体评分，经营得怎么样？',
+      ]},
+    ]
+  },
+  manager:{
+    desc:'关心今天怎么过 · 问题实时、具体、要马上能用',
+    cats:[
+      {n:'当前实时状态',api:'1.5 / 1.6',qs:[
+        '现在几个人在上钟？',
+        '还有几个技师是空的？',
+        '现在有客人在等位吗？',
+        '哪些技师现在有空，可以接客？',
+        '几号手牌还没收回来？',
+        '现在后台有几张待结账的单？',
+      ]},
+      {n:'今日汇总数据',api:'1.2 / 1.6',qs:[
+        '今天到目前为止上了多少钟？',
+        '今天来了几个客人？',
+        '今天进账多少了？',
+        '今天加钟加了几次？',
+        '今天有多少老客，多少新客？',
+        '今天最高的一单是多少？',
+        '今天的客单价是多少？',
+      ]},
+      {n:'技师今日动态',api:'1.5 / 1.6',qs:[
+        '今天谁上钟最多？',
+        '谁今天还没开过单？',
+        '今天哪个技师最忙？',
+        '今天谁请假了没来？',
+        '新来的那个技师今天怎么样？',
+        '小李今天接了几个客人？',
+        '今天有没有技师中途出问题？',
+      ]},
+      {n:'副项推销',api:'1.7',qs:[
+        '今天卖出什么副项了？',
+        '谁今天推销做得好？',
+        '今天副项卖了多少钱？',
+        '哪个技师今天一单副项都没推？',
+        '今天茶饮卖了几单？',
+      ]},
+      {n:'客人情况',api:'1.1 / 1.2',qs:[
+        '今天有没有点钟的客人？',
+        '今天有没有第一次来的新客？',
+        '今天有没有客人投诉或不满意？',
+        '今天有没有退款的单？',
+        '有没有客人余额不够但还想继续做的？',
+        '今天有没有挂账的单？',
+        '今天有没有大客户或VIP来？',
+      ]},
+      {n:'排班与安排',api:'1.5',qs:[
+        '今晚还需要几个人在场？',
+        '现在最忙的时间段过了吗？',
+        '明天早班谁来？',
+        '下午场人手够不够？',
+        '今天哪个技师状态不太好，要留意？',
+      ]},
+      {n:'业绩进度追踪',api:'1.2 / 1.6',qs:[
+        '今天目标完成多少了？',
+        '距离今天目标还差多少钱？',
+        '上午场和下午场哪个更好？',
+        '今天哪个时间段最忙？',
+        '这周进度跟上周比怎么样？',
+        '今天下班前能到目标吗？',
+        '今天最值得表扬谁？',
+        '今天有没有拖进度的情况？',
+      ]},
+      {n:'具体查人查单',api:'1.6 / 1.2',qs:[
+        '小王今天上了几钟？',
+        '大李今天的提成大概有多少？',
+        '今天哪个时间点客人最集中？',
+        '今天整体加钟率是多少？',
+        '今天的点钟率是多少？',
+      ]},
+    ]
+  },
+  crm:{
+    desc:'关心客户和技师关系 · 问题细颗粒度、看人看行为',
+    cats:[
+      {n:'会员沉默分层',api:'1.1',qs:[
+        '哪些客人很久没来了？',
+        '有多少客人超过3个月没来了？',
+        '张姐多久没来了？',
+        '最近一个月哪些老客流失了？',
+        '有余额但不来的客人有多少？',
+        '沉默会员里谁的余额最多？',
+      ]},
+      {n:'今日触达任务',api:'1.1',qs:[
+        '今天要联系哪些客人？',
+        '哪些客人最值得打电话唤回？',
+        '有没有客人快到生日了？',
+        '哪些客人的卡快过期了，要提醒？',
+        '有没有充了钱但从来没来过的客人？',
+      ]},
+      {n:'点钟黏性与风险',api:'1.1 / 1.6',qs:[
+        '指名小李的客人有多少？',
+        '哪个技师的忠实客人最多？',
+        '如果小李离职，会带走多少客人的余额？',
+        '有多少客人每次都指定同一个技师？',
+        '有没有客人连续指名同一个技师超过10次？',
+        '哪些客人从来不指名，随便轮？',
+      ]},
+      {n:'优惠券效果',api:'1.1',qs:[
+        '上次发的券有多少人用了？',
+        '还有多少券快过期了没用？',
+        '哪类券用的人最多？',
+        '领了券但没来核销的客人有多少？',
+        '发券前后，到店率有没有变化？',
+      ]},
+      {n:'充值行为分析',api:'1.1 / 1.3',qs:[
+        '谁充了钱还没来过？',
+        '最近充值的都是什么类型的客人？',
+        '充值大单的客人最近有来吗？',
+        '有没有充了很多但只来了一两次的客人？',
+        '高价值会员最近活不活跃？',
+      ]},
+      {n:'团购客转化',api:'1.1 / 1.2',qs:[
+        '美团来的客人回头了吗？',
+        '上个月团购客有多少转成了正式会员？',
+        '抖音来的客人质量怎么样？',
+        '团购客第二次来，用的什么方式付款？',
+        '团购客和普通客的复购率差多少？',
+      ]},
+      {n:'新客跟进',api:'1.1 / 1.2',qs:[
+        '本月新注册的客人来消费了吗？',
+        '上周新来的客人有没有第二次到店？',
+        '新客人一般多久会来第二次？',
+        '今年注册但从来没消费过的有多少？',
+        '新客人最主要是从哪个渠道来的？',
+      ]},
+      {n:'技师与客人关系',api:'1.6 / 1.1',qs:[
+        '小李最近有没有新的忠实客人？',
+        '哪个客人换过好几个技师？',
+        '有没有客人以前常来，最近突然停了？',
+        '谁的老客复购频率最高？',
+        '有没有客人跟某个技师关系特别铁？',
+        '某个技师离职后，他的客人都去哪了？',
+      ]},
+      {n:'会员洞察与画像',api:'1.1 / 1.2',qs:[
+        '常来的客人一般多久来一次？',
+        '最高价值的前10个客人是谁？',
+        '哪些客人喜欢下午来，哪些喜欢晚上来？',
+        '哪类客人对活动和优惠最敏感？',
+        '哪些客人从来不用优惠券，原价消费？',
+        '我们客人里，有多少是老带新进来的？',
+        '哪些客人的消费金额最近有明显变化？',
+      ]},
+    ]
+  }
+};
+
+function render(id){
+  const p=D[id], el=document.getElementById(id);
+  let n=1, h=`<div class="meta"><span class="meta-desc">${p.desc}</span><span class="count-pill">50 个问法</span></div>`;
+  for(const c of p.cats){
+    h+=`<div class="cat"><div class="cat-hd"><span class="cat-name">${c.n}</span><span class="api-tag">API ${c.api}</span></div>`;
+    for(const q of c.qs){
+      const qs=q.replace(/'/g,"\\'");
+      h+=`<div class="q" onclick="cp(this,'${qs}')"><span class="qn">${n++}</span><span class="qt">${q}</span><span class="qc">已复制</span></div>`;
+    }
+    h+='</div>';
+  }
+  el.innerHTML=h;
+}
+
+function cp(el,t){
+  navigator.clipboard.writeText(t).catch(()=>{});
+  const c=el.querySelector('.qc');
+  c.classList.add('show');
+  setTimeout(()=>c.classList.remove('show'),1100);
+}
+
+function sw(id,btn){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(id).classList.add('active');
+}
+
+render('boss'); render('manager'); render('crm');
+</script>

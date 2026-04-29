@@ -9,6 +9,7 @@ import type {
 } from "./contracts.js";
 
 const DEFAULT_DEDUPE_TTL_MS = 10 * 60 * 1000;
+const BRIDGE_REQUEST_DEDUPE_KEY_FIELDS = ["request_id", "platform_message_id"] as const;
 
 function writeJson(
   response: http.ServerResponse,
@@ -123,9 +124,17 @@ export function createHetangBridgeServer(params: {
       }
 
       if (method === "GET" && path === "/v1/capabilities") {
+        const capabilities = params.describeCapabilities();
         writeJson(response, 200, {
           ok: true,
-          capabilities: params.describeCapabilities(),
+          capabilities: {
+            ...capabilities,
+            request_dedupe: {
+              scope: "bridge_http",
+              key_fields: Array.from(BRIDGE_REQUEST_DEDUPE_KEY_FIELDS),
+              ttl_ms: dedupeTtlMs,
+            },
+          } satisfies HetangBridgeCapabilities,
         });
         return;
       }

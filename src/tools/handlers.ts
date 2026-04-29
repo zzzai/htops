@@ -1,15 +1,23 @@
 import { resolveStoreOrgId } from "../config.js";
-import { executePhoneSuffixCustomerProfileQuery } from "../customer-profile.js";
+import { lookupStructuredCustomerProfile } from "../customer-growth/profile.js";
+import { lookupStructuredMemberRecallCandidates } from "../customer-growth/query.js";
+import {
+  lookupStructuredStoreDailySummary,
+  lookupStructuredStoreRiskScan,
+} from "../store-query.js";
 import {
   findSupportedMetricDefinition,
   type HetangSupportedMetricKey,
 } from "../metric-query.js";
-import type { HetangQueryIntent } from "../query-intent.js";
-import { resolveLocalDate, shiftBizDate } from "../time.js";
+import { searchOperatingKnowledgeCatalog } from "../semantic-operating-contract.js";
+import { resolveLocalDate } from "../time.js";
 import type {
   ConsumeBillRecord,
+  CustomerOperatingProfileDailyRecord,
+  CustomerOperatingSignalRecord,
   CustomerProfile90dRow,
   CustomerSegmentRecord,
+  CustomerServiceObservationRecord,
   CustomerTechLinkRecord,
   HetangLogger,
   HetangOpsConfig,
@@ -24,12 +32,11 @@ import type {
   TechMarketRecord,
   TechUpClockRecord,
 } from "../types.js";
-import type {
-  HetangToolCallRequest,
-  HetangToolDescriptor,
-  HetangToolName,
-  HetangToolsCapabilities,
+import {
+  buildHetangToolsCapabilities,
+  listHetangToolDescriptors,
 } from "./contracts.js";
+import type { HetangToolCallRequest, HetangToolName } from "./contracts.js";
 
 type HetangToolsRuntime = {
   listStoreManagerDailyKpiByDateRange: (params: {
@@ -98,40 +105,27 @@ type HetangToolsRuntime = {
     startBizDate: string;
     endBizDate: string;
   }) => Promise<CustomerProfile90dRow[]>;
+  listCustomerOperatingProfilesDaily?: (params: {
+    orgId: string;
+    bizDate: string;
+  }) => Promise<CustomerOperatingProfileDailyRecord[]>;
+  listCustomerOperatingSignals?: (params: {
+    orgId: string;
+    memberId?: string;
+    customerIdentityKey?: string;
+    signalDomain?: string;
+    limit?: number;
+  }) => Promise<CustomerOperatingSignalRecord[]>;
+  listCustomerServiceObservations?: (params: {
+    orgId: string;
+    memberId?: string;
+    customerIdentityKey?: string;
+    signalDomain?: string;
+    limit?: number;
+  }) => Promise<CustomerServiceObservationRecord[]>;
 };
 
-const TOOL_DESCRIPTORS: HetangToolDescriptor[] = [
-  {
-    name: "get_store_daily_summary",
-    description: "Return one store's daily KPI snapshot for a single business date.",
-  },
-  {
-    name: "get_store_risk_scan",
-    description: "Return rule-based 7d/30d operating risk signals for a store.",
-  },
-  {
-    name: "get_member_recall_candidates",
-    description: "Return ranked member recall candidates with feature and strategy hints.",
-  },
-  {
-    name: "get_customer_profile",
-    description: "Return a deterministic customer/member profile lookup for one store.",
-  },
-  {
-    name: "explain_metric_definition",
-    description: "Return the canonical metric definition and aliases for one KPI.",
-  },
-];
-
-type RiskSeverity = "high" | "medium";
-
-const RISK_THRESHOLDS = {
-  storedConsumeRate: 0.35,
-  addClockRate: 0.1,
-  pointClockRate: 0.38,
-  sleepingMemberRate: 0.4,
-  renewalPressureIndex: 0.6,
-} as const;
+const TOOL_DESCRIPTORS = listHetangToolDescriptors();
 
 export class HetangToolError extends Error {
   statusCode: number;
@@ -176,92 +170,6 @@ function clampInteger(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.trunc(value)));
 }
 
-function lastPhoneDigits(phone: string | undefined, size = 4): string | undefined {
-  if (!phone) {
-    return undefined;
-  }
-  const digits = phone.replace(/\D/gu, "");
-  if (!digits) {
-    return undefined;
-  }
-  return digits.slice(-size);
-}
-
-function buildPhoneSuffixProfileIntent(params: {
-  orgId: string;
-  storeName: string;
-  phoneSuffix: string;
-  bizDate: string;
-}): HetangQueryIntent {
-  const startBizDate = shiftBizDate(params.bizDate, -89);
-  return {
-    rawText: `${params.storeName}尾号${params.phoneSuffix}客户画像`,
-    kind: "customer_profile",
-    explicitOrgIds: [params.orgId],
-    allStoresRequested: false,
-    timeFrame: {
-      kind: "range",
-      startBizDate,
-      endBizDate: params.bizDate,
-      label: "近90天",
-      days: 90,
-    },
-    phoneSuffix: params.phoneSuffix,
-    metrics: [],
-    unsupportedMetrics: [],
-    mentionsCompareKeyword: false,
-    mentionsRankingKeyword: false,
-    mentionsTrendKeyword: false,
-    mentionsAnomalyKeyword: false,
-    mentionsRiskKeyword: false,
-    mentionsAdviceKeyword: false,
-    mentionsReportKeyword: false,
-    routeConfidence: "high",
-    semanticSlots: {
-      store: {
-        scope: "single",
-        orgIds: [params.orgId],
-      },
-      object: "customer",
-      action: "profile",
-      metricKeys: [],
-      time: {
-        kind: "range",
-        startBizDate,
-        endBizDate: params.bizDate,
-        label: "近90天",
-        days: 90,
-      },
-    },
-  };
-}
-
-async function buildLegacyProfileText(params: {
-  config: HetangOpsConfig;
-  runtime: HetangToolsRuntime;
-  store: { orgId: string; storeName: string };
-  phoneSuffix?: string;
-  bizDate: string;
-  now: () => Date;
-}): Promise<string | undefined> {
-  if (!params.phoneSuffix) {
-    return undefined;
-  }
-  const text = await executePhoneSuffixCustomerProfileQuery({
-    runtime: params.runtime,
-    config: params.config,
-    intent: buildPhoneSuffixProfileIntent({
-      orgId: params.store.orgId,
-      storeName: params.store.storeName,
-      phoneSuffix: params.phoneSuffix,
-      bizDate: params.bizDate,
-    }),
-    effectiveOrgIds: [params.store.orgId],
-    now: params.now(),
-  });
-  return text.trim().length > 0 ? text : undefined;
-}
-
 function resolveBizDate(
   config: HetangOpsConfig,
   args: Record<string, unknown>,
@@ -293,263 +201,6 @@ function requireToolName(value: string): HetangToolName {
   throw new HetangToolError(404, "unknown_tool", `Unknown tool: ${value}`);
 }
 
-function resolveRiskSignals(params: {
-  review?: StoreReview7dRow;
-  summary?: StoreSummary30dRow;
-}): Array<{
-  key: string;
-  severity: RiskSeverity;
-  title: string;
-  detail: string;
-  metric_value: number;
-  threshold: number;
-}> {
-  const signals: Array<{
-    key: string;
-    severity: RiskSeverity;
-    title: string;
-    detail: string;
-    metric_value: number;
-    threshold: number;
-  }> = [];
-  const review = params.review;
-  const summary = params.summary;
-
-  const pushSignal = (
-    key: string,
-    severity: RiskSeverity,
-    title: string,
-    detail: string,
-    metricValue: number | null | undefined,
-    threshold: number,
-  ) => {
-    if (metricValue === null || metricValue === undefined) {
-      return;
-    }
-    signals.push({
-      key,
-      severity,
-      title,
-      detail,
-      metric_value: Number(metricValue),
-      threshold,
-    });
-  };
-
-  if ((summary?.storedConsumeRate30d ?? review?.storedConsumeRate7d ?? 1) < RISK_THRESHOLDS.storedConsumeRate) {
-    pushSignal(
-      "low_member_store_consume_rate",
-      "high",
-      "会员消耗占比偏低",
-      "门店当前更依赖非会员支付，储值沉淀和后续复购承压。",
-      summary?.storedConsumeRate30d ?? review?.storedConsumeRate7d,
-      RISK_THRESHOLDS.storedConsumeRate,
-    );
-  }
-
-  if ((summary?.addClockRate30d ?? review?.addClockRate7d ?? 1) < RISK_THRESHOLDS.addClockRate) {
-    pushSignal(
-      "weak_addon_rate",
-      "high",
-      "加钟/副项承接偏弱",
-      "到店后延长消费与附加销售不足，容易损失高客单空间。",
-      summary?.addClockRate30d ?? review?.addClockRate7d,
-      RISK_THRESHOLDS.addClockRate,
-    );
-  }
-
-  if ((summary?.pointClockRate30d ?? review?.pointClockRate7d ?? 1) < RISK_THRESHOLDS.pointClockRate) {
-    pushSignal(
-      "weak_point_clock_rate",
-      "medium",
-      "指定率偏弱",
-      "熟客绑定与技师偏好还没充分放大，复购粘性存在空间。",
-      summary?.pointClockRate30d ?? review?.pointClockRate7d,
-      RISK_THRESHOLDS.pointClockRate,
-    );
-  }
-
-  if ((summary?.sleepingMemberRate ?? review?.sleepingMemberRate ?? 0) > RISK_THRESHOLDS.sleepingMemberRate) {
-    pushSignal(
-      "high_sleeping_member_rate",
-      "high",
-      "沉睡会员占比较高",
-      "需要尽快把高价值沉默会员转入主动唤回和生日窗口运营。",
-      summary?.sleepingMemberRate ?? review?.sleepingMemberRate,
-      RISK_THRESHOLDS.sleepingMemberRate,
-    );
-  }
-
-  if ((summary?.renewalPressureIndex30d ?? review?.renewalPressureIndex30d ?? 0) > RISK_THRESHOLDS.renewalPressureIndex) {
-    pushSignal(
-      "high_renewal_pressure",
-      "medium",
-      "续充压力偏高",
-      "余额消耗和沉默节奏叠加，近期要重点盯高价值会员续充。",
-      summary?.renewalPressureIndex30d ?? review?.renewalPressureIndex30d,
-      RISK_THRESHOLDS.renewalPressureIndex,
-    );
-  }
-
-  return signals;
-}
-
-function toDailySummaryResult(row: StoreManagerDailyKpiRow) {
-  return {
-    org_id: row.orgId,
-    store_name: row.storeName,
-    biz_date: row.bizDate,
-    metrics: {
-      revenue: row.dailyActualRevenue,
-      card_consume: row.dailyCardConsume,
-      order_count: row.dailyOrderCount,
-      total_clocks: row.totalClocks,
-      assign_clocks: row.assignClocks,
-      queue_clocks: row.queueClocks,
-      point_clock_rate: row.pointClockRate,
-      average_ticket: row.averageTicket,
-      clock_effect: row.clockEffect,
-    },
-  };
-}
-
-function toReviewSnapshot(row: StoreReview7dRow | undefined) {
-  if (!row) {
-    return null;
-  }
-  return {
-    revenue_7d: row.revenue7d,
-    order_count_7d: row.orderCount7d,
-    point_clock_rate_7d: row.pointClockRate7d,
-    add_clock_rate_7d: row.addClockRate7d,
-    stored_consume_rate_7d: row.storedConsumeRate7d,
-    sleeping_member_rate: row.sleepingMemberRate,
-    renewal_pressure_index_30d: row.renewalPressureIndex30d ?? null,
-  };
-}
-
-function toSummarySnapshot(row: StoreSummary30dRow | undefined) {
-  if (!row) {
-    return null;
-  }
-  return {
-    revenue_30d: row.revenue30d,
-    order_count_30d: row.orderCount30d,
-    point_clock_rate_30d: row.pointClockRate30d,
-    add_clock_rate_30d: row.addClockRate30d,
-    stored_consume_rate_30d: row.storedConsumeRate30d,
-    sleeping_member_rate: row.sleepingMemberRate,
-    renewal_pressure_index_30d: row.renewalPressureIndex30d ?? null,
-  };
-}
-
-function pickProfileRow(rows: CustomerProfile90dRow[], memberId: string, bizDate: string) {
-  const exact = rows.find((row) => row.memberId === memberId && row.windowEndBizDate === bizDate);
-  if (exact) {
-    return exact;
-  }
-  return rows
-    .filter((row) => row.memberId === memberId)
-    .sort((left, right) => right.windowEndBizDate.localeCompare(left.windowEndBizDate))[0];
-}
-
-function mapCustomerProfile(params: {
-  member: MemberCurrentRecord & Record<string, unknown>;
-  profile?: CustomerProfile90dRow;
-}) {
-  const { member, profile } = params;
-  return {
-    member_id: member.memberId,
-    customer_name: member.name,
-    phone_suffix: lastPhoneDigits(member.phone),
-    member_level_name: readString(member.memberLevelName),
-    birthday: readString(member.birthday),
-    current_member_state: {
-      stored_amount: member.storedAmount,
-      consume_amount: member.consumeAmount,
-      last_consume_time: member.lastConsumeTime,
-      silent_days: member.silentDays,
-    },
-    current_profile: profile
-      ? {
-          primary_segment: profile.primarySegment,
-          recency_segment: profile.recencySegment,
-          frequency_segment: profile.frequencySegment,
-          monetary_segment: profile.monetarySegment,
-          payment_segment: profile.paymentSegment,
-          tech_loyalty_segment: profile.techLoyaltySegment,
-          pay_amount_90d: profile.payAmount90d,
-          visit_count_90d: profile.visitCount90d,
-          current_stored_amount: profile.currentStoredAmount,
-          current_silent_days: profile.currentSilentDays,
-          top_tech_name: profile.topTechName,
-          tags: profile.tagKeys,
-        }
-      : null,
-  };
-}
-
-function mapRecallCandidate(params: {
-  queue: MemberReactivationQueueRecord;
-  feature?: MemberReactivationFeatureRecord;
-  strategy?: MemberReactivationStrategyRecord;
-}) {
-  const { queue, feature, strategy } = params;
-  return {
-    member_id: queue.memberId,
-    customer_name: queue.customerDisplayName,
-    priority_band: queue.priorityBand,
-    priority_rank: queue.priorityRank,
-    followup_bucket: queue.followupBucket,
-    primary_segment: queue.primarySegment,
-    scores: {
-      reactivation_priority: queue.reactivationPriorityScore,
-      strategy_priority: queue.strategyPriorityScore,
-      execution_priority: queue.executionPriorityScore,
-      churn_risk: queue.churnRiskScore,
-      birthday_boost: queue.birthdayBoostScore,
-    },
-    days_since_last_visit: queue.daysSinceLastVisit,
-    visit_count_90d: queue.visitCount90d,
-    pay_amount_90d: queue.payAmount90d,
-    current_stored_balance_inferred: queue.currentStoredBalanceInferred,
-    projected_balance_days_left: queue.projectedBalanceDaysLeft,
-    recommended_action: queue.recommendedActionLabel,
-    recommended_touch: {
-      weekday: queue.recommendedTouchWeekday,
-      daypart: queue.recommendedTouchDaypart,
-      label: queue.touchWindowLabel,
-    },
-    reasons: {
-      summary: queue.reasonSummary,
-      touch_advice: queue.touchAdviceSummary,
-    },
-    time_pattern: feature
-      ? {
-          dominant_daypart: feature.dominantVisitDaypart,
-          preferred_daypart_share_90d: feature.preferredDaypartShare90d,
-          dominant_weekday: feature.dominantVisitWeekday,
-          preferred_weekday_share_90d: feature.preferredWeekdayShare90d,
-          late_night_visit_share_90d: feature.lateNightVisitShare90d,
-          overnight_visit_share_90d: feature.overnightVisitShare90d,
-        }
-      : null,
-    strategy: strategy
-      ? {
-          churn_risk_label: strategy.churnRiskLabel,
-          revisit_probability_7d: strategy.revisitProbability7d,
-          revisit_window_label: strategy.revisitWindowLabel,
-          lifecycle_momentum_label: strategy.lifecycleMomentumLabel,
-        }
-      : null,
-    birthday: {
-      next_birthday_biz_date: queue.nextBirthdayBizDate,
-      birthday_window_days: queue.birthdayWindowDays,
-    },
-    top_tech_name: queue.topTechName,
-  };
-}
-
 async function getStoreDailySummary(params: {
   config: HetangOpsConfig;
   runtime: HetangToolsRuntime;
@@ -558,16 +209,16 @@ async function getStoreDailySummary(params: {
 }) {
   const store = resolveStoreContext(params.config, params.args);
   const bizDate = resolveBizDate(params.config, params.args, params.now);
-  const rows = await params.runtime.listStoreManagerDailyKpiByDateRange({
+  const result = await lookupStructuredStoreDailySummary({
+    runtime: params.runtime,
+    config: params.config,
     orgId: store.orgId,
-    startBizDate: bizDate,
-    endBizDate: bizDate,
+    bizDate,
   });
-  const row = rows[0];
-  if (!row) {
+  if (!result) {
     throw new HetangToolError(404, "store_daily_summary_not_found");
   }
-  return toDailySummaryResult(row);
+  return result;
 }
 
 async function getStoreRiskScan(params: {
@@ -578,31 +229,16 @@ async function getStoreRiskScan(params: {
 }) {
   const store = resolveStoreContext(params.config, params.args);
   const bizDate = resolveBizDate(params.config, params.args, params.now);
-  const [reviewRows, summaryRows] = await Promise.all([
-    params.runtime.listStoreReview7dByDateRange({
-      orgId: store.orgId,
-      startBizDate: bizDate,
-      endBizDate: bizDate,
-    }),
-    params.runtime.listStoreSummary30dByDateRange({
-      orgId: store.orgId,
-      startBizDate: bizDate,
-      endBizDate: bizDate,
-    }),
-  ]);
-  const review = reviewRows[0];
-  const summary = summaryRows[0];
-  if (!review && !summary) {
+  const result = await lookupStructuredStoreRiskScan({
+    runtime: params.runtime,
+    config: params.config,
+    orgId: store.orgId,
+    bizDate,
+  });
+  if (!result) {
     throw new HetangToolError(404, "store_risk_scan_not_found");
   }
-  return {
-    org_id: store.orgId,
-    store_name: store.storeName,
-    window_end_biz_date: bizDate,
-    review_7d: toReviewSnapshot(review),
-    summary_30d: toSummarySnapshot(summary),
-    signals: resolveRiskSignals({ review, summary }),
-  };
+  return result;
 }
 
 async function getMemberRecallCandidates(params: {
@@ -614,36 +250,13 @@ async function getMemberRecallCandidates(params: {
   const store = resolveStoreContext(params.config, params.args);
   const bizDate = resolveBizDate(params.config, params.args, params.now);
   const limit = clampInteger(readNumber(params.args.limit) ?? 10, 1, 50);
-  const [queueRows, featureRows, strategyRows] = await Promise.all([
-    params.runtime.listMemberReactivationQueue({
-      orgId: store.orgId,
-      bizDate,
-    }),
-    params.runtime.listMemberReactivationFeatures({
-      orgId: store.orgId,
-      bizDate,
-    }),
-    params.runtime.listMemberReactivationStrategies({
-      orgId: store.orgId,
-      bizDate,
-    }),
-  ]);
-
-  const featureByMemberId = new Map(featureRows.map((row) => [row.memberId, row]));
-  const strategyByMemberId = new Map(strategyRows.map((row) => [row.memberId, row]));
-  return {
-    org_id: store.orgId,
-    store_name: store.storeName,
-    snapshot_biz_date: bizDate,
-    total_candidates: queueRows.length,
-    candidates: queueRows.slice(0, limit).map((queue) =>
-      mapRecallCandidate({
-        queue,
-        feature: featureByMemberId.get(queue.memberId),
-        strategy: strategyByMemberId.get(queue.memberId),
-      }),
-    ),
-  };
+  return lookupStructuredMemberRecallCandidates({
+    runtime: params.runtime,
+    config: params.config,
+    orgId: store.orgId,
+    bizDate,
+    limit,
+  });
 }
 
 async function getCustomerProfile(params: {
@@ -663,53 +276,19 @@ async function getCustomerProfile(params: {
       "Provide phone_suffix or member_id.",
     );
   }
-
-  const members = phoneSuffix
-    ? ((await params.runtime.findCurrentMembersByPhoneSuffix({
-        orgId: store.orgId,
-        phoneSuffix,
-      })) as Array<MemberCurrentRecord & Record<string, unknown>>)
-    : (((await params.runtime.listCurrentMembers({
-        orgId: store.orgId,
-      })) as Array<MemberCurrentRecord & Record<string, unknown>>).filter(
-        (entry) => entry.memberId === memberId,
-      ));
-
-  if (members.length === 0) {
+  const result = await lookupStructuredCustomerProfile({
+    runtime: params.runtime,
+    config: params.config,
+    orgId: store.orgId,
+    bizDate,
+    phoneSuffix,
+    memberId,
+    now: params.now(),
+  });
+  if (!result) {
     throw new HetangToolError(404, "customer_not_found");
   }
-
-  const profileRows = await params.runtime.listCustomerProfile90dByDateRange({
-    orgId: store.orgId,
-    startBizDate: shiftBizDate(bizDate, -89),
-    endBizDate: bizDate,
-  });
-
-  const matchedMembers = members.map((member) =>
-    mapCustomerProfile({
-      member,
-      profile: pickProfileRow(profileRows, member.memberId, bizDate),
-    }),
-  );
-  const legacyProfileText =
-    matchedMembers.some((member) => member.current_profile === null) && phoneSuffix
-      ? await buildLegacyProfileText({
-          config: params.config,
-          runtime: params.runtime,
-          store,
-          phoneSuffix,
-          bizDate,
-          now: params.now,
-        })
-      : undefined;
-
-  return {
-    org_id: store.orgId,
-    store_name: store.storeName,
-    snapshot_biz_date: bizDate,
-    matched_members: matchedMembers,
-    legacy_profile_text: legacyProfileText,
-  };
+  return result;
 }
 
 function explainMetricDefinition(args: Record<string, unknown>) {
@@ -732,6 +311,19 @@ function explainMetricDefinition(args: Record<string, unknown>) {
   };
 }
 
+function searchOperatingKnowledge(args: Record<string, unknown>) {
+  const query = readString(args.query);
+  if (!query) {
+    throw new HetangToolError(400, "query_required", "Missing knowledge search query.");
+  }
+  const limit = clampInteger(readNumber(args.limit) ?? 5, 1, 20);
+  return searchOperatingKnowledgeCatalog({
+    query,
+    domain: readString(args.domain),
+    limit,
+  });
+}
+
 export function createHetangToolsService(params: {
   config: HetangOpsConfig;
   runtime: HetangToolsRuntime;
@@ -741,11 +333,8 @@ export function createHetangToolsService(params: {
   const now = params.now ?? (() => new Date());
 
   return {
-    describeCapabilities(): HetangToolsCapabilities {
-      return {
-        version: "v1",
-        tools: TOOL_DESCRIPTORS,
-      };
+    describeCapabilities() {
+      return buildHetangToolsCapabilities();
     },
 
     async handleToolCall(request: HetangToolCallRequest): Promise<{
@@ -808,6 +397,12 @@ export function createHetangToolsService(params: {
             ok: true,
             tool,
             result: explainMetricDefinition(args),
+          };
+        case "search_operating_knowledge":
+          return {
+            ok: true,
+            tool,
+            result: searchOperatingKnowledge(args),
           };
       }
     },

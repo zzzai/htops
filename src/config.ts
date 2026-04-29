@@ -1,5 +1,12 @@
 import type {
+  HetangAiLaneConfig,
+  HetangAiLaneFallbackBehavior,
+  HetangAiLaneId,
+  HetangAiLaneReasoningMode,
+  HetangAiLaneRegistryConfig,
+  HetangAiLaneResponseMode,
   HetangExternalIntelligenceConfig,
+  HetangInboundLinkReadersConfig,
   HetangExternalSourceConfig,
   HetangExternalSourceTier,
   HetangNotificationTarget,
@@ -16,6 +23,12 @@ const DEFAULT_SEMANTIC_FALLBACK_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_SEMANTIC_FALLBACK_TIMEOUT_MS = 5_000;
 const DEFAULT_SEMANTIC_FALLBACK_AUTO_ACCEPT_CONFIDENCE = 0.85;
 const DEFAULT_SEMANTIC_FALLBACK_CLARIFY_CONFIDENCE = 0.7;
+const DEFAULT_CUSTOMER_GROWTH_AI_BASE_URL = "https://api.openai.com/v1";
+const DEFAULT_CUSTOMER_GROWTH_AI_TIMEOUT_MS = 5_000;
+const DEFAULT_XIAOHONGSHU_LINK_TIMEOUT_MS = 45_000;
+const DEFAULT_XIAOHONGSHU_LINK_BROWSER_TIMEOUT_MS = 45_000;
+const DEFAULT_XIAOHONGSHU_LINK_ACCEPT_TEXT = "收到，正在读取。";
+const DEFAULT_XIAOHONGSHU_LINK_MAX_CONTENT_CHARS = 1200;
 const DEFAULT_CONVERSATION_QUALITY_INTENT_CLARIFIER_ENABLED = true;
 const DEFAULT_CONVERSATION_QUALITY_INTENT_CLARIFIER_MAX_QUESTIONS_PER_TURN = 1;
 const DEFAULT_CONVERSATION_QUALITY_REPLY_GUARD_ENABLED = true;
@@ -37,6 +50,30 @@ const DEFAULT_INTEL_BRIEF_COMPOSITION = {
   chainBrand: 3,
   strategyPlatform: 3,
 };
+const SUPPORTED_AI_LANE_IDS: readonly HetangAiLaneId[] = [
+  "general-lite",
+  "semantic-fallback",
+  "customer-growth-json",
+  "cheap-summary",
+  "analysis-premium",
+  "offline-review",
+  "hq-premium",
+  "world-model-explanation",
+  "doctor-review",
+];
+const SUPPORTED_AI_LANE_REASONING_MODES: readonly HetangAiLaneReasoningMode[] = [
+  "off",
+  "low",
+  "medium",
+  "high",
+];
+const SUPPORTED_AI_LANE_RESPONSE_MODES: readonly HetangAiLaneResponseMode[] = ["text", "json"];
+const SUPPORTED_AI_LANE_FALLBACK_BEHAVIORS: readonly HetangAiLaneFallbackBehavior[] = [
+  "none",
+  "lane",
+  "deterministic",
+  "legacy",
+];
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -69,6 +106,28 @@ function optionalString(value: unknown): string | undefined {
   return resolveEnvVars(value.trim());
 }
 
+function optionalLocalDate(value: unknown, label: string): string | undefined {
+  const resolved = optionalString(value);
+  if (!resolved) {
+    return undefined;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(resolved)) {
+    throw new Error(`${label} must be in YYYY-MM-DD format`);
+  }
+  return resolved;
+}
+
+function optionalMonthKey(value: unknown, label: string): string | undefined {
+  const resolved = optionalString(value);
+  if (!resolved) {
+    return undefined;
+  }
+  if (!/^\d{4}-\d{2}$/u.test(resolved)) {
+    throw new Error(`${label} must be in YYYY-MM format`);
+  }
+  return resolved;
+}
+
 function optionalCredentialString(value: unknown): string | undefined {
   if (typeof value !== "string" || value.trim().length === 0) {
     return undefined;
@@ -85,6 +144,21 @@ function optionalCredentialString(value: unknown): string | undefined {
     }
     throw error;
   }
+}
+
+function optionalEnumValue<T extends string>(
+  value: unknown,
+  label: string,
+  allowedValues: readonly T[],
+): T | undefined {
+  const resolved = optionalString(value);
+  if (!resolved) {
+    return undefined;
+  }
+  if (!allowedValues.includes(resolved as T)) {
+    throw new Error(`${label} must be one of ${allowedValues.join(", ")}`);
+  }
+  return resolved as T;
 }
 
 function optionalNumber(value: unknown): number | undefined {
@@ -112,6 +186,27 @@ function ensureUnitInterval(value: number, label: string): number {
   return value;
 }
 
+function optionalPositiveInteger(value: unknown, label: string): number | undefined {
+  const numeric = optionalNumber(value);
+  if (numeric === undefined) {
+    return undefined;
+  }
+  return ensurePositiveInteger(numeric, label);
+}
+
+function addMinutesToLocalTime(localTime: string, minutes: number): string {
+  const match = /^(\d{2}):(\d{2})$/u.exec(localTime);
+  if (!match) {
+    return localTime;
+  }
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const totalMinutes = ((hour * 60 + minute + minutes) % (24 * 60) + 24 * 60) % (24 * 60);
+  const nextHour = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+  const nextMinute = String(totalMinutes % 60).padStart(2, "0");
+  return `${nextHour}:${nextMinute}`;
+}
+
 function optionalStringList(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -119,6 +214,49 @@ function optionalStringList(value: unknown): string[] {
   return value
     .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
     .filter((entry) => entry.length > 0);
+}
+
+function resolveStoreCustomerGrowthConfig(value: unknown): HetangStoreConfig["customerGrowth"] {
+  if (!value) {
+    return undefined;
+  }
+  const raw = asRecord(value, "store.customerGrowth");
+  const primarySegmentThresholds = raw.primarySegmentThresholds
+    ? asRecord(raw.primarySegmentThresholds, "store.customerGrowth.primarySegmentThresholds")
+    : undefined;
+  const reactivationCapacity = raw.reactivationCapacity
+    ? asRecord(raw.reactivationCapacity, "store.customerGrowth.reactivationCapacity")
+    : undefined;
+  const config = {
+    primarySegmentThresholds: primarySegmentThresholds
+      ? {
+          highValueMemberVisitCount90d: optionalNumber(
+            primarySegmentThresholds.highValueMemberVisitCount90d,
+          ),
+          highValueMemberPayAmount90d: optionalNumber(
+            primarySegmentThresholds.highValueMemberPayAmount90d,
+          ),
+          highValueMemberActiveMaxSilentDays: optionalNumber(
+            primarySegmentThresholds.highValueMemberActiveMaxSilentDays,
+          ),
+          potentialGrowthPayAmount90d: optionalNumber(
+            primarySegmentThresholds.potentialGrowthPayAmount90d,
+          ),
+          potentialGrowthMaxVisitCount90d: optionalNumber(
+            primarySegmentThresholds.potentialGrowthMaxVisitCount90d,
+          ),
+        }
+      : undefined,
+    reactivationCapacity: reactivationCapacity
+      ? {
+          dailyTouchCapacity: optionalNumber(reactivationCapacity.dailyTouchCapacity),
+        }
+      : undefined,
+  };
+  if (!config.primarySegmentThresholds && !config.reactivationCapacity) {
+    return undefined;
+  }
+  return config;
 }
 
 function requireTier(value: unknown, label: string): HetangExternalSourceTier {
@@ -151,6 +289,7 @@ function resolveStore(entry: unknown): HetangStoreConfig {
     rawAliases: optionalStringList(store.rawAliases),
     isActive: store.isActive !== false,
     notification,
+    customerGrowth: resolveStoreCustomerGrowthConfig(store.customerGrowth),
     roomCount: optionalNumber(store.roomCount),
     operatingHoursPerDay: optionalNumber(store.operatingHoursPerDay),
     fixedMonthlyCost: optionalNumber(store.fixedMonthlyCost),
@@ -229,14 +368,138 @@ function resolveExternalIntelligenceConfig(value: unknown): HetangExternalIntell
   };
 }
 
+function resolveInboundLinkReadersConfig(value: unknown): HetangInboundLinkReadersConfig {
+  const raw = asRecord(value ?? {}, "hetang-ops config.inboundLinkReaders");
+  const xiaohongshu = raw.xiaohongshu
+    ? asRecord(raw.xiaohongshu, "hetang-ops config.inboundLinkReaders.xiaohongshu")
+    : {};
+  return {
+    xiaohongshu: {
+      enabled: xiaohongshu.enabled === true,
+      autocliBin: optionalString(xiaohongshu.autocliBin),
+      timeoutMs: ensurePositiveInteger(
+        optionalNumber(xiaohongshu.timeoutMs) ?? DEFAULT_XIAOHONGSHU_LINK_TIMEOUT_MS,
+        "inboundLinkReaders.xiaohongshu.timeoutMs",
+      ),
+      browserTimeoutMs: ensurePositiveInteger(
+        optionalNumber(xiaohongshu.browserTimeoutMs) ??
+          DEFAULT_XIAOHONGSHU_LINK_BROWSER_TIMEOUT_MS,
+        "inboundLinkReaders.xiaohongshu.browserTimeoutMs",
+      ),
+      acceptText:
+        optionalString(xiaohongshu.acceptText) ?? DEFAULT_XIAOHONGSHU_LINK_ACCEPT_TEXT,
+      maxContentChars: ensurePositiveInteger(
+        optionalNumber(xiaohongshu.maxContentChars) ??
+          DEFAULT_XIAOHONGSHU_LINK_MAX_CONTENT_CHARS,
+        "inboundLinkReaders.xiaohongshu.maxContentChars",
+      ),
+    },
+  };
+}
+
+function ensureAiLaneId(value: string, label: string): HetangAiLaneId {
+  if (!SUPPORTED_AI_LANE_IDS.includes(value as HetangAiLaneId)) {
+    throw new Error(`${label} must be one of ${SUPPORTED_AI_LANE_IDS.join(", ")}`);
+  }
+  return value as HetangAiLaneId;
+}
+
+function resolveAiLaneConfig(value: unknown, laneId: HetangAiLaneId): HetangAiLaneConfig {
+  const label = `hetang-ops config.aiLanes.${laneId}`;
+  const raw = asRecord(value, label);
+  const reasoningMode = optionalEnumValue(
+    raw.reasoningMode,
+    `aiLanes.${laneId}.reasoningMode`,
+    SUPPORTED_AI_LANE_REASONING_MODES,
+  );
+  const timeoutMs = optionalPositiveInteger(raw.timeoutMs, `aiLanes.${laneId}.timeoutMs`);
+  const responseMode = optionalEnumValue(
+    raw.responseMode,
+    `aiLanes.${laneId}.responseMode`,
+    SUPPORTED_AI_LANE_RESPONSE_MODES,
+  );
+  const fallbackBehavior = optionalEnumValue(
+    raw.fallbackBehavior,
+    `aiLanes.${laneId}.fallbackBehavior`,
+    SUPPORTED_AI_LANE_FALLBACK_BEHAVIORS,
+  );
+  const fallbackLaneId = raw.fallbackLaneId
+    ? ensureAiLaneId(
+        requireString(raw.fallbackLaneId, `aiLanes.${laneId}.fallbackLaneId`),
+        `aiLanes.${laneId}.fallbackLaneId`,
+      )
+    : undefined;
+
+  if (fallbackBehavior === "lane" && !fallbackLaneId) {
+    throw new Error(`aiLanes.${laneId}.fallbackLaneId is required when fallbackBehavior=lane`);
+  }
+  if (fallbackLaneId && fallbackBehavior !== "lane") {
+    throw new Error(
+      `aiLanes.${laneId}.fallbackBehavior must be lane when fallbackLaneId is configured`,
+    );
+  }
+  if (fallbackLaneId === laneId) {
+    throw new Error(`aiLanes.${laneId}.fallbackLaneId cannot reference itself`);
+  }
+
+  const config: HetangAiLaneConfig = {};
+  const baseUrl = optionalString(raw.baseUrl);
+  const apiKey = optionalCredentialString(raw.apiKey);
+  const model = optionalString(raw.model);
+  if (baseUrl) {
+    config.baseUrl = baseUrl;
+  }
+  if (apiKey) {
+    config.apiKey = apiKey;
+  }
+  if (model) {
+    config.model = model;
+  }
+  if (reasoningMode) {
+    config.reasoningMode = reasoningMode;
+  }
+  if (timeoutMs !== undefined) {
+    config.timeoutMs = timeoutMs;
+  }
+  if (responseMode) {
+    config.responseMode = responseMode;
+  }
+  if (fallbackBehavior) {
+    config.fallbackBehavior = fallbackBehavior;
+  }
+  if (fallbackLaneId) {
+    config.fallbackLaneId = fallbackLaneId;
+  }
+  return config;
+}
+
+function resolveAiLaneRegistryConfig(value: unknown): HetangAiLaneRegistryConfig {
+  if (!value) {
+    return {};
+  }
+  const raw = asRecord(value, "hetang-ops config.aiLanes");
+  const aiLanes: HetangAiLaneRegistryConfig = {};
+
+  for (const [laneKey, laneValue] of Object.entries(raw)) {
+    const laneId = ensureAiLaneId(laneKey, `aiLanes.${laneKey}`);
+    aiLanes[laneId] = resolveAiLaneConfig(laneValue, laneId);
+  }
+
+  return aiLanes;
+}
+
 export function resolveHetangOpsConfig(value: unknown): HetangOpsConfig {
   const raw = asRecord(value ?? {}, "hetang-ops config");
   const api = asRecord(raw.api, "hetang-ops config.api");
   const sync = raw.sync ? asRecord(raw.sync, "hetang-ops config.sync") : {};
   const reporting = raw.reporting ? asRecord(raw.reporting, "hetang-ops config.reporting") : {};
   const analysis = raw.analysis ? asRecord(raw.analysis, "hetang-ops config.analysis") : {};
+  const aiLanes = resolveAiLaneRegistryConfig(raw.aiLanes);
   const semanticFallback = raw.semanticFallback
     ? asRecord(raw.semanticFallback, "hetang-ops config.semanticFallback")
+    : null;
+  const customerGrowthAi = raw.customerGrowthAi
+    ? asRecord(raw.customerGrowthAi, "hetang-ops config.customerGrowthAi")
     : null;
   const conversationQuality = raw.conversationQuality
     ? asRecord(raw.conversationQuality, "hetang-ops config.conversationQuality")
@@ -245,10 +508,15 @@ export function resolveHetangOpsConfig(value: unknown): HetangOpsConfig {
   const queue = raw.queue ? asRecord(raw.queue, "hetang-ops config.queue") : {};
   const database = raw.database ? asRecord(raw.database, "hetang-ops config.database") : {};
   const externalIntelligence = resolveExternalIntelligenceConfig(raw.externalIntelligence);
+  const inboundLinkReaders = resolveInboundLinkReadersConfig(raw.inboundLinkReaders);
 
   const stores = Array.isArray(raw.stores) ? raw.stores.map(resolveStore) : [];
   const syncEnabled = sync.enabled !== false;
   const reportingEnabled = reporting.enabled !== false;
+  const sendAtLocalTime = optionalString(reporting.sendAtLocalTime) ?? "09:00";
+  const weeklyReportAtLocalTime = optionalString(reporting.weeklyReportAtLocalTime) ?? "09:15";
+  const monthlyReportAtLocalTime =
+    optionalString(reporting.monthlyReportAtLocalTime) ?? "09:25";
   const accessOnlyBootstrap = !syncEnabled && !reportingEnabled;
   if (stores.length < 1) {
     throw new Error("hetang-ops requires at least one store");
@@ -297,6 +565,57 @@ export function resolveHetangOpsConfig(value: unknown): HetangOpsConfig {
     );
   }
 
+  const customerGrowthAiProfileInsight = customerGrowthAi?.profileInsight
+    ? asRecord(customerGrowthAi.profileInsight, "hetang-ops config.customerGrowthAi.profileInsight")
+    : {};
+  const customerGrowthAiTagAdvisor = customerGrowthAi?.tagAdvisor
+    ? asRecord(customerGrowthAi.tagAdvisor, "hetang-ops config.customerGrowthAi.tagAdvisor")
+    : {};
+  const customerGrowthAiStrategyAdvisor = customerGrowthAi?.strategyAdvisor
+    ? asRecord(customerGrowthAi.strategyAdvisor, "hetang-ops config.customerGrowthAi.strategyAdvisor")
+    : {};
+  const customerGrowthAiFollowupSummarizer = customerGrowthAi?.followupSummarizer
+    ? asRecord(
+        customerGrowthAi.followupSummarizer,
+        "hetang-ops config.customerGrowthAi.followupSummarizer",
+      )
+    : {};
+  const customerGrowthAiConfig = {
+    enabled: customerGrowthAi ? customerGrowthAi.enabled !== false : false,
+    baseUrl: customerGrowthAi
+      ? (optionalString(customerGrowthAi.baseUrl) ??
+        process.env.HETANG_CUSTOMER_GROWTH_AI_BASE_URL?.trim() ??
+        process.env.OPENAI_BASE_URL?.trim() ??
+        DEFAULT_CUSTOMER_GROWTH_AI_BASE_URL)
+      : undefined,
+    apiKey: customerGrowthAi
+      ? (optionalCredentialString(customerGrowthAi.apiKey) ??
+        process.env.HETANG_CUSTOMER_GROWTH_AI_API_KEY?.trim() ??
+        process.env.OPENAI_API_KEY?.trim())
+      : undefined,
+    model: customerGrowthAi
+      ? (optionalString(customerGrowthAi.model) ??
+        process.env.HETANG_CUSTOMER_GROWTH_AI_MODEL?.trim() ??
+        process.env.OPENAI_MODEL?.trim())
+      : undefined,
+    timeoutMs: ensurePositiveInteger(
+      optionalNumber(customerGrowthAi?.timeoutMs) ?? DEFAULT_CUSTOMER_GROWTH_AI_TIMEOUT_MS,
+      "customerGrowthAi.timeoutMs",
+    ),
+    profileInsight: {
+      enabled: customerGrowthAiProfileInsight.enabled === true,
+    },
+    tagAdvisor: {
+      enabled: customerGrowthAiTagAdvisor.enabled === true,
+    },
+    strategyAdvisor: {
+      enabled: customerGrowthAiStrategyAdvisor.enabled === true,
+    },
+    followupSummarizer: {
+      enabled: customerGrowthAiFollowupSummarizer.enabled === true,
+    },
+  };
+
   const intentClarifier = conversationQuality.intentClarifier
     ? asRecord(
         conversationQuality.intentClarifier,
@@ -332,7 +651,7 @@ export function resolveHetangOpsConfig(value: unknown): HetangOpsConfig {
       overlapDays: ensurePositiveInteger(optionalNumber(sync.overlapDays) ?? 7, "sync.overlapDays"),
       runAtLocalTime: optionalString(sync.runAtLocalTime) ?? "03:10",
       accessWindowStartLocalTime: optionalString(sync.accessWindowStartLocalTime) ?? "03:00",
-      accessWindowEndLocalTime: optionalString(sync.accessWindowEndLocalTime) ?? "04:00",
+      accessWindowEndLocalTime: optionalString(sync.accessWindowEndLocalTime) ?? "18:00",
       businessDayCutoffLocalTime: optionalString(sync.businessDayCutoffLocalTime) ?? "03:00",
       historyCatchupAtLocalTime: optionalString(sync.historyCatchupAtLocalTime) ?? "04:05",
       historyBackfillEnabled: sync.historyBackfillEnabled !== false,
@@ -348,7 +667,27 @@ export function resolveHetangOpsConfig(value: unknown): HetangOpsConfig {
     reporting: {
       enabled: reportingEnabled,
       buildAtLocalTime: optionalString(reporting.buildAtLocalTime) ?? "08:50",
-      sendAtLocalTime: optionalString(reporting.sendAtLocalTime) ?? "09:00",
+      sendAtLocalTime,
+      fiveStoreDailyOverviewAtLocalTime:
+        optionalString(reporting.fiveStoreDailyOverviewAtLocalTime) ??
+        addMinutesToLocalTime(sendAtLocalTime, 5),
+      weeklyReportAtLocalTime,
+      weeklyReportStartDate: optionalLocalDate(
+        reporting.weeklyReportStartDate,
+        "reporting.weeklyReportStartDate",
+      ),
+      monthlyReportAtLocalTime,
+      monthlyReportStartMonth: optionalMonthKey(
+        reporting.monthlyReportStartMonth,
+        "reporting.monthlyReportStartMonth",
+      ),
+      weeklyChartAtLocalTime:
+        optionalString(reporting.weeklyChartAtLocalTime) ??
+        addMinutesToLocalTime(weeklyReportAtLocalTime, 3),
+      weeklyChartStartDate: optionalLocalDate(
+        reporting.weeklyChartStartDate,
+        "reporting.weeklyChartStartDate",
+      ),
       middayBriefAtLocalTime: optionalString(reporting.middayBriefAtLocalTime) ?? "12:00",
       reactivationPushAtLocalTime: optionalString(reporting.reactivationPushAtLocalTime) ?? "15:00",
       sharedDelivery: resolveNotificationTarget(
@@ -356,6 +695,11 @@ export function resolveHetangOpsConfig(value: unknown): HetangOpsConfig {
         "reporting.sharedDelivery",
       ),
       sendReportEnabled: reporting.sendReportEnabled !== false,
+      sendFiveStoreDailyOverviewEnabled:
+        reporting.sendFiveStoreDailyOverviewEnabled !== false,
+      sendWeeklyReportEnabled: reporting.sendWeeklyReportEnabled !== false,
+      sendMonthlyReportEnabled: reporting.sendMonthlyReportEnabled !== false,
+      sendWeeklyChartEnabled: reporting.sendWeeklyChartEnabled !== false,
       sendMiddayBriefEnabled: reporting.sendMiddayBriefEnabled !== false,
       sendReactivationPushEnabled: reporting.sendReactivationPushEnabled !== false,
     },
@@ -373,7 +717,10 @@ export function resolveHetangOpsConfig(value: unknown): HetangOpsConfig {
       defaultMaterialCostRate: optionalNumber(analysis.defaultMaterialCostRate),
       defaultFixedMonthlyCost: optionalNumber(analysis.defaultFixedMonthlyCost),
     },
+    aiLanes,
     semanticFallback: semanticFallbackConfig,
+    customerGrowthAi: customerGrowthAiConfig,
+    inboundLinkReaders,
     conversationQuality: {
       intentClarifier: {
         enabled:
@@ -517,6 +864,34 @@ export const hetangOpsConfigSchema = {
       label: "Report Send Time",
       placeholder: "09:00",
     },
+    "reporting.fiveStoreDailyOverviewAtLocalTime": {
+      label: "Five-Store Overview Time",
+      placeholder: "09:05",
+    },
+    "reporting.weeklyReportAtLocalTime": {
+      label: "Weekly Report Time",
+      placeholder: "09:15",
+    },
+    "reporting.weeklyReportStartDate": {
+      label: "Weekly Report Start Date",
+      placeholder: "2026-04-27",
+    },
+    "reporting.monthlyReportAtLocalTime": {
+      label: "Monthly Report Time",
+      placeholder: "09:25",
+    },
+    "reporting.monthlyReportStartMonth": {
+      label: "Monthly Report Start Month",
+      placeholder: "2026-04",
+    },
+    "reporting.weeklyChartAtLocalTime": {
+      label: "Weekly Chart Time",
+      placeholder: "09:18",
+    },
+    "reporting.weeklyChartStartDate": {
+      label: "Weekly Chart Start Date",
+      placeholder: "2026-04-27",
+    },
     "reporting.middayBriefAtLocalTime": {
       label: "Midday Brief Time",
       placeholder: "12:00",
@@ -592,6 +967,22 @@ export const hetangOpsConfigSchema = {
     },
     "reporting.sendReportEnabled": {
       label: "Daily Report Send Enabled",
+      placeholder: "true",
+    },
+    "reporting.sendFiveStoreDailyOverviewEnabled": {
+      label: "Five-Store Overview Send Enabled",
+      placeholder: "true",
+    },
+    "reporting.sendWeeklyReportEnabled": {
+      label: "Weekly Report Send Enabled",
+      placeholder: "true",
+    },
+    "reporting.sendMonthlyReportEnabled": {
+      label: "Monthly Report Send Enabled",
+      placeholder: "true",
+    },
+    "reporting.sendWeeklyChartEnabled": {
+      label: "Weekly Chart Send Enabled",
       placeholder: "true",
     },
     "reporting.sendMiddayBriefEnabled": {

@@ -4,6 +4,7 @@ export type HetangSupportedMetricKey =
   | "serviceRevenue"
   | "antiServiceRevenue"
   | "serviceOrderCount"
+  | "orderAverageAmount"
   | "customerCount"
   | "clockEffect"
   | "clockRevenue"
@@ -96,7 +97,7 @@ const SUPPORTED_METRICS: Array<MetricDefinition<HetangSupportedMetricKey>> = [
   {
     key: "serviceRevenue",
     label: "服务营收",
-    aliases: ["服务营收", "营业额", "营收", "收入"],
+    aliases: ["服务营收", "营业额", "营收", "收入", "进账", "实收", "到手金额", "到手多少钱"],
   },
   {
     key: "antiServiceRevenue",
@@ -106,7 +107,12 @@ const SUPPORTED_METRICS: Array<MetricDefinition<HetangSupportedMetricKey>> = [
   {
     key: "serviceOrderCount",
     label: "服务单数",
-    aliases: ["服务单数", "订单数", "服务单量"],
+    aliases: ["服务单数", "订单数", "服务单量", "单数", "单量"],
+  },
+  {
+    key: "orderAverageAmount",
+    label: "单均金额",
+    aliases: ["单均金额", "订单均价", "订单均额", "单均消费", "单均"],
   },
   {
     key: "customerCount",
@@ -176,7 +182,7 @@ const SUPPORTED_METRICS: Array<MetricDefinition<HetangSupportedMetricKey>> = [
   {
     key: "rechargeCash",
     label: "充值现金",
-    aliases: ["充值现金", "充值金额", "充值", "实充"],
+    aliases: ["充值现金", "充值金额", "充值", "实充", "充了多少钱进来", "充进来多少", "充值进来多少"],
   },
   {
     key: "rechargeStoredValue",
@@ -361,7 +367,7 @@ const SUPPORTED_METRICS: Array<MetricDefinition<HetangSupportedMetricKey>> = [
   {
     key: "marketRevenue",
     label: "推销营收",
-    aliases: ["推销营收", "推销金额", "销售营收"],
+    aliases: ["推销营收", "推销金额", "销售营收", "副项营收", "副项收入", "副项卖了多少钱", "副项卖了多少", "副项卖得多少"],
   },
   {
     key: "marketCommission",
@@ -376,7 +382,7 @@ const SUPPORTED_METRICS: Array<MetricDefinition<HetangSupportedMetricKey>> = [
   {
     key: "newMembers",
     label: "新增会员",
-    aliases: ["新增会员", "新会员"],
+    aliases: ["新增会员", "新会员", "新客", "新来的客人", "第一次来的客人", "第一次到店的人"],
   },
   {
     key: "effectiveMembers",
@@ -438,8 +444,114 @@ const UNSUPPORTED_METRICS: Array<MetricDefinition<HetangUnsupportedMetricKey>> =
   },
 ];
 
+const METRIC_SEMANTIC_EXPANSION_RULES: Array<{
+  pattern: RegExp;
+  inject: string[];
+  when?: (text: string) => boolean;
+}> = [
+  {
+    pattern: /(营业收入|营收额|营业情况里的营收|门店营业收入)/u,
+    inject: ["服务营收"],
+  },
+  {
+    pattern: /(反结额)/u,
+    inject: ["反结金额"],
+  },
+  {
+    pattern: /(单量)/u,
+    inject: ["服务单数"],
+    when: (text) => !/(团购单量|团购订单量)/u.test(text),
+  },
+  {
+    pattern: /(上客人数|上客数|来客人数|来客数)/u,
+    inject: ["消费人数"],
+  },
+  {
+    pattern: /(单钟产值|钟均产值)/u,
+    inject: ["钟效"],
+  },
+  {
+    pattern: /(上钟金额)/u,
+    inject: ["上钟产值"],
+  },
+  {
+    pattern: /(团购单量|团购订单量)/u,
+    inject: ["团购单数"],
+  },
+  {
+    pattern: /(团购回头人数)/u,
+    inject: ["团购复到店人数"],
+  },
+  {
+    pattern: /(团购回头率)/u,
+    inject: ["团购复到店率"],
+  },
+  {
+    pattern: /(7天回头人数|7日回头人数)/u,
+    inject: ["7天复到店人数"],
+  },
+  {
+    pattern: /(7天回头率|7日回头率)/u,
+    inject: ["7天复到店率"],
+  },
+  {
+    pattern: /(7天办卡人数|7日办卡人数)/u,
+    inject: ["7天开卡人数"],
+  },
+  {
+    pattern: /(7天办卡率|7日办卡率)/u,
+    inject: ["7天开卡率"],
+  },
+  {
+    pattern: /(7天转储值人数|7日转储值人数|7天转充值人数|7日转充值人数)/u,
+    inject: ["7天储值转化人数"],
+  },
+  {
+    pattern: /(7天转储值率|7日转储值率|7天转充值率|7日转充值率)/u,
+    inject: ["7天储值转化率"],
+  },
+  {
+    pattern: /(30天转会员消费人数|30日转会员消费人数|30天转会员支付人数|30日转会员支付人数)/u,
+    inject: ["30天会员消费转化人数"],
+  },
+  {
+    pattern: /(30天转会员消费率|30日转会员消费率|30天转会员支付率|30日转会员支付率)/u,
+    inject: ["30天会员消费转化率"],
+  },
+  {
+    pattern: /(技师提成率)/u,
+    inject: ["技师提成占比"],
+  },
+  {
+    pattern: /(会员卡余额|卡余额)/u,
+    inject: ["当前储值余额"],
+  },
+];
+
 function normalizeIntentText(value: string): string {
-  return value.replace(/[\s，,、；;：:。.!！？?]/gu, "");
+  return value
+    .replace(/[\s，,、；;：:。.!！？?]/gu, "")
+    .replace(/总种数/gu, "总钟数")
+    .replace(/总种/gu, "总钟")
+    .replace(/上种数/gu, "上钟数")
+    .replace(/上种/gu, "上钟")
+    .replace(/点种/gu, "点钟")
+    .replace(/加种/gu, "加钟")
+    .replace(/点加钟/gu, "点钟加钟");
+}
+
+function expandMetricIntentText(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    return normalized;
+  }
+  const injected = METRIC_SEMANTIC_EXPANSION_RULES.flatMap((rule) =>
+    rule.pattern.test(normalized) && (rule.when?.(normalized) ?? true) ? rule.inject : [],
+  );
+  if (injected.length === 0) {
+    return normalized;
+  }
+  return `${normalized} ${Array.from(new Set(injected)).join(" ")}`.trim();
 }
 
 function resolveMatches<Key extends string>(
@@ -579,10 +691,80 @@ function hasOrderIntent(text: string): boolean {
   return /(单数|订单数|单量|多少单|几单|单数占比|订单占比|单量占比)/u.test(text);
 }
 
-function hasTotalClockBreakdownIntent(text: string): boolean {
+function hasStoredValueAmountIntent(text: string): boolean {
+  const normalized = normalizeIntentText(text);
   return (
-    /(构成|组成|拆开|拆分|拆解|由什么构成|怎么构成|分别是多少|分别多少)/u.test(text) &&
-    /(\d+\s*个?钟|总上钟数|总钟数|钟数|上钟数|几个钟|多少钟)/u.test(text)
+    /储值/u.test(normalized) &&
+    hasAmountIntent(text) &&
+    !/(余额|转化|支付|消费|耗卡|占比|比例|结构|分布|寿命|承压|风险)/u.test(normalized)
+  );
+}
+
+function hasBareStoredValueMetricListIntent(params: {
+  text: string;
+  supported: Array<MetricMatch<HetangSupportedMetricKey>>;
+}): boolean {
+  const normalized = normalizeIntentText(params.text);
+  return (
+    /储值/u.test(normalized) &&
+    params.supported.length > 0 &&
+    /([，,、/]|以及|还有|外加|再加|和|及)/u.test(params.text) &&
+    !hasStoredValueAmountIntent(params.text) &&
+    !hasStoredBalanceAmountIntent(params.text) &&
+    !/(转化|支付|消费|耗卡|占比|比例|结构|分布|寿命|承压|风险)/u.test(normalized)
+  );
+}
+
+function hasBareStoredValueStandaloneIntent(params: {
+  text: string;
+  supported: Array<MetricMatch<HetangSupportedMetricKey>>;
+}): boolean {
+  const normalized = normalizeIntentText(params.text);
+  return (
+    /储值/u.test(normalized) &&
+    !/([，,、/]|以及|还有|外加|再加|和|及)/u.test(params.text) &&
+    !hasStoredValueAmountIntent(params.text) &&
+    !hasStoredBalanceAmountIntent(params.text) &&
+    !/(转化|支付|消费|耗卡|占比|比例|结构|分布|寿命|承压|风险|复购|回流|老客|续费|开卡|办卡|会员卡|卡余额|还是|先抓|先补|优先|该先)/u.test(
+      normalized,
+    ) &&
+    !params.supported.some((entry) =>
+      [
+        "memberPaymentAmount",
+        "memberPaymentShare",
+        "storedConsumeAmount",
+        "currentStoredBalance",
+        "groupbuy7dStoredValueConvertedCustomerCount",
+        "groupbuy7dStoredValueConversionRate",
+      ].includes(entry.key),
+    )
+  );
+}
+
+function hasStoredBalanceAmountIntent(text: string): boolean {
+  const normalized = normalizeIntentText(text);
+  return (
+    (/(当前储值余额|会员储值余额|储值余额|会员卡余额|卡余额)/u.test(normalized) ||
+      /(会员卡还有多少|会员卡里还有多少|卡里还有多少|卡还有多少)/u.test(normalized)) &&
+    !/(办卡|开卡|卡数|发卡)/u.test(normalized)
+  );
+}
+
+function hasTotalClockBreakdownIntent(text: string): boolean {
+  const normalized = normalizeIntentText(text);
+  return (
+    /(构成|组成|拆开|拆分|拆解|由什么构成|怎么构成|分别是多少|分别多少)/u.test(
+      normalized,
+    ) &&
+    /(\d+个?钟|总上钟数|总钟数|钟数|上钟数|几个钟|多少钟)/u.test(normalized)
+  );
+}
+
+function hasClockCountIntent(text: string): boolean {
+  const normalized = normalizeIntentText(text);
+  return (
+    /(点钟|加钟).{0,4}(数量|数|单数|单量|多少|几个|几单)/u.test(normalized) ||
+    /(数量|数|单数|单量|多少|几个|几单).{0,4}(点钟|加钟)/u.test(normalized)
   );
 }
 
@@ -603,8 +785,9 @@ function pushMetric(
 }
 
 export function resolveMetricIntent(text: string): HetangMetricIntentResolution {
-  const supported = resolveMatches(SUPPORTED_METRICS, text);
-  const normalized = normalizeIntentText(text);
+  const semanticText = expandMetricIntentText(text);
+  let supported = resolveMatches(SUPPORTED_METRICS, semanticText);
+  const normalized = normalizeIntentText(semanticText);
   const seen = new Set(supported.map((entry) => entry.key));
 
   if (hasPaymentStructurePhrase(normalized)) {
@@ -613,38 +796,68 @@ export function resolveMetricIntent(text: string): HetangMetricIntentResolution 
     }
   }
 
-  const amountIntent = hasAmountIntent(text);
-  const shareIntent = hasShareIntent(text) || hasPaymentStructurePhrase(normalized);
-  const orderIntent = hasOrderIntent(text);
+  const amountIntent = hasAmountIntent(semanticText);
+  const shareIntent = hasShareIntent(semanticText) || hasPaymentStructurePhrase(normalized);
+  const orderIntent = hasOrderIntent(semanticText);
+  const storedBalanceIntent = hasStoredBalanceAmountIntent(semanticText);
+  const clockCountIntent = hasClockCountIntent(semanticText);
   const clockStatusIntent =
-    /(点钟|加钟).{0,6}(情况|表现|数据|咋样|什么情况)/u.test(text) ||
-    /(情况|表现|数据|咋样|什么情况).{0,6}(点钟|加钟)/u.test(text);
+    /(点钟|加钟).{0,6}(情况|表现|数据|咋样|什么情况)/u.test(normalized) ||
+    /(情况|表现|数据|咋样|什么情况).{0,6}(点钟|加钟)/u.test(normalized);
+  const bareClockOnlyIntent = /(点钟|加钟)$/u.test(normalized);
   const clockKpiIntent =
-    amountIntent || shareIntent || /(率|如何|怎么样)/u.test(text) || clockStatusIntent;
+    amountIntent ||
+    shareIntent ||
+    clockCountIntent ||
+    /(率|如何|怎么样)/u.test(normalized) ||
+    clockStatusIntent ||
+    bareClockOnlyIntent;
+  const explicitTotalClockIntent = /(总上钟数|总钟数|总钟|总上钟|上钟总数)/u.test(normalized);
 
-  if (hasTotalClockBreakdownIntent(text)) {
+  if (hasTotalClockBreakdownIntent(semanticText)) {
     pushMetric(supported, seen, "totalClockCount");
   }
 
-  if (clockKpiIntent && /点钟/u.test(text)) {
+  if (clockKpiIntent && /点钟/u.test(normalized)) {
     pushMetric(supported, seen, "pointClockRate");
   }
-  if (clockKpiIntent && /加钟/u.test(text)) {
+  if (clockKpiIntent && /加钟/u.test(normalized)) {
     pushMetric(supported, seen, "addClockRate");
   }
 
-  const matchedPaymentEntities = PAYMENT_ENTITY_DEFINITIONS.filter((entry) =>
-    entry.patterns.some((pattern) => normalized.includes(normalizeIntentText(pattern))),
-  );
-  if (matchedPaymentEntities.length > 0) {
-    for (const entity of matchedPaymentEntities) {
-      if (amountIntent) {
-        pushMetric(supported, seen, entity.amount);
-      }
-      if (shareIntent) {
-        pushMetric(supported, seen, entity.share);
+  if (!explicitTotalClockIntent && /点钟|加钟/u.test(normalized) && clockKpiIntent) {
+    supported = supported.filter((entry) => entry.key !== "totalClockCount");
+    seen.delete("totalClockCount");
+  }
+
+  if (!storedBalanceIntent) {
+    const matchedPaymentEntities = PAYMENT_ENTITY_DEFINITIONS.filter((entry) =>
+      entry.patterns.some((pattern) => normalized.includes(normalizeIntentText(pattern))),
+    );
+    if (matchedPaymentEntities.length > 0) {
+      for (const entity of matchedPaymentEntities) {
+        if (amountIntent) {
+          pushMetric(supported, seen, entity.amount);
+        }
+        if (shareIntent) {
+          pushMetric(supported, seen, entity.share);
+        }
       }
     }
+  }
+
+  if (hasStoredValueAmountIntent(semanticText)) {
+    pushMetric(supported, seen, "rechargeStoredValue");
+  }
+  if (hasBareStoredValueMetricListIntent({ text: semanticText, supported })) {
+    pushMetric(supported, seen, "rechargeStoredValue");
+  }
+  if (hasBareStoredValueStandaloneIntent({ text: semanticText, supported })) {
+    pushMetric(supported, seen, "rechargeStoredValue");
+  }
+
+  if (storedBalanceIntent) {
+    pushMetric(supported, seen, "currentStoredBalance");
   }
 
   const mentionsGroupbuyPlatformStructure =
@@ -675,9 +888,14 @@ export function resolveMetricIntent(text: string): HetangMetricIntentResolution 
     }
   }
 
+  if (orderIntent && /(团购|美团|抖音)/u.test(normalized)) {
+    supported = supported.filter((entry) => entry.key !== "serviceOrderCount");
+    seen.delete("serviceOrderCount");
+  }
+
   return {
     supported,
-    unsupported: resolveMatches(UNSUPPORTED_METRICS, text),
+    unsupported: resolveMatches(UNSUPPORTED_METRICS, semanticText),
   };
 }
 
@@ -754,6 +972,15 @@ function formatTimesPerRoom(value: number | null | undefined): string {
   return `${value.toFixed(2)} 次/间`;
 }
 
+function computeOrderAverageAmount(metrics: DailyStoreMetrics): number {
+  const revenue = metrics.serviceRevenue ?? 0;
+  const orderCount = metrics.serviceOrderCount ?? 0;
+  if (!Number.isFinite(revenue) || !Number.isFinite(orderCount) || orderCount <= 0) {
+    return 0;
+  }
+  return revenue / orderCount;
+}
+
 function getGroupbuyPlatformMetric(
   metrics: DailyStoreMetrics,
   platform: string,
@@ -772,6 +999,8 @@ function formatSupportedMetricValue(
       return `${metric.label}: ${formatCurrency(metrics.antiServiceRevenue)}`;
     case "serviceOrderCount":
       return `${metric.label}: ${formatCount(metrics.serviceOrderCount, "单")}`;
+    case "orderAverageAmount":
+      return `${metric.label}: ${formatCurrency(computeOrderAverageAmount(metrics))}`;
     case "customerCount":
       return `${metric.label}: ${formatCount(metrics.customerCount, "人")}`;
     case "clockEffect":
@@ -945,6 +1174,8 @@ export function getMetricNumericValue(
       return metrics.antiServiceRevenue ?? 0;
     case "serviceOrderCount":
       return metrics.serviceOrderCount ?? 0;
+    case "orderAverageAmount":
+      return computeOrderAverageAmount(metrics);
     case "customerCount":
       return metrics.customerCount ?? 0;
     case "clockEffect":
@@ -1105,6 +1336,18 @@ function shouldRenderDailyClockMetricBreakdown(params: {
   );
 }
 
+function shouldRenderExplicitDailyMetricBreakdown(params: {
+  showDailyBreakdown?: boolean;
+  dailyReports?: DailyStoreReport[];
+  resolution: HetangMetricIntentResolution;
+}): boolean {
+  return (
+    params.showDailyBreakdown === true &&
+    (params.dailyReports?.length ?? 0) > 1 &&
+    params.resolution.supported.length > 0
+  );
+}
+
 function buildDailyClockMetricBreakdownLines(params: {
   dailyReports: DailyStoreReport[];
   resolution: HetangMetricIntentResolution;
@@ -1119,6 +1362,16 @@ function buildDailyClockMetricBreakdownLines(params: {
 
   for (const report of params.dailyReports) {
     const metrics = report.metrics;
+    const breakdownIncomplete = report.complete === false || metrics.incompleteSync;
+    if (breakdownIncomplete) {
+      lines.push(
+        `- ${report.bizDate}：${renderIncompleteDailyClockMetricLine({
+          includePointClock,
+          includeAddClock,
+        })}`,
+      );
+      continue;
+    }
     const metricGroups: string[] = [];
     if (includePointClock) {
       metricGroups.push(
@@ -1146,6 +1399,92 @@ function buildDailyClockMetricBreakdownLines(params: {
   return lines;
 }
 
+function renderDailySupportedMetricValue(
+  metric: MetricMatch<HetangSupportedMetricKey>,
+  metrics: DailyStoreMetrics,
+): string {
+  if (metric.key === "pointClockRate") {
+    return `点钟数量 ${formatCount(metrics.pointClockRecordCount, "个")}，点钟率 ${formatPercentWithCounts({
+      rate: metrics.pointClockRate,
+      numerator: metrics.pointClockRecordCount,
+      denominator: metrics.upClockRecordCount,
+    })}`;
+  }
+  if (metric.key === "addClockRate") {
+    return `加钟数量 ${formatCount(metrics.addClockRecordCount, "个")}，加钟率 ${formatPercentWithCounts({
+      rate: metrics.addClockRate,
+      numerator: metrics.addClockRecordCount,
+      denominator: metrics.upClockRecordCount,
+    })}`;
+  }
+  return formatSupportedMetricValue(metric, metrics);
+}
+
+function renderIncompleteDailyMetricLine(resolution: HetangMetricIntentResolution): string {
+  const onlyClockMetrics =
+    resolution.supported.length > 0 &&
+    resolution.supported.every(
+      (metric) => metric.key === "pointClockRate" || metric.key === "addClockRate",
+    );
+  if (onlyClockMetrics) {
+    return renderIncompleteDailyClockMetricLine({
+      includePointClock: resolution.supported.some((metric) => metric.key === "pointClockRate"),
+      includeAddClock: resolution.supported.some((metric) => metric.key === "addClockRate"),
+    });
+  }
+  const labels = resolution.supported.map((metric) => metric.label).filter((label) => label.trim().length > 0);
+  if (labels.length === 0) {
+    return "当日明细待补齐，暂不输出分天口径";
+  }
+  if (labels.length === 1) {
+    return `${labels[0]} 明细待补齐，暂不输出当日分天口径`;
+  }
+  return `${labels.join(" / ")} 明细待补齐，暂不输出当日分天口径`;
+}
+
+function buildDailyMetricBreakdownLines(params: {
+  dailyReports: DailyStoreReport[];
+  resolution: HetangMetricIntentResolution;
+}): string[] {
+  const lines = ["- 分天明细:"];
+  for (const report of params.dailyReports) {
+    if (report.complete === false || report.metrics.incompleteSync) {
+      lines.push(`- ${report.bizDate}：${renderIncompleteDailyMetricLine(params.resolution)}`);
+      continue;
+    }
+    const metricGroups = params.resolution.supported.map((metric) =>
+      renderDailySupportedMetricValue(metric, report.metrics),
+    );
+    lines.push(`- ${report.bizDate}：${metricGroups.join("；")}`);
+  }
+  return lines;
+}
+
+function renderIncompleteDailyClockMetricLine(params: {
+  includePointClock: boolean;
+  includeAddClock: boolean;
+}): string {
+  if (params.includePointClock && params.includeAddClock) {
+    return "点钟/加钟明细待补齐，暂不输出当日点钟/加钟口径";
+  }
+  if (params.includePointClock) {
+    return "点钟明细待补齐，暂不输出当日点钟数量/点钟率";
+  }
+  return "加钟明细待补齐，暂不输出当日加钟数量/加钟率";
+}
+
+function hasIncompleteDailyClockMetricCoverage(params: {
+  dailyReports?: DailyStoreReport[];
+  resolution: HetangMetricIntentResolution;
+}): boolean {
+  return (
+    shouldRenderDailyClockMetricBreakdown(params) &&
+    (params.dailyReports ?? []).some(
+      (report) => report.complete === false || report.metrics?.incompleteSync,
+    )
+  );
+}
+
 export function renderMetricQueryResponse(params: {
   storeName: string;
   bizDate: string;
@@ -1153,14 +1492,32 @@ export function renderMetricQueryResponse(params: {
   complete: boolean;
   resolution: HetangMetricIntentResolution;
   dailyReports?: DailyStoreReport[];
+  showDailyBreakdown?: boolean;
 }): string {
   const lines = [`${params.storeName} ${params.bizDate} 指标查询`];
+  const hasIncompleteClockCoverage = hasIncompleteDailyClockMetricCoverage({
+    dailyReports: params.dailyReports,
+    resolution: params.resolution,
+  });
 
   if (!params.complete || params.metrics.incompleteSync) {
     lines.push("注意：当前营业日同步尚未完全收口，以下指标仅供参考。");
   }
 
   if (
+    shouldRenderExplicitDailyMetricBreakdown({
+      showDailyBreakdown: params.showDailyBreakdown,
+      dailyReports: params.dailyReports,
+      resolution: params.resolution,
+    })
+  ) {
+    lines.push(
+      ...buildDailyMetricBreakdownLines({
+        dailyReports: params.dailyReports ?? [],
+        resolution: params.resolution,
+      }),
+    );
+  } else if (
     shouldRenderDailyClockMetricBreakdown({
       dailyReports: params.dailyReports,
       resolution: params.resolution,
@@ -1176,12 +1533,27 @@ export function renderMetricQueryResponse(params: {
 
   for (const metric of params.resolution.supported) {
     if (metric.key === "pointClockRate") {
-      lines.push(`- 点钟数量: ${formatCount(params.metrics.pointClockRecordCount, "个")}`);
+      lines.push(
+        `- 点钟数量${hasIncompleteClockCoverage ? "(已收口天数)" : ""}: ${formatCount(params.metrics.pointClockRecordCount, "个")}`,
+      );
     }
     if (metric.key === "addClockRate") {
-      lines.push(`- 加钟数量: ${formatCount(params.metrics.addClockRecordCount, "个")}`);
+      lines.push(
+        `- 加钟数量${hasIncompleteClockCoverage ? "(已收口天数)" : ""}: ${formatCount(params.metrics.addClockRecordCount, "个")}`,
+      );
     }
-    lines.push(`- ${formatSupportedMetricValue(metric, params.metrics)}`);
+    lines.push(
+      `- ${formatSupportedMetricValue(
+        hasIncompleteClockCoverage &&
+          (metric.key === "pointClockRate" || metric.key === "addClockRate")
+          ? {
+              ...metric,
+              label: `${metric.label}(已收口天数)`,
+            }
+          : metric,
+        params.metrics,
+      )}`,
+    );
   }
 
   if (

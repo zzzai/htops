@@ -19,7 +19,13 @@ import { hasMetricIntent, renderMetricQueryResponse, resolveMetricIntent } from 
 import { executeHetangQuery } from "./query-engine.js";
 import { HetangOpsRuntime, isHetangAnalysisQueueLimitError } from "./runtime.js";
 import { resolveReportBizDate } from "./time.js";
-import { type HetangEmployeeBinding, type HetangOpsConfig } from "./types.js";
+import { resolvePreviousMonthKey } from "./monthly-report.js";
+import {
+  type CustomerObservationSourceRole,
+  type HetangEmployeeBinding,
+  type HetangOpsConfig,
+  type MemberReactivationFeedbackStatus,
+} from "./types.js";
 
 function resolveOrgId(config: HetangOpsConfig, token: string | undefined): string | undefined {
   if (!token) {
@@ -42,17 +48,25 @@ export function formatHetangCommandHelp(): string {
     "       /hetang sync [OrgId|门店名]",
     "       /hetang report [OrgId|门店名] [YYYY-MM-DD]",
     "       /hetang report [OrgId|门店名] [YYYY-MM-DD] [指标...]",
+    "       /hetang report monthly [YYYY-MM]",
     "       /hetang query [自然语言问题]",
     "       /hetang analysis list [OrgId|门店名] [pending|running|completed|failed]",
     "       /hetang analysis status [任务ID]",
     "       /hetang analysis retry [任务ID]",
+    "       /hetang chart weekly [YYYY-MM-DD]",
     "       /hetang queue status",
     "       /hetang queue deadletters [job|subscriber|all]",
     "       /hetang queue replay [死信ID]",
+    "       /hetang queue cleanup stale-invalid-chatid-subscriber [limit]",
     "       /hetang action list [OrgId|门店名]",
     "       /hetang action create [OrgId|门店名] [分类] [low|medium|high] [标题]",
     "       /hetang action approve|reject|start|done|fail [动作单ID] [备注/分数]",
     "       /hetang learning [OrgId|门店名]",
+    "       /hetang observation add [OrgId|门店名] [memberId] [signalDomain] [signalKey] [值] [备注]",
+    "       /hetang review",
+    "       /hetang reactivation summary [OrgId|门店名] [YYYY-MM-DD]",
+    "       /hetang reactivation tasks [OrgId|门店名] [YYYY-MM-DD] [pending|contacted|replied|booked|arrived|closed]",
+    "       /hetang reactivation update [OrgId|门店名] [YYYY-MM-DD] [memberId] [pending|contacted|replied|booked|arrived|closed] [跟进人] [备注]",
     "       /hetang intel run",
     "       /hetang intel latest",
     "       /hetang intel issue [issueId]",
@@ -65,6 +79,10 @@ export function formatHetangCommandHelp(): string {
 
 function isDateToken(value: string | undefined): boolean {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/u.test(value.trim()));
+}
+
+function isMonthToken(value: string | undefined): boolean {
+  return Boolean(value && /^\d{4}-\d{2}$/u.test(value.trim()));
 }
 
 function summarizeText(value: string): string {
@@ -156,11 +174,21 @@ function parseReportArgs(
   config: HetangOpsConfig,
   tokens: string[],
 ): {
+  reportKind: "daily" | "monthly";
   requestedOrgId?: string;
   requestedStoreToken?: string;
   bizDate?: string;
+  month?: string;
   metricIntentText?: string;
 } {
+  const subAction = tokens[1]?.toLowerCase();
+  if (subAction === "monthly" || subAction === "month" || tokens[1] === "月报") {
+    return {
+      reportKind: "monthly",
+      month: isMonthToken(tokens[2]) ? tokens[2] : undefined,
+    };
+  }
+
   let index = 1;
   let requestedStoreToken: string | undefined;
   let requestedOrgId: string | undefined;
@@ -178,6 +206,7 @@ function parseReportArgs(
   }
 
   return {
+    reportKind: "daily",
     requestedStoreToken,
     requestedOrgId,
     bizDate,
@@ -210,10 +239,40 @@ type IntelArgs = {
   issueId?: string;
 };
 
+type ChartArgs = {
+  subAction: string;
+  weekEndBizDate?: string;
+};
+
+type ReactivationArgs = {
+  subAction: string;
+  requestedStoreToken?: string;
+  requestedOrgId?: string;
+  bizDate?: string;
+  feedbackStatus?: MemberReactivationFeedbackStatus;
+  memberId?: string;
+  followedBy?: string;
+  note?: string;
+  limit?: number;
+};
+
+type ObservationArgs = {
+  subAction: string;
+  requestedStoreToken?: string;
+  requestedOrgId?: string;
+  memberId?: string;
+  signalDomain?: string;
+  signalKey?: string;
+  valueText?: string;
+  note?: string;
+};
+
 type QueueArgs = {
-  subAction: "status" | "deadletters" | "replay";
+  subAction: "status" | "deadletters" | "replay" | "cleanup";
   deadLetterScope?: "job" | "subscriber";
   deadLetterKey?: string;
+  residualClass?: "stale-invalid-chatid-subscriber";
+  limit?: number;
 };
 
 function isPriorityToken(value: string | undefined): value is "low" | "medium" | "high" {
@@ -331,11 +390,132 @@ function parseLearningArgs(config: HetangOpsConfig, tokens: string[]) {
   };
 }
 
+function isMemberReactivationFeedbackStatus(
+  value: string | undefined,
+): value is MemberReactivationFeedbackStatus {
+  return (
+    value === "pending" ||
+    value === "contacted" ||
+    value === "replied" ||
+    value === "booked" ||
+    value === "arrived" ||
+    value === "closed"
+  );
+}
+
+function parseReactivationArgs(config: HetangOpsConfig, tokens: string[]): ReactivationArgs {
+  const subAction = tokens[1]?.toLowerCase() ?? "summary";
+  let index = 2;
+  let requestedStoreToken: string | undefined;
+  let requestedOrgId: string | undefined;
+
+  const candidateStoreToken = tokens[index];
+  if (candidateStoreToken) {
+    const candidateOrgId = resolveOrgId(config, candidateStoreToken);
+    const shouldTreatAsStoreToken =
+      Boolean(candidateOrgId) ||
+      ((subAction === "summary" || subAction === "tasks") &&
+        !isDateToken(candidateStoreToken) &&
+        !isMemberReactivationFeedbackStatus(candidateStoreToken));
+    if (shouldTreatAsStoreToken) {
+      requestedStoreToken = candidateStoreToken;
+      requestedOrgId = candidateOrgId;
+      index += 1;
+    }
+  }
+
+  const bizDate = isDateToken(tokens[index]) ? tokens[index] : undefined;
+  if (bizDate) {
+    index += 1;
+  }
+
+  if (subAction === "tasks") {
+    const feedbackStatusToken = tokens[index];
+    const feedbackStatus = isMemberReactivationFeedbackStatus(feedbackStatusToken)
+      ? feedbackStatusToken
+      : undefined;
+    if (feedbackStatus) {
+      index += 1;
+    }
+    const limitToken = Number(tokens[index]);
+    const limit = Number.isInteger(limitToken) && limitToken > 0 ? limitToken : undefined;
+    return {
+      subAction,
+      requestedStoreToken,
+      requestedOrgId,
+      bizDate,
+      feedbackStatus,
+      limit,
+    };
+  }
+
+  if (subAction === "update") {
+    const memberId = tokens[index];
+    const feedbackStatusToken = tokens[index + 1];
+    const feedbackStatus = isMemberReactivationFeedbackStatus(feedbackStatusToken)
+      ? feedbackStatusToken
+      : undefined;
+    const followedBy = tokens[index + 2];
+    const note = tokens.slice(index + 3).join(" ").trim();
+    return {
+      subAction,
+      requestedStoreToken,
+      requestedOrgId,
+      bizDate,
+      memberId,
+      feedbackStatus,
+      followedBy,
+      note: note || undefined,
+    };
+  }
+
+  return {
+    subAction,
+    requestedStoreToken,
+    requestedOrgId,
+    bizDate,
+  };
+}
+
+function parseObservationArgs(config: HetangOpsConfig, tokens: string[]): ObservationArgs {
+  const subAction = tokens[1]?.toLowerCase() ?? "add";
+  let index = 2;
+  let requestedStoreToken: string | undefined;
+  let requestedOrgId: string | undefined;
+
+  const candidateStoreToken = tokens[index];
+  const candidateOrgId = resolveOrgId(config, candidateStoreToken);
+  if (candidateOrgId) {
+    requestedStoreToken = candidateStoreToken;
+    requestedOrgId = candidateOrgId;
+    index += 1;
+  }
+
+  return {
+    subAction,
+    requestedStoreToken,
+    requestedOrgId,
+    memberId: tokens[index],
+    signalDomain: tokens[index + 1],
+    signalKey: tokens[index + 2],
+    valueText: tokens[index + 3],
+    note: tokens.slice(index + 4).join(" ").trim() || undefined,
+  };
+}
+
 function parseIntelArgs(tokens: string[]): IntelArgs {
   const subAction = tokens[1]?.toLowerCase() ?? "latest";
   return {
     subAction,
     issueId: subAction === "issue" ? tokens[2] : undefined,
+  };
+}
+
+function parseChartArgs(tokens: string[]): ChartArgs {
+  const subAction = tokens[1]?.toLowerCase() ?? "weekly";
+  return {
+    subAction,
+    weekEndBizDate: isDateToken(tokens[2]) ? tokens[2] : undefined,
   };
 }
 
@@ -353,6 +533,18 @@ function parseQueueArgs(tokens: string[]): QueueArgs {
     return {
       subAction,
       deadLetterKey: tokens[2],
+    };
+  }
+  if (subAction === "cleanup") {
+    const residualClass =
+      tokens[2]?.toLowerCase() === "stale-invalid-chatid-subscriber"
+        ? "stale-invalid-chatid-subscriber"
+        : undefined;
+    const parsedLimit = Number(tokens[3]);
+    return {
+      subAction,
+      residualClass,
+      limit: Number.isInteger(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined,
     };
   }
   return {
@@ -492,6 +684,186 @@ function formatLearningSummary(summary: {
     `单次完成分析平均落地 ${summary.analysisAverageActionsPerCompletedJob === null ? "N/A" : `${summary.analysisAverageActionsPerCompletedJob.toFixed(1)} 条动作`}`,
     `高效果类目：${topCategory}`,
   ].join("\n");
+}
+
+function formatConversationReviewSummary(summary: {
+  latestRun: {
+    reviewRunId: string;
+    reviewDate: string;
+    status: string;
+    findingCount: number;
+  } | null;
+  summary: {
+    reviewMode: string;
+    reviewHeadline?: string;
+  } | null;
+  topFindingTypes: Array<{
+    findingType: string;
+    count: number;
+  }>;
+  suggestedActionCounts: Array<{
+    suggestedActionType: string;
+    count: number;
+  }>;
+  followupTargetCounts: Array<{
+    followupTarget: string;
+    count: number;
+  }>;
+  unresolvedHighSeverityFindings: Array<{
+    findingType: string;
+    title: string;
+    summary: string;
+  }>;
+}): string {
+  if (!summary.latestRun) {
+    return "暂无对话复盘批次。";
+  }
+
+  return [
+    "对话复盘摘要",
+    `批次：${summary.latestRun.reviewRunId}`,
+    `日期：${summary.latestRun.reviewDate}`,
+    `状态：${summary.latestRun.status}`,
+    `问题数：${summary.latestRun.findingCount}`,
+    `模式：${summary.summary?.reviewMode ?? "deterministic-only"}`,
+    ...(summary.summary?.reviewHeadline ? [`优先结论：${summary.summary.reviewHeadline}`] : []),
+    `Top Finding：${
+      summary.topFindingTypes.length > 0
+        ? summary.topFindingTypes
+            .map((item) => `${item.findingType} ${item.count}`)
+            .join("；")
+        : "无"
+    }`,
+    `建议动作：${
+      summary.suggestedActionCounts.length > 0
+        ? summary.suggestedActionCounts
+            .map((item) => `${item.suggestedActionType} ${item.count}`)
+            .join("；")
+        : "无"
+    }`,
+    `进入主链：${
+      summary.followupTargetCounts.length > 0
+        ? summary.followupTargetCounts
+            .map((item) => `${item.followupTarget} ${item.count}`)
+            .join("；")
+        : "无"
+    }`,
+    `高优先未解：${
+      summary.unresolvedHighSeverityFindings.length > 0
+        ? summary.unresolvedHighSeverityFindings
+            .map((item) => `[${item.findingType}] ${item.title}`)
+            .join("；")
+        : "无"
+    }`,
+  ].join("\n");
+}
+
+function formatPercent(rate: number | null): string {
+  return rate === null ? "N/A" : `${(rate * 100).toFixed(1)}%`;
+}
+
+function formatReactivationExecutionSummary(params: {
+  storeName: string;
+  summary: {
+    bizDate: string;
+    totalTaskCount: number;
+    pendingCount: number;
+    contactedCount: number;
+    bookedCount: number;
+    arrivedCount: number;
+    contactRate: number | null;
+    bookingRate: number | null;
+    arrivalRate: number | null;
+    priorityBandCounts: Array<{
+      priorityBand: string;
+      count: number;
+    }>;
+    followupBucketCounts: Array<{
+      followupBucket: string;
+      count: number;
+    }>;
+    topPendingTasks: Array<{
+      customerDisplayName: string;
+      priorityBand: string;
+      daysSinceLastVisit: number;
+      currentStoredBalanceInferred: number;
+    }>;
+  };
+}): string {
+  const topPending =
+    params.summary.topPendingTasks.length > 0
+      ? params.summary.topPendingTasks
+          .map(
+            (task) =>
+              `${task.customerDisplayName}(${task.priorityBand}，${task.daysSinceLastVisit}天未到店，余额${task.currentStoredBalanceInferred.toFixed(0)}元)`,
+          )
+          .join("；")
+      : "无";
+  return [
+    `${params.storeName} ${params.summary.bizDate} 召回执行摘要`,
+    `任务总数 ${params.summary.totalTaskCount}｜待跟进 ${params.summary.pendingCount}｜已联系 ${params.summary.contactedCount}｜已预约 ${params.summary.bookedCount}｜已到店 ${params.summary.arrivedCount}`,
+    `联系率 ${formatPercent(params.summary.contactRate)}｜预约率 ${formatPercent(params.summary.bookingRate)}｜到店率 ${formatPercent(params.summary.arrivalRate)}`,
+    `优先级分布：${
+      params.summary.priorityBandCounts.length > 0
+        ? params.summary.priorityBandCounts
+            .map((entry) => `${entry.priorityBand} ${entry.count}`)
+            .join("；")
+        : "无"
+    }`,
+    `召回桶：${
+      params.summary.followupBucketCounts.length > 0
+        ? params.summary.followupBucketCounts
+            .map((entry) => `${entry.followupBucket} ${entry.count}`)
+            .join("；")
+        : "无"
+    }`,
+    `高优先待跟进：${topPending}`,
+  ].join("\n");
+}
+
+function formatReactivationExecutionTasks(params: {
+  storeName: string;
+  bizDate: string;
+  feedbackStatus?: MemberReactivationFeedbackStatus;
+  tasks: Array<{
+    memberId: string;
+    customerDisplayName: string;
+    priorityBand: string;
+    feedbackStatus: MemberReactivationFeedbackStatus;
+    daysSinceLastVisit: number;
+    currentStoredBalanceInferred: number;
+    reasonSummary: string;
+    touchAdviceSummary: string;
+  }>;
+}): string {
+  if (params.tasks.length === 0) {
+    return `${params.storeName} ${params.bizDate} 暂无召回任务。`;
+  }
+  return [
+    `${params.storeName} ${params.bizDate} 召回任务`,
+    `${params.feedbackStatus ?? "全部"} ${params.tasks.length} 条`,
+    ...params.tasks.map(
+      (task) =>
+        `- ${task.memberId} ${task.customerDisplayName} [${task.priorityBand}/${task.feedbackStatus}] ${task.daysSinceLastVisit}天未到店｜余额${task.currentStoredBalanceInferred.toFixed(0)}元｜${task.reasonSummary}｜${task.touchAdviceSummary}`,
+    ),
+  ].join("\n");
+}
+
+function buildMemberReactivationFeedbackFlags(status: MemberReactivationFeedbackStatus) {
+  switch (status) {
+    case "pending":
+      return { contacted: false, replied: false, booked: false, arrived: false };
+    case "contacted":
+      return { contacted: true, replied: false, booked: false, arrived: false };
+    case "replied":
+      return { contacted: true, replied: true, booked: false, arrived: false };
+    case "booked":
+      return { contacted: true, replied: true, booked: true, arrived: false };
+    case "arrived":
+      return { contacted: true, replied: true, booked: true, arrived: true };
+    case "closed":
+      return { contacted: true, replied: false, booked: false, arrived: false };
+  }
 }
 
 function summarizeFallbackStageBreakdown(
@@ -815,6 +1187,8 @@ export async function runHetangTypedQuery(params: {
     reason: access.reason,
     commandBody,
     responseExcerpt: summarizeText(result.text),
+    queryEntrySource: result.entry?.source,
+    queryEntryReason: result.entry?.reason,
   });
   return result.text;
 }
@@ -899,10 +1273,15 @@ export async function runHetangCommand(params: {
 
   const reportArgs = action === "report" ? parseReportArgs(params.config, tokens) : undefined;
   const analysisArgs = action === "analysis" ? parseAnalysisArgs(params.config, tokens) : undefined;
+  const chartArgs = action === "chart" ? parseChartArgs(tokens) : undefined;
   const intelArgs = action === "intel" ? parseIntelArgs(tokens) : undefined;
   const queueArgs = action === "queue" ? parseQueueArgs(tokens) : undefined;
   const actionArgs = action === "action" ? parseActionArgs(params.config, tokens) : undefined;
   const learningArgs = action === "learning" ? parseLearningArgs(params.config, tokens) : undefined;
+  const reactivationArgs =
+    action === "reactivation" ? parseReactivationArgs(params.config, tokens) : undefined;
+  const observationArgs =
+    action === "observation" ? parseObservationArgs(params.config, tokens) : undefined;
   const towerArgs = action === "tower" ? parseTowerArgs(params.config, tokens) : undefined;
   const queryText = action === "query" ? tokens.slice(1).join(" ").trim() : undefined;
   const metricIntent = reportArgs ? resolveMetricIntent(reportArgs.metricIntentText ?? "") : null;
@@ -929,6 +1308,10 @@ export async function runHetangCommand(params: {
           ? (actionArgs?.requestedOrgId ?? existingAction?.orgId)
           : action === "learning"
             ? learningArgs?.requestedOrgId
+            : action === "reactivation"
+              ? reactivationArgs?.requestedOrgId
+            : action === "observation"
+              ? observationArgs?.requestedOrgId
             : action === "tower"
               ? towerArgs?.requestedOrgId
               : action === "sync"
@@ -943,6 +1326,10 @@ export async function runHetangCommand(params: {
           ? actionArgs?.requestedStoreToken
           : action === "learning"
             ? learningArgs?.requestedStoreToken
+            : action === "reactivation"
+              ? reactivationArgs?.requestedStoreToken
+            : action === "observation"
+              ? observationArgs?.requestedStoreToken
             : action === "tower"
               ? towerArgs?.scopeToken !== "global"
                 ? towerArgs?.scopeToken
@@ -1111,6 +1498,35 @@ export async function runHetangCommand(params: {
       return text;
     }
 
+    if (queueArgs?.subAction === "cleanup") {
+      if (queueArgs.residualClass !== "stale-invalid-chatid-subscriber") {
+        return "请使用：/hetang queue cleanup stale-invalid-chatid-subscriber [limit]";
+      }
+      const cleanup =
+        await params.runtime.cleanupStaleInvalidChatidSubscriberResiduals({
+          resolvedAt: occurredAt,
+          limit: queueArgs.limit,
+        });
+      const text =
+        `已清理历史坏订阅残留 ${cleanup.residualClass}：` +
+        `subscriber ${cleanup.cleanedSubscriberCount}，` +
+        `job ${cleanup.cleanedJobCount}，` +
+        `deadletter ${cleanup.resolvedDeadLetterCount}。`;
+      await params.runtime.recordCommandAudit({
+        occurredAt,
+        channel,
+        senderId,
+        commandName: "hetang",
+        action,
+        decision: "allowed",
+        consumeQuota: false,
+        reason: access.reason,
+        commandBody,
+        responseExcerpt: summarizeText(text),
+      });
+      return text;
+    }
+
     const summary = await params.runtime.getQueueStatus(now);
     const text = formatQueueStatusResponse(summary);
     await params.runtime.recordCommandAudit({
@@ -1238,6 +1654,44 @@ export async function runHetangCommand(params: {
     return "请使用：/hetang intel run|latest|issue [issueId]|sources";
   }
 
+  if (action === "chart") {
+    if (chartArgs?.subAction !== "weekly") {
+      return "请使用：/hetang chart weekly [YYYY-MM-DD]";
+    }
+    const weekEndBizDate =
+      chartArgs.weekEndBizDate ??
+      resolveReportBizDate({
+        now,
+        timeZone: params.config.timeZone,
+        cutoffLocalTime: params.config.sync.businessDayCutoffLocalTime,
+      });
+    await (
+      params.runtime as HetangOpsRuntime & {
+        sendWeeklyChartImage: (params: {
+          weekEndBizDate?: string;
+          now?: Date;
+        }) => Promise<string>;
+      }
+    ).sendWeeklyChartImage({
+      weekEndBizDate,
+      now,
+    });
+    const text = `荷塘悦色5店周经营图表已发送（截至 ${weekEndBizDate}）。`;
+    await params.runtime.recordCommandAudit({
+      occurredAt,
+      channel,
+      senderId,
+      commandName: "hetang",
+      action,
+      decision: "allowed",
+      consumeQuota: access.consumeQuota,
+      reason: access.reason,
+      commandBody,
+      responseExcerpt: summarizeText(text),
+    });
+    return text;
+  }
+
   if (action === "query") {
     if (!queryText) {
       const text = "请直接输入自然语言问题，例如：/hetang query 义乌店昨天营收";
@@ -1344,6 +1798,8 @@ export async function runHetangCommand(params: {
       reason: access.reason,
       commandBody,
       responseExcerpt: summarizeText(result.text),
+      queryEntrySource: result.entry?.source,
+      queryEntryReason: result.entry?.reason,
     });
     return result.text;
   }
@@ -1621,6 +2077,201 @@ export async function runHetangCommand(params: {
     return text;
   }
 
+  if (action === "observation") {
+    const orgId = access.effectiveOrgId ?? requestedOrgId;
+    const storeName =
+      (orgId && params.config.stores.find((entry) => entry.orgId === orgId)?.storeName) ??
+      orgId ??
+      "未知门店";
+    if (observationArgs?.subAction !== "add") {
+      return "请使用：/hetang observation add [OrgId|门店名] [memberId] [signalDomain] [signalKey] [值] [备注]";
+    }
+    if (
+      !orgId ||
+      !observationArgs.memberId ||
+      !observationArgs.signalDomain ||
+      !observationArgs.signalKey ||
+      !observationArgs.valueText
+    ) {
+      return "请使用：/hetang observation add [OrgId|门店名] [memberId] [signalDomain] [signalKey] [值] [备注]";
+    }
+    const sourceRole: CustomerObservationSourceRole = "store_manager";
+    const captured = await params.runtime.captureCustomerServiceObservation({
+      orgId,
+      memberId: observationArgs.memberId,
+      signalDomain: observationArgs.signalDomain,
+      signalKey: observationArgs.signalKey,
+      valueText: observationArgs.valueText,
+      rawNote: observationArgs.note,
+      observerId: senderId,
+      operatorId: senderId,
+      sourceRole,
+      observedAt: occurredAt,
+      updatedAt: occurredAt,
+    });
+    const text = [
+      "顾客观察已记录",
+      `门店：${storeName}`,
+      `会员：${observationArgs.memberId}`,
+      `信号：${observationArgs.signalDomain}.${observationArgs.signalKey}`,
+      `值：${observationArgs.valueText}`,
+      `来源角色：${sourceRole}`,
+      `已发布信号：${captured.publishedSignalCount}`,
+      ...(observationArgs.note ? [`备注：${observationArgs.note}`] : []),
+    ].join("\n");
+    await params.runtime.recordCommandAudit({
+      occurredAt,
+      channel,
+      senderId,
+      commandName: "hetang",
+      action,
+      requestedOrgId: orgId,
+      effectiveOrgId: orgId,
+      decision: "allowed",
+      consumeQuota: access.consumeQuota,
+      reason: access.reason,
+      commandBody,
+      responseExcerpt: summarizeText(text),
+    });
+    return text;
+  }
+
+  if (action === "review") {
+    const summary = await params.runtime.getConversationReviewSummary();
+    const text = formatConversationReviewSummary(summary);
+    await params.runtime.recordCommandAudit({
+      occurredAt,
+      channel,
+      senderId,
+      commandName: "hetang",
+      action,
+      decision: "allowed",
+      consumeQuota: access.consumeQuota,
+      reason: access.reason,
+      commandBody,
+      responseExcerpt: summarizeText(text),
+    });
+    return text;
+  }
+
+  if (action === "reactivation") {
+    const orgId = access.effectiveOrgId ?? requestedOrgId;
+    const storeName =
+      (orgId && params.config.stores.find((entry) => entry.orgId === orgId)?.storeName) ??
+      orgId ??
+      "未知门店";
+    const bizDate =
+      reactivationArgs?.bizDate ??
+      resolveReportBizDate({
+        now,
+        timeZone: params.config.timeZone,
+        cutoffLocalTime: params.config.sync.businessDayCutoffLocalTime,
+      });
+
+    if (reactivationArgs?.subAction === "summary") {
+      if (!orgId) {
+        return "请使用：/hetang reactivation summary [OrgId|门店名] [YYYY-MM-DD]";
+      }
+      const summary = await params.runtime.getMemberReactivationExecutionSummary({
+        orgId,
+        bizDate,
+        pendingLimit: 5,
+      });
+      const text = formatReactivationExecutionSummary({ storeName, summary });
+      await params.runtime.recordCommandAudit({
+        occurredAt,
+        channel,
+        senderId,
+        commandName: "hetang",
+        action,
+        requestedOrgId: orgId,
+        effectiveOrgId: orgId,
+        decision: "allowed",
+        consumeQuota: access.consumeQuota,
+        reason: access.reason,
+        commandBody,
+        responseExcerpt: summarizeText(text),
+      });
+      return text;
+    }
+
+    if (reactivationArgs?.subAction === "tasks") {
+      if (!orgId) {
+        return "请使用：/hetang reactivation tasks [OrgId|门店名] [YYYY-MM-DD] [pending|contacted|replied|booked|arrived|closed]";
+      }
+      const tasks = await params.runtime.listMemberReactivationExecutionTasks({
+        orgId,
+        bizDate,
+        feedbackStatus: reactivationArgs.feedbackStatus,
+        limit: reactivationArgs.limit ?? 10,
+      });
+      const text = formatReactivationExecutionTasks({
+        storeName,
+        bizDate,
+        feedbackStatus: reactivationArgs.feedbackStatus,
+        tasks,
+      });
+      await params.runtime.recordCommandAudit({
+        occurredAt,
+        channel,
+        senderId,
+        commandName: "hetang",
+        action,
+        requestedOrgId: orgId,
+        effectiveOrgId: orgId,
+        decision: "allowed",
+        consumeQuota: access.consumeQuota,
+        reason: access.reason,
+        commandBody,
+        responseExcerpt: summarizeText(text),
+      });
+      return text;
+    }
+
+    if (reactivationArgs?.subAction === "update") {
+      if (!orgId || !bizDate || !reactivationArgs.memberId || !reactivationArgs.feedbackStatus) {
+        return "请使用：/hetang reactivation update [OrgId|门店名] [YYYY-MM-DD] [memberId] [pending|contacted|replied|booked|arrived|closed] [跟进人] [备注]";
+      }
+      await params.runtime.upsertMemberReactivationExecutionFeedback({
+        orgId,
+        bizDate,
+        memberId: reactivationArgs.memberId,
+        feedbackStatus: reactivationArgs.feedbackStatus,
+        followedBy: reactivationArgs.followedBy ?? binding?.employeeName ?? senderId,
+        followedAt: occurredAt,
+        ...buildMemberReactivationFeedbackFlags(reactivationArgs.feedbackStatus),
+        note: reactivationArgs.note,
+        updatedAt: occurredAt,
+      });
+      const text = [
+        "召回反馈已更新",
+        `门店：${storeName}`,
+        `日期：${bizDate}`,
+        `会员：${reactivationArgs.memberId}`,
+        `状态：${reactivationArgs.feedbackStatus}`,
+        `跟进人：${reactivationArgs.followedBy ?? binding?.employeeName ?? senderId ?? "-"}`,
+        ...(reactivationArgs.note ? [`备注：${reactivationArgs.note}`] : []),
+      ].join("\n");
+      await params.runtime.recordCommandAudit({
+        occurredAt,
+        channel,
+        senderId,
+        commandName: "hetang",
+        action,
+        requestedOrgId: orgId,
+        effectiveOrgId: orgId,
+        decision: "allowed",
+        consumeQuota: access.consumeQuota,
+        reason: access.reason,
+        commandBody,
+        responseExcerpt: summarizeText(text),
+      });
+      return text;
+    }
+
+    return "请使用：/hetang reactivation summary|tasks|update ...";
+  }
+
   if (action === "tower") {
     if (towerArgs?.subAction === "set") {
       if (!towerArgs.settingKey || towerArgs.value === undefined) {
@@ -1701,6 +2352,53 @@ export async function runHetangCommand(params: {
   }
 
   if (action === "report") {
+    if (reportArgs?.reportKind === "monthly") {
+      if (binding?.role !== "hq") {
+        const text = messageForDeniedReason("hq-only");
+        await params.runtime.recordCommandAudit({
+          occurredAt,
+          channel,
+          senderId,
+          commandName: "hetang",
+          action,
+          decision: "denied",
+          consumeQuota: false,
+          reason: "hq-only",
+          commandBody,
+          responseExcerpt: summarizeText(text),
+        });
+        return text;
+      }
+
+      const reportBizDate = resolveReportBizDate({
+        now,
+        timeZone: params.config.timeZone,
+        cutoffLocalTime: params.config.sync.businessDayCutoffLocalTime,
+      });
+      const month = reportArgs.month ?? resolvePreviousMonthKey(reportBizDate.slice(0, 7));
+      const text = await (
+        params.runtime as HetangOpsRuntime & {
+          renderMonthlyReport: (params: { month?: string; now?: Date }) => Promise<string>;
+        }
+      ).renderMonthlyReport({
+        month,
+        now,
+      });
+      await params.runtime.recordCommandAudit({
+        occurredAt,
+        channel,
+        senderId,
+        commandName: "hetang",
+        action,
+        decision: "allowed",
+        consumeQuota: access.consumeQuota,
+        reason: access.reason,
+        commandBody,
+        responseExcerpt: summarizeText(text),
+      });
+      return text;
+    }
+
     const orgId = access.effectiveOrgId ?? requestedOrgId ?? params.config.stores[0]?.orgId;
     if (!orgId) {
       return "No store configured.";

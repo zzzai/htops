@@ -125,6 +125,11 @@ const ROUTE_REGISTRY: RouteDefinition[] = [
     resolve: (context) => resolveBaseRoute(context, "tech_profile"),
   },
   {
+    id: "tech-current",
+    when: (context) => context.mentionsTechCurrentKeyword,
+    resolve: (context) => resolveBaseRoute(context, "tech_current"),
+  },
+  {
     id: "tech-followup-ranking",
     when: (context) =>
       context.semanticSlots.object === "tech" &&

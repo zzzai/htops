@@ -571,60 +571,60 @@ export function buildLegacyConsumeRows(params: {
     new Map<string, LegacySettlementDetailRow[]>(),
   );
 
-  return dedupedConsumeRows
-    .map((row) => {
-      const settleId = text(row.EXE_CONSUMERITEMS_ID);
-      const optTime = text(row.SETTLEMENT_TIME);
-      if (!settleId || !optTime) {
-        return null;
-      }
-      const settlementRows = settlementRowsByConsumeId.get(settleId) ?? [];
-      const memberSettlement = settlementRows.find((entry) => text(entry.MCARD_ID));
-      const raw = {
-        SettleId: settleId,
-        SettleNo: text(row.EXE_SETTLEMENT_SHEET_SN),
-        Consume: numeric(row.CONSUM_MONEY),
-        Pay: numeric(row.PAY_MONEY),
-        DiscountAmount: numeric(row.DISCOUNT_MONEY),
-        OptTime: optTime,
-        Name: text(row.ORDERPERSONNAME) ?? text(memberSettlement?.MCARD_NAME),
-        MemberName: text(memberSettlement?.MCARD_NAME),
-        MemberPhone: normalizePhone(memberSettlement?.MCARD_PHONE),
-        CardId: text(memberSettlement?.MCARD_ID),
-        CardNo: text(memberSettlement?.MCARD_ID),
-        CardTypeName: text(memberSettlement?.MCARD_TYPENAME),
-        RoomCode: text(row.ROOMCODE),
-        SettlementId: text(row.SETTLEMENT_ID),
-        Payments: buildPaymentRows({
-          settlementRows,
-          settlementTypeNameById: params.settlementTypeNameById,
-        }),
-        Infos: buildConsumeInfoText({
-          memberName: text(memberSettlement?.MCARD_NAME),
-          cardTypeName: text(memberSettlement?.MCARD_TYPENAME),
-          cardNo: text(memberSettlement?.MCARD_ID),
-          amount: numeric(row.CONSUM_MONEY),
-        }),
-        IsAnti: flag(row.CANCELFLAG),
-      };
-      return {
-        orgId: params.orgId,
-        settleId,
-        settleNo: text(row.EXE_SETTLEMENT_SHEET_SN),
-        payAmount: numeric(row.PAY_MONEY),
-        consumeAmount: numeric(row.CONSUM_MONEY),
-        discountAmount: numeric(row.DISCOUNT_MONEY),
-        antiFlag: flag(row.CANCELFLAG),
+  const consumeBills: ConsumeBillRecord[] = [];
+  for (const row of dedupedConsumeRows) {
+    const settleId = text(row.EXE_CONSUMERITEMS_ID);
+    const optTime = text(row.SETTLEMENT_TIME);
+    if (!settleId || !optTime) {
+      continue;
+    }
+    const settlementRows = settlementRowsByConsumeId.get(settleId) ?? [];
+    const memberSettlement = settlementRows.find((entry) => text(entry.MCARD_ID));
+    const raw = {
+      SettleId: settleId,
+      SettleNo: text(row.EXE_SETTLEMENT_SHEET_SN),
+      Consume: numeric(row.CONSUM_MONEY),
+      Pay: numeric(row.PAY_MONEY),
+      DiscountAmount: numeric(row.DISCOUNT_MONEY),
+      OptTime: optTime,
+      Name: text(row.ORDERPERSONNAME) ?? text(memberSettlement?.MCARD_NAME),
+      MemberName: text(memberSettlement?.MCARD_NAME),
+      MemberPhone: normalizePhone(memberSettlement?.MCARD_PHONE),
+      CardId: text(memberSettlement?.MCARD_ID),
+      CardNo: text(memberSettlement?.MCARD_ID),
+      CardTypeName: text(memberSettlement?.MCARD_TYPENAME),
+      RoomCode: text(row.ROOMCODE),
+      SettlementId: text(row.SETTLEMENT_ID),
+      Payments: buildPaymentRows({
+        settlementRows,
+        settlementTypeNameById: params.settlementTypeNameById,
+      }),
+      Infos: buildConsumeInfoText({
+        memberName: text(memberSettlement?.MCARD_NAME),
+        cardTypeName: text(memberSettlement?.MCARD_TYPENAME),
+        cardNo: text(memberSettlement?.MCARD_ID),
+        amount: numeric(row.CONSUM_MONEY),
+      }),
+      IsAnti: flag(row.CANCELFLAG),
+    };
+    consumeBills.push({
+      orgId: params.orgId,
+      settleId,
+      settleNo: text(row.EXE_SETTLEMENT_SHEET_SN),
+      payAmount: numeric(row.PAY_MONEY),
+      consumeAmount: numeric(row.CONSUM_MONEY),
+      discountAmount: numeric(row.DISCOUNT_MONEY),
+      antiFlag: flag(row.CANCELFLAG),
+      optTime,
+      bizDate: resolveOperationalBizDateFromTimestamp(
         optTime,
-        bizDate: resolveOperationalBizDateFromTimestamp(
-          optTime,
-          LEGACY_TIME_ZONE,
-          LEGACY_BIZDAY_CUTOFF,
-        ),
-        rawJson: JSON.stringify(raw),
-      } satisfies ConsumeBillRecord;
-    })
-    .filter((row): row is ConsumeBillRecord => Boolean(row));
+        LEGACY_TIME_ZONE,
+        LEGACY_BIZDAY_CUTOFF,
+      ),
+      rawJson: JSON.stringify(raw),
+    });
+  }
+  return consumeBills;
 }
 
 export function buildLegacyUserTradeRows(params: {
@@ -637,67 +637,67 @@ export function buildLegacyUserTradeRows(params: {
     (row) => text(row.SETTLETIME),
   );
 
-  return dedupedRows
-    .map((row) => {
-      const settleTime = text(row.SETTLETIME);
-      const sourceConsumeId = text(row.EXE_CONSUMERITEMS_ID);
-      const detailId = text(row.EXE_SETTLEMENT_DETAIL_ID);
-      const cardNo = text(row.MCARD_ID);
-      if (!settleTime || !sourceConsumeId || !detailId || !cardNo) {
-        return null;
-      }
-      const tradeNo = `legacy-settle:${sourceConsumeId}:${detailId}`;
-      const changeBalance = -Math.abs(numeric(row.USEMONEY));
-      const changeReality = -Math.abs(numeric(row.xfsc));
-      const changeDonate = -Math.abs(numeric(row.xfzs));
-      const raw = {
-        TradeNo: tradeNo,
-        CardOptType: "legacy_consume_settle",
-        OptTime: settleTime,
-        CardId: cardNo,
-        CardNo: cardNo,
-        MemberName: text(row.MCARD_NAME),
-        MemberPhone: normalizePhone(row.MCARD_PHONE),
-        CardTypeName: text(row.MCARD_TYPENAME),
-        PaymentType: "member-balance",
-        ChangeBalance: changeBalance,
-        ChangeReality: changeReality,
-        ChangeDonate: changeDonate,
-        ChangeIntegral: 0,
-        SourceConsumeId: sourceConsumeId,
-        IsAnti: false,
-      };
-      return {
-        orgId: params.orgId,
-        rowFingerprint: md5(
-          [
-            params.orgId,
-            tradeNo,
-            settleTime,
-            cardNo,
-            changeBalance,
-            changeReality,
-            changeDonate,
-          ].join("|"),
-        ),
-        tradeNo,
-        optTime: settleTime,
-        bizDate: resolveOperationalBizDateFromTimestamp(
+  const userTrades: UserTradeRecord[] = [];
+  for (const row of dedupedRows) {
+    const settleTime = text(row.SETTLETIME);
+    const sourceConsumeId = text(row.EXE_CONSUMERITEMS_ID);
+    const detailId = text(row.EXE_SETTLEMENT_DETAIL_ID);
+    const cardNo = text(row.MCARD_ID);
+    if (!settleTime || !sourceConsumeId || !detailId || !cardNo) {
+      continue;
+    }
+    const tradeNo = `legacy-settle:${sourceConsumeId}:${detailId}`;
+    const changeBalance = -Math.abs(numeric(row.USEMONEY));
+    const changeReality = -Math.abs(numeric(row.xfsc));
+    const changeDonate = -Math.abs(numeric(row.xfzs));
+    const raw = {
+      TradeNo: tradeNo,
+      CardOptType: "legacy_consume_settle",
+      OptTime: settleTime,
+      CardId: cardNo,
+      CardNo: cardNo,
+      MemberName: text(row.MCARD_NAME),
+      MemberPhone: normalizePhone(row.MCARD_PHONE),
+      CardTypeName: text(row.MCARD_TYPENAME),
+      PaymentType: "member-balance",
+      ChangeBalance: changeBalance,
+      ChangeReality: changeReality,
+      ChangeDonate: changeDonate,
+      ChangeIntegral: 0,
+      SourceConsumeId: sourceConsumeId,
+      IsAnti: false,
+    };
+    userTrades.push({
+      orgId: params.orgId,
+      rowFingerprint: md5(
+        [
+          params.orgId,
+          tradeNo,
           settleTime,
-          LEGACY_TIME_ZONE,
-          LEGACY_BIZDAY_CUTOFF,
-        ),
-        cardOptType: "legacy_consume_settle",
-        changeBalance,
-        changeReality,
-        changeDonate,
-        changeIntegral: 0,
-        paymentType: "member-balance",
-        antiFlag: false,
-        rawJson: JSON.stringify(raw),
-      } satisfies UserTradeRecord;
-    })
-    .filter((row): row is UserTradeRecord => Boolean(row));
+          cardNo,
+          changeBalance,
+          changeReality,
+          changeDonate,
+        ].join("|"),
+      ),
+      tradeNo,
+      optTime: settleTime,
+      bizDate: resolveOperationalBizDateFromTimestamp(
+        settleTime,
+        LEGACY_TIME_ZONE,
+        LEGACY_BIZDAY_CUTOFF,
+      ),
+      cardOptType: "legacy_consume_settle",
+      changeBalance,
+      changeReality,
+      changeDonate,
+      changeIntegral: 0,
+      paymentType: "member-balance",
+      antiFlag: false,
+      rawJson: JSON.stringify(raw),
+    });
+  }
+  return userTrades;
 }
 
 function filterMissingCurrentRows(params: {
