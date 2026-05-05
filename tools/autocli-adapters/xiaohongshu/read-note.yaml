@@ -1,0 +1,120 @@
+# Repo-managed AutoCLI adapter for Hermes/htops.
+site: xiaohongshu
+name: read-note
+description: "读取单篇小红书笔记的标题、作者、正文和可见互动信息"
+domain: www.xiaohongshu.com
+strategy: cookie
+browser: true
+
+args:
+  input:
+    positional: true
+    type: string
+    required: true
+    description: "小红书笔记链接、短链接或 note id"
+
+columns:
+  [
+    note_id,
+    resolved_url,
+    title,
+    author,
+    published_at,
+    content,
+    tags,
+    like_count,
+    collect_count,
+    comment_count,
+  ]
+
+pipeline:
+  - evaluate: |
+      (() => {
+        const input = (${{ args.input | json }} || '').trim();
+        const isUrl = /^https?:\/\//i.test(input);
+        const noteIdMatch = input.match(/\/(?:explore|discovery\/item)\/([a-zA-Z0-9]+)/);
+        const noteId = noteIdMatch?.[1] || input.replace(/[?#].*$/, '').split('/').pop() || input;
+        return {
+          rawInput: input,
+          noteId,
+          targetUrl: isUrl ? input : `https://www.xiaohongshu.com/explore/${noteId}`,
+        };
+      })()
+  - navigate: ${{ data.targetUrl }}
+  - wait: 1800
+  - evaluate: |
+      (() => {
+        const text = (selector) => {
+          const node = document.querySelector(selector);
+          return node?.textContent?.trim() || '';
+        };
+        const meta = (selector) => {
+          const node = document.querySelector(selector);
+          return node?.getAttribute('content')?.trim() || '';
+        };
+        const unique = (values) => Array.from(new Set((values || []).map(v => (v || '').trim()).filter(Boolean)));
+        const normalizeCount = (value) => (value || '').replace(/\s+/g, '');
+
+        const currentUrl = window.location.href;
+        const noteId =
+          currentUrl.match(/\/(?:explore|discovery\/item)\/([a-zA-Z0-9]+)/)?.[1] ||
+          window.__INITIAL_STATE__?.note?.noteDetailMap?.[0]?.noteId ||
+          window.__INITIAL_STATE__?.note?.noteDetailMap?.[0]?.note_id ||
+          ${{ data.noteId | json }};
+
+        const title =
+          meta('meta[property="og:title"]') ||
+          text('.title') ||
+          text('#detail-title') ||
+          text('.note-content .title');
+
+        const author =
+          text('.username') ||
+          text('.author-name') ||
+          text('.name') ||
+          meta('meta[name="author"]');
+
+        const publishedAt =
+          text('.date') ||
+          text('.publish-time') ||
+          meta('meta[property="article:published_time"]');
+
+        const contentCandidates = unique([
+          text('.desc'),
+          text('#detail-desc'),
+          text('.note-content .desc'),
+          text('.note-desc'),
+          text('.content'),
+          meta('meta[property="og:description"]'),
+        ]);
+        const content = contentCandidates.join('\n').trim();
+
+        const rawTags = unique(
+          Array.from(document.querySelectorAll('.tag, .hash-tag, .tag-list .tag, a[href*="/search_result/"]'))
+            .map((node) => node.textContent?.trim() || '')
+            .concat((content.match(/#[^\s#]+/g) || []).map((tag) => tag.replace(/^#/, '')))
+        ).map((tag) => tag.replace(/^#/, ''));
+
+        const likeCount = normalizeCount(text('.like-wrapper .count') || text('[class*="like"] .count'));
+        const collectCount = normalizeCount(text('.collect-wrapper .count') || text('[class*="collect"] .count'));
+        const commentCount = normalizeCount(text('.comment-wrapper .count') || text('[class*="comment"] .count'));
+
+        if (!title && !content) {
+          throw new Error('No note content found. Check login status or page visibility.');
+        }
+
+        return [
+          {
+            note_id: noteId || '',
+            resolved_url: currentUrl,
+            title,
+            author,
+            published_at: publishedAt,
+            content,
+            tags: rawTags,
+            like_count: likeCount,
+            collect_count: collectCount,
+            comment_count: commentCount,
+          }
+        ];
+      })()
