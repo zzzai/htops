@@ -23,6 +23,7 @@ import {
   executeStoreRuntimeQuery,
   shouldShowDailyMetricBreakdown,
 } from "./store-query.js";
+import type { HetangDataCoverageAssessor } from "./data-coverage.js";
 import {
   executeTechLeaderboardRankingQuery,
   executeTechCurrentQuery,
@@ -136,6 +137,7 @@ export type HetangQueryRuntime = {
     startBizDate: string;
     endBizDate: string;
   }) => Promise<TechMarketRecord[]>;
+  assessDataCoverage?: HetangDataCoverageAssessor;
   resolveSemanticFallbackIntent?: (params: {
     config: HetangOpsConfig;
     text: string;

@@ -110,6 +110,7 @@ const REQUIRED_ANALYTICS_VIEWS = [
   "serving_store_day",
   "serving_store_day_breakdown",
   "serving_store_window",
+  "serving_tech_current",
   "serving_customer_profile_asof",
   "serving_customer_ranked_list_asof",
   "serving_tech_profile_window",
@@ -120,6 +121,7 @@ const ANALYTICS_REBUILD_DROP_ORDER = [
   "serving_tech_profile_window",
   "serving_customer_ranked_list_asof",
   "serving_customer_profile_asof",
+  "serving_tech_current",
   "serving_store_window",
   "serving_store_day_breakdown",
   "serving_store_day",
@@ -3714,6 +3716,42 @@ export class HetangOpsStore {
           + GREATEST(COALESCE(summary.renewal_pressure_index_30d, 1) - 1, 0) * 30
           AS risk_score
       FROM mv_store_summary_30d AS summary;
+    `);
+
+      await queryable.query(`
+      CREATE OR REPLACE VIEW serving_tech_current AS
+      WITH current_tech AS (
+        SELECT
+          tech.org_id AS org_id,
+          COALESCE(store.store_name, tech.org_id) AS store_name,
+          tech.tech_code AS tech_code,
+          tech.tech_name AS tech_name,
+          tech.is_work AS is_work,
+          tech.is_job AS is_job,
+          tech.point_clock_num AS point_clock_num,
+          tech.wheel_clock_num AS wheel_clock_num,
+          NULLIF(tech.raw_json::jsonb ->> 'PersonStateName', '') AS state_name
+        FROM dim_tech_current AS tech
+        LEFT JOIN dim_store AS store
+          ON store.org_id = tech.org_id
+      )
+      SELECT
+        org_id,
+        store_name,
+        tech_code,
+        tech_name,
+        is_work,
+        is_job,
+        state_name,
+        CASE
+          WHEN is_job IS FALSE OR is_work IS FALSE THEN 'off'
+          WHEN COALESCE(state_name, '') ~ '(上钟|服务中|上钟中|忙)' THEN 'busy'
+          WHEN COALESCE(state_name, '') ~ '(空闲|待钟|待客|空档|可接)' THEN 'idle'
+          ELSE 'unknown'
+        END AS state_kind,
+        point_clock_num,
+        wheel_clock_num
+      FROM current_tech;
     `);
 
       await queryable.query(`

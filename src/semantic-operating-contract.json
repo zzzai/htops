@@ -236,9 +236,13 @@
           "support_status": "implemented"
         },
         {
-          "id": "realtime-queue-and-settlement-gap",
+          "id": "realtime-queue-and-pending-settlement",
           "label": "等位/待结账实时态",
-          "recipe_refs": ["analysis:realtime_floor_state"],
+          "recipe_refs": [
+            "analysis:realtime_floor_state",
+            "metric:realtime_queue_status",
+            "metric:pending_settlement_status"
+          ],
           "support_status": "data_gap_realtime"
         }
       ]
@@ -755,6 +759,90 @@
         "compare_baseline": "previous_window"
       },
       {
+        "id": "metric:cash_performance",
+        "label": "现金业绩",
+        "metric_key": "cashPerformance",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "MonthlyOperatingMetrics.cashPerformance / consume payment aggregate",
+        "upstream_apis": ["1.2"],
+        "upstream_fields": ["Payments.Name", "Payments.Pay", "Pay", "CTime"],
+        "calculation_logic": "按消费结算真实到账支付金额汇总，包含现金、线上团购、微信、支付宝等真实收款；剔除全免券、消费券、代金券、四舍五入等非现金项。",
+        "human_definition": "真实到账的钱，不把折扣、赠送、券抵、虚增卡金算成现金收入。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:total_labor_performance",
+        "label": "总劳动业绩",
+        "metric_key": "totalLaborPerformance",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "MonthlyOperatingMetrics.totalLaborPerformance",
+        "upstream_apis": ["1.6"],
+        "upstream_fields": ["Turnover", "STime"],
+        "calculation_logic": "按技师上钟明细 Turnover 汇总，代表实际钟数产生的标价/产值口径。",
+        "human_definition": "技师实际做了多少钟、产生了多少劳动产值。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:received_labor_performance",
+        "label": "实收劳动业绩",
+        "metric_key": "receivedLaborPerformance",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "MonthlyOperatingMetrics.receivedLaborPerformance",
+        "upstream_apis": ["1.6"],
+        "upstream_fields": ["Income", "STime"],
+        "calculation_logic": "按技师上钟明细 Income 汇总，代表上钟相关实收口径。",
+        "human_definition": "劳动业绩里真正按上钟明细落到实收的部分。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:full_attendance_people",
+        "label": "满勤人数",
+        "metric_key": "fullAttendancePeople",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "MonthlyOperatingMetrics.fullAttendancePeople",
+        "upstream_apis": ["1.6"],
+        "upstream_fields": ["PersonCode", "STime"],
+        "calculation_logic": "按月统计技师实际上岗天数；当月上岗天数 >= 28 天计为满勤。",
+        "human_definition": "一个月里达到满勤标准的技师人数。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:attendance_rate",
+        "label": "出勤率",
+        "metric_key": "attendanceRate",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "MonthlyOperatingMetrics.attendanceRate",
+        "upstream_apis": ["1.5", "1.6"],
+        "upstream_fields": ["PersonCode", "STime", "PersonState"],
+        "calculation_logic": "出勤率 = 实际上岗人天 /（在册人数 × 当月自然天数）；按月输出平均每天的实际上岗占比。",
+        "human_definition": "看在册技师里平均每天真正上岗的人占多少。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:member_discount_amount",
+        "label": "会员消费优惠",
+        "metric_key": "memberDiscountAmount",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "MonthlyOperatingMetrics.memberDiscountAmount",
+        "upstream_apis": ["1.2"],
+        "upstream_fields": ["Consume", "Pay", "Payments.Name"],
+        "calculation_logic": "会员消费标价与实付差额汇总，排除明确非会员消费样本。",
+        "human_definition": "会员消费里让利出去的金额。",
+        "compare_baseline": "previous_window"
+      },
+      {
+        "id": "metric:member_discount_rate",
+        "label": "会员消费优惠率",
+        "metric_key": "memberDiscountRate",
+        "current_capability_id": "store_metric_summary_v1",
+        "local_truth_surface": "MonthlyOperatingMetrics.memberDiscountRate",
+        "upstream_apis": ["1.2"],
+        "upstream_fields": ["Consume", "Pay", "Payments.Name"],
+        "calculation_logic": "会员消费优惠金额 / 会员消费标价金额。",
+        "human_definition": "会员消费让利强度，过高会压低真实现金质量。",
+        "compare_baseline": "previous_window"
+      },
+      {
         "id": "metric:market_revenue",
         "label": "副项/附加项收入",
         "metric_key": "marketRevenue",
@@ -1042,9 +1130,74 @@
         "current_capability_id": "arrival_profile_timeseries_v1",
         "supporting_metric_keys": [],
         "decomposition_logic": ["看常来时段", "看工作日/周末偏好", "支持运营约访时间选择"]
+      },
+      {
+        "id": "analysis:store_cost_model_review",
+        "label": "门店成本模型复盘",
+        "current_capability_id": null,
+        "supporting_metric_keys": ["cashPerformance", "totalLaborPerformance", "receivedLaborPerformance"],
+        "decomposition_logic": ["先确认租金、人工、水电和通道费", "再统一折扣与结算口径", "最后才谈利润/可分配现金利润"]
+      },
+      {
+        "id": "analysis:store_profitability_review",
+        "label": "门店利润/可分配现金利润诊断",
+        "current_capability_id": null,
+        "supporting_metric_keys": ["cashPerformance", "totalLaborPerformance", "receivedLaborPerformance"],
+        "decomposition_logic": ["利润诊断依赖完整成本模型", "当前只允许占位，不允许伪造利润结论"]
       }
     ]
   },
+  "dependency_contracts": [
+    {
+      "id": "store_cost_model",
+      "label": "门店成本模型",
+      "dependency_kind": "cost_model",
+      "support_status": "data_gap_model",
+      "required_facts": [
+        "store_rent_cost",
+        "store_labor_cost",
+        "store_utilities_cost",
+        "channel_fee_cost",
+        "discount_normalization",
+        "fixed_overhead_allocation"
+      ],
+      "human_definition": "利润、净利润、可分配现金利润这类问题依赖完整门店成本事实，当前仍未接入稳定成本模型。",
+      "enablement_notes": [
+        "未接入完整门店运营成本前，禁止严肃输出利润结论。",
+        "优先允许现金业绩、劳动业绩、实收劳动业绩等非利润口径继续回答。"
+      ]
+    },
+    {
+      "id": "metric:realtime_queue_status",
+      "label": "等位/候钟实时状态",
+      "dependency_kind": "realtime_surface",
+      "support_status": "data_gap_realtime",
+      "required_facts": [
+        "realtime_queue_fact",
+        "queue_freshness_marker"
+      ],
+      "human_definition": "等位、排队、候钟类问题需要稳定实时队列事实源，当前只有边界回复，没有正式实时事实面。",
+      "enablement_notes": [
+        "接通实时事实源前，保持 explicit unsupported boundary。",
+        "未来上线时需要 freshness、权限和审计约束。"
+      ]
+    },
+    {
+      "id": "metric:pending_settlement_status",
+      "label": "待结账/待结算实时状态",
+      "dependency_kind": "realtime_surface",
+      "support_status": "data_gap_realtime",
+      "required_facts": [
+        "pending_settlement_fact",
+        "settlement_freshness_marker"
+      ],
+      "human_definition": "待结账、待结算类问题需要稳定实时单据事实源，当前只有边界回复，没有正式实时事实面。",
+      "enablement_notes": [
+        "接通实时事实源前，保持 explicit unsupported boundary。",
+        "未来上线时需要 freshness、权限和审计约束。"
+      ]
+    }
+  ],
   "proactive_diagnoses": [
     {
       "id": "scheduled-high-balance-silent-members",
@@ -1168,6 +1321,30 @@
         "doc_path": "docs/plans/2026-04-29-semantic-operating-contract.md",
         "tags": ["question family", "人话映射", "经营口径", "主动发现"],
         "summary": "把 150 个自然问题和老板/店长/运营的人话问题收成 question family、metric/segment/analysis recipe 对照表。"
+      },
+      {
+        "id": "profit-cost-model-boundary",
+        "title": "利润口径与成本模型边界说明",
+        "domain": "report_scope_definition",
+        "doc_path": "docs/plans/2026-04-29-semantic-operating-contract.md",
+        "tags": ["利润口径", "成本模型", "可分配现金利润", "劳动业绩利润", "为什么不能算利润"],
+        "summary": "说明为什么在未接入完整门店运营成本前，不能严肃计算利润和可分配现金利润，并给出可替代查询口径。"
+      },
+      {
+        "id": "external-research-lane-boundary",
+        "title": "外部研究 Lane 边界说明",
+        "domain": "policy_rule",
+        "doc_path": "docs/plans/2026-04-29-semantic-operating-contract.md",
+        "tags": ["外部研究", "竞品分析", "品牌分析", "行业研究", "HQ 外部情报"],
+        "summary": "说明品牌、竞品、行业与市场研究问题不进入门店经营查询主链，应分流到 HQ 外部情报 / 外部研究 lane。"
+      },
+      {
+        "id": "realtime-floor-boundary",
+        "title": "实时状态边界说明",
+        "domain": "report_scope_definition",
+        "doc_path": "docs/plans/2026-04-29-semantic-operating-contract.md",
+        "tags": ["实时状态", "等位", "待结账", "候钟", "待结算", "realtime surface"],
+        "summary": "说明当前只正式支持上钟中/空闲技师状态；等位和待结账仍属于 data_gap_realtime，待未来实时事实源接通后再开放严肃查询。"
       }
     ]
   }

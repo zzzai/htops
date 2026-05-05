@@ -10,9 +10,11 @@ export type HetangToolName =
   | "get_member_recall_candidates"
   | "get_customer_profile"
   | "explain_metric_definition"
-  | "search_operating_knowledge";
+  | "search_operating_knowledge"
+  | "controlled_data_explorer"
+  | "request_external_research_context";
 
-export const HETANG_TOOLS_CONTRACT_VERSION = "2026-04-29.tools.v2" as const;
+export const HETANG_TOOLS_CONTRACT_VERSION = "2026-05-02.tools.v3" as const;
 
 export type HetangToolCallRequest = {
   request_id?: string;
@@ -24,7 +26,7 @@ export type HetangToolLane = "query" | "meta";
 export type HetangToolOwnerSurface = "tool_facade" | "metric_registry" | "knowledge_registry";
 
 export type HetangToolArgumentSchemaProperty = {
-  type: "string" | "integer";
+  type: "string" | "integer" | "array" | "object";
   description: string;
   minimum?: number;
   maximum?: number;
@@ -191,7 +193,10 @@ function resolveToolSemanticCapabilityIds(toolName: HetangToolName): string[] {
       );
     case "explain_metric_definition":
     case "search_operating_knowledge":
+    case "request_external_research_context":
       return [];
+    case "controlled_data_explorer":
+      return ["controlled_data_explorer_v1"];
   }
 }
 
@@ -391,6 +396,81 @@ const HETANG_TOOL_DESCRIPTORS: HetangToolDescriptor[] = [
     input_contract_notes: [
       "Only searches bounded knowledge domains such as metric definitions, SOPs, and policy/rule docs.",
       "Does not search structured business facts or raw operating流水.",
+    ],
+  },
+  {
+    name: "controlled_data_explorer",
+    description:
+      "Execute a bounded read-only query against whitelisted serving semantic surfaces when no dedicated capability exists.",
+    entry_role: "function_call_entry_adapter",
+    lane: "query",
+    owner_surface: "tool_facade",
+    semantic_capability_ids: resolveToolSemanticCapabilityIds("controlled_data_explorer"),
+    arguments_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        surface: {
+          type: "string",
+          description:
+            "Whitelisted serving surface, such as serving_store_day or serving_customer_profile_asof.",
+        },
+        select: {
+          type: "array",
+          description: "Explicit field list to return. Fields must exist in the selected serving surface.",
+        },
+        filters: {
+          type: "array",
+          description:
+            "Optional filters using eq, in, between, gte, or lte against filterable fields.",
+        },
+        order_by: {
+          type: "object",
+          description: "Optional sort descriptor with field and direction.",
+        },
+        limit: {
+          type: "integer",
+          description: "Maximum rows to return. Defaults to 50 and is clamped to 1..100.",
+          minimum: 1,
+          maximum: 100,
+        },
+      },
+      required: ["surface", "select"],
+    },
+    input_contract_notes: [
+      "Only whitelisted serving surfaces are accepted.",
+      "raw tables are rejected; direct SQL is never accepted.",
+      "sensitive fields such as phone and raw_json are not exposed.",
+      "Use only as a controlled fallback after dedicated capability matching and metric contracts are insufficient.",
+    ],
+  },
+  {
+    name: "request_external_research_context",
+    description:
+      "Return a meta-only boundary response for brand, competitor, or industry research questions that must be routed to HQ external intelligence.",
+    entry_role: "function_call_entry_adapter",
+    lane: "meta",
+    owner_surface: "knowledge_registry",
+    semantic_capability_ids: resolveToolSemanticCapabilityIds("request_external_research_context"),
+    arguments_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        topic: {
+          type: "string",
+          description: "External-research topic such as brand analysis, competitor watch, or industry scan.",
+        },
+        query: {
+          type: "string",
+          description: "Original external-research prompt.",
+        },
+      },
+      required: ["topic"],
+    },
+    input_contract_notes: [
+      "HQ 外部情报 lane only.",
+      "not a store-query capability.",
+      "Does not touch store facts, serving surfaces, or raw operating data.",
     ],
   },
 ];

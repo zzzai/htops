@@ -123,6 +123,7 @@ export async function executeHetangQuery(params: {
         rawText: params.text,
         clarificationNeeded: true,
         clarificationReason: resolveEntryClarificationReason(entry.reason),
+        failureClass: entry.failureClass,
         ...semanticAuditVersion,
         success: false,
         durationMs: Date.now() - startedAtMs,

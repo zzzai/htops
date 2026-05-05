@@ -58,6 +58,17 @@ export type OperatingAnalysisRecipe = {
   decomposition_logic: string[];
 };
 
+export type OperatingDependencyContract = {
+  id: string;
+  label: string;
+  dependency_kind: "cost_model" | "realtime_surface" | "hq_research_lane";
+  support_status: SemanticFamilySupportStatus;
+  required_facts: string[];
+  current_capability_id?: string | null;
+  human_definition: string;
+  enablement_notes: string[];
+};
+
 export type ProactiveDiagnosisContract = {
   id: string;
   label: string;
@@ -100,6 +111,7 @@ type SemanticOperatingContract = {
     segments: OperatingSegmentContract[];
     analysis_recipes: OperatingAnalysisRecipe[];
   };
+  dependency_contracts: OperatingDependencyContract[];
   proactive_diagnoses: ProactiveDiagnosisContract[];
   knowledge_registry: {
     boundary: {
@@ -182,12 +194,49 @@ export function listOperatingMetricContracts(): OperatingMetricContract[] {
   return clone(semanticOperatingContract.operating_contracts.metrics);
 }
 
+export function findOperatingMetricContractsByMetricKey(
+  metricKey: string,
+): OperatingMetricContract[] {
+  const normalizedMetricKey = metricKey.trim();
+  if (!normalizedMetricKey) {
+    return [];
+  }
+  return semanticOperatingContract.operating_contracts.metrics
+    .filter((contract) => contract.metric_key === normalizedMetricKey)
+    .map((contract) => clone(contract));
+}
+
+export function hasOperatingMetricContract(metricKey: string): boolean {
+  return findOperatingMetricContractsByMetricKey(metricKey).length > 0;
+}
+
 export function listOperatingSegmentContracts(): OperatingSegmentContract[] {
   return clone(semanticOperatingContract.operating_contracts.segments);
 }
 
 export function listOperatingAnalysisRecipes(): OperatingAnalysisRecipe[] {
   return clone(semanticOperatingContract.operating_contracts.analysis_recipes);
+}
+
+export function listOperatingDependencyContracts(): OperatingDependencyContract[] {
+  return clone(semanticOperatingContract.dependency_contracts);
+}
+
+export function findOperatingDependencyContractById(
+  id: string,
+): OperatingDependencyContract | null {
+  const normalizedId = id.trim();
+  if (!normalizedId) {
+    return null;
+  }
+  const contract = semanticOperatingContract.dependency_contracts.find(
+    (entry) => entry.id === normalizedId,
+  );
+  return contract ? clone(contract) : null;
+}
+
+export function hasOperatingDependencyContract(id: string): boolean {
+  return findOperatingDependencyContractById(id) !== null;
 }
 
 export function listProactiveDiagnosisContracts(): ProactiveDiagnosisContract[] {

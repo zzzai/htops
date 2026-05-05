@@ -13,6 +13,7 @@ export type HetangSupportedMetricKey =
   | "memberPaymentShare"
   | "cashPaymentAmount"
   | "cashPaymentShare"
+  | "cashPerformance"
   | "wechatPaymentAmount"
   | "wechatPaymentShare"
   | "alipayPaymentAmount"
@@ -67,7 +68,13 @@ export type HetangSupportedMetricKey =
   | "roomTurnoverRate"
   | "grossMarginRate"
   | "netMarginRate"
-  | "breakEvenRevenue";
+  | "breakEvenRevenue"
+  | "totalLaborPerformance"
+  | "receivedLaborPerformance"
+  | "fullAttendancePeople"
+  | "attendanceRate"
+  | "memberDiscountAmount"
+  | "memberDiscountRate";
 
 export type HetangUnsupportedMetricKey = "utilizationRate";
 
@@ -155,6 +162,11 @@ const SUPPORTED_METRICS: Array<MetricDefinition<HetangSupportedMetricKey>> = [
     aliases: ["现金消费占比", "现金支付占比", "现金占比"],
   },
   {
+    key: "cashPerformance",
+    label: "现金业绩",
+    aliases: ["现金业绩", "真实到账", "真实到账金额", "到账业绩"],
+  },
+  {
     key: "wechatPaymentAmount",
     label: "微信支付金额",
     aliases: ["微信支付金额", "微信消费金额"],
@@ -193,6 +205,16 @@ const SUPPORTED_METRICS: Array<MetricDefinition<HetangSupportedMetricKey>> = [
     key: "rechargeBonusValue",
     label: "充值赠送金额",
     aliases: ["充值赠送金额", "充值赠送", "赠送金额", "赠送额"],
+  },
+  {
+    key: "memberDiscountAmount",
+    label: "会员消费优惠",
+    aliases: ["会员消费优惠", "会员优惠", "优惠金额", "会员优惠金额"],
+  },
+  {
+    key: "memberDiscountRate",
+    label: "会员消费优惠率",
+    aliases: ["会员消费优惠率", "会员优惠率", "优惠率"],
   },
   {
     key: "groupbuyOrderCount",
@@ -343,6 +365,26 @@ const SUPPORTED_METRICS: Array<MetricDefinition<HetangSupportedMetricKey>> = [
     key: "totalClockCount",
     label: "总钟数",
     aliases: ["总上钟数", "总钟数", "钟数"],
+  },
+  {
+    key: "totalLaborPerformance",
+    label: "总劳动业绩",
+    aliases: ["总劳动业绩", "劳动业绩", "劳动产值"],
+  },
+  {
+    key: "receivedLaborPerformance",
+    label: "实收劳动业绩",
+    aliases: ["实收劳动业绩", "劳动实收", "实收上钟业绩"],
+  },
+  {
+    key: "fullAttendancePeople",
+    label: "满勤人数",
+    aliases: ["满勤人数", "满勤人次", "满勤"],
+  },
+  {
+    key: "attendanceRate",
+    label: "出勤率",
+    aliases: ["出勤率", "上岗率", "技师出勤率"],
   },
   {
     key: "activeTechCount",
@@ -1017,6 +1059,8 @@ function formatSupportedMetricValue(
       return `${metric.label}: ${formatCurrency(metrics.cashPaymentAmount)}`;
     case "cashPaymentShare":
       return `${metric.label}: ${formatPercent(metrics.cashPaymentShare)}`;
+    case "cashPerformance":
+      return `${metric.label}: ${formatCurrency((metrics as unknown as Record<string, number>).cashPerformance ?? 0)}`;
     case "wechatPaymentAmount":
       return `${metric.label}: ${formatCurrency(metrics.wechatPaymentAmount)}`;
     case "wechatPaymentShare":
@@ -1033,6 +1077,10 @@ function formatSupportedMetricValue(
       return `${metric.label}: ${formatCurrency(metrics.rechargeStoredValue)}`;
     case "rechargeBonusValue":
       return `${metric.label}: ${formatCurrency(metrics.rechargeBonusValue)}`;
+    case "memberDiscountAmount":
+      return `${metric.label}: ${formatCurrency((metrics as unknown as Record<string, number>).memberDiscountAmount ?? 0)}`;
+    case "memberDiscountRate":
+      return `${metric.label}: ${formatPercent((metrics as unknown as Record<string, number>).memberDiscountRate ?? null)}`;
     case "groupbuyOrderCount":
       return `${metric.label}: ${formatCount(metrics.groupbuyOrderCount, "单")}`;
     case "groupbuyOrderShare":
@@ -1111,6 +1159,14 @@ function formatSupportedMetricValue(
       return `${metric.label}: ${formatPercent(getGroupbuyPlatformMetric(metrics, "抖音")?.amountShare)}`;
     case "totalClockCount":
       return `${metric.label}: ${formatCount(metrics.totalClockCount, "钟")}`;
+    case "totalLaborPerformance":
+      return `${metric.label}: ${formatCurrency((metrics as unknown as Record<string, number>).totalLaborPerformance ?? 0)}`;
+    case "receivedLaborPerformance":
+      return `${metric.label}: ${formatCurrency((metrics as unknown as Record<string, number>).receivedLaborPerformance ?? 0)}`;
+    case "fullAttendancePeople":
+      return `${metric.label}: ${formatCount((metrics as unknown as Record<string, number>).fullAttendancePeople ?? 0, "人")}`;
+    case "attendanceRate":
+      return `${metric.label}: ${formatPercent((metrics as unknown as Record<string, number>).attendanceRate ?? null)}`;
     case "activeTechCount":
       return `${metric.label}: ${formatCount(metrics.activeTechCount, "人")}`;
     case "onDutyTechCount":
@@ -1192,6 +1248,8 @@ export function getMetricNumericValue(
       return metrics.cashPaymentAmount ?? 0;
     case "cashPaymentShare":
       return metrics.cashPaymentShare ?? null;
+    case "cashPerformance":
+      return (metrics as unknown as Record<string, number>).cashPerformance ?? 0;
     case "wechatPaymentAmount":
       return metrics.wechatPaymentAmount ?? 0;
     case "wechatPaymentShare":
@@ -1208,6 +1266,10 @@ export function getMetricNumericValue(
       return metrics.rechargeStoredValue ?? 0;
     case "rechargeBonusValue":
       return metrics.rechargeBonusValue ?? 0;
+    case "memberDiscountAmount":
+      return (metrics as unknown as Record<string, number>).memberDiscountAmount ?? 0;
+    case "memberDiscountRate":
+      return (metrics as unknown as Record<string, number>).memberDiscountRate ?? null;
     case "groupbuyOrderCount":
       return metrics.groupbuyOrderCount ?? 0;
     case "groupbuyOrderShare":
@@ -1266,6 +1328,14 @@ export function getMetricNumericValue(
       return getGroupbuyPlatformMetric(metrics, "抖音")?.amountShare ?? null;
     case "totalClockCount":
       return metrics.totalClockCount ?? 0;
+    case "totalLaborPerformance":
+      return (metrics as unknown as Record<string, number>).totalLaborPerformance ?? 0;
+    case "receivedLaborPerformance":
+      return (metrics as unknown as Record<string, number>).receivedLaborPerformance ?? 0;
+    case "fullAttendancePeople":
+      return (metrics as unknown as Record<string, number>).fullAttendancePeople ?? 0;
+    case "attendanceRate":
+      return (metrics as unknown as Record<string, number>).attendanceRate ?? null;
     case "activeTechCount":
       return metrics.activeTechCount ?? 0;
     case "onDutyTechCount":

@@ -43,6 +43,10 @@ import {
 } from "./app/analysis-service.js";
 import { buildHetangDiagnosticBundle } from "./app/analysis-diagnostic-service.js";
 import { HetangConversationReviewService } from "./app/conversation-review-service.js";
+import type {
+  HetangDataCoverageAssessment,
+  HetangDataCoverageRequest,
+} from "./data-coverage.js";
 import { HetangDeliveryService } from "./app/delivery-service.js";
 import { HetangEnvironmentMemoryService } from "./app/environment-memory-service.js";
 import {
@@ -1108,6 +1112,12 @@ export class HetangOpsRuntime {
     return await this.getQueryReadService().getCurrentServingVersion();
   }
 
+  async assessDataCoverage(
+    params: HetangDataCoverageRequest,
+  ): Promise<HetangDataCoverageAssessment> {
+    return await this.getQueryReadService().assessDataCoverage(params);
+  }
+
   async executeCompiledServingQuery(params: {
     sql: string;
     queryParams?: unknown[];
@@ -1175,6 +1185,10 @@ export class HetangOpsRuntime {
 
   async listCurrentMemberCards(params: { orgId: string }) {
     return await this.getQueryReadService().listCurrentMemberCards(params);
+  }
+
+  async listCurrentTech(orgId: string) {
+    return await this.getQueryReadService().listCurrentTech(orgId);
   }
 
   async listConsumeBillsByDateRange(params: {

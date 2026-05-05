@@ -514,6 +514,54 @@ function resolveLastBizDateOfMonth(year: number, month: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+function resolveAbsoluteMonthSpanRange(params: {
+  text: string;
+  reportBizDate: string;
+}): PositionedTimeFrame | null {
+  const match = params.text.match(
+    /(?:(\d{4})年)?\s*(1[0-2]|0?[1-9])月(?:份)?\s*(?:至|到|-|~|～)\s*(?:(\d{4})年)?\s*(1[0-2]|0?[1-9])月(?:份)?/u,
+  );
+  if (!match) {
+    return null;
+  }
+
+  const startExplicitYear = match[1] ? Number(match[1]) : undefined;
+  const startMonth = Number(match[2]);
+  const endExplicitYear = match[3] ? Number(match[3]) : undefined;
+  const endMonth = Number(match[4]);
+  const reportYear = Number(params.reportBizDate.slice(0, 4));
+  const reportMonth = Number(params.reportBizDate.slice(5, 7));
+  const startYear =
+    startExplicitYear ?? (startMonth > reportMonth ? reportYear - 1 : reportYear);
+  const endYear =
+    endExplicitYear ??
+    (endMonth < startMonth && startExplicitYear === undefined ? startYear + 1 : startYear);
+
+  const startBizDate = `${startYear}-${String(startMonth).padStart(2, "0")}-01`;
+  const rawEndBizDate = resolveLastBizDateOfMonth(endYear, endMonth);
+  const endBizDate =
+    endYear === reportYear && endMonth === reportMonth && params.reportBizDate < rawEndBizDate
+      ? params.reportBizDate
+      : rawEndBizDate;
+  const days =
+    Math.round(
+      (new Date(`${endBizDate}T00:00:00Z`).getTime() -
+        new Date(`${startBizDate}T00:00:00Z`).getTime()) /
+        86_400_000,
+    ) + 1;
+
+  return {
+    position: match.index ?? 0,
+    frame: {
+      kind: "range",
+      startBizDate,
+      endBizDate,
+      label: match[0].replace(/\s+/gu, ""),
+      days,
+    },
+  };
+}
+
 function resolveAbsoluteMonthRange(params: {
   text: string;
   reportBizDate: string;
@@ -564,6 +612,14 @@ function resolveRangeMatch(params: {
     timeZone: params.timeZone,
     cutoffLocalTime: params.cutoffLocalTime,
   });
+
+  const absoluteMonthSpanRange = resolveAbsoluteMonthSpanRange({
+    text: params.text,
+    reportBizDate,
+  });
+  if (absoluteMonthSpanRange) {
+    return absoluteMonthSpanRange;
+  }
 
   const absoluteMonthRange = resolveAbsoluteMonthRange({
     text: params.text,

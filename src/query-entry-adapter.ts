@@ -3,10 +3,16 @@ import { resolveIntentClarifierDecision } from "./app/intent-clarifier-service.j
 import { resolveHetangQueryIntent, type HetangQueryIntent } from "./query-intent.js";
 import { renderQueryClarification } from "./query-engine-router.js";
 import { resolveHetangQuerySemanticContext } from "./query-semantics.js";
+import {
+  renderSemanticAnswerabilityText,
+  resolveSemanticAnswerability,
+  type HetangDataCoverageAssessor,
+} from "./semantic-answerability.js";
 import { resolveSemanticIntent, resolveUnsupportedPreRouteIntent } from "./semantic-intent.js";
 import type { HetangEmployeeBinding, HetangOpsConfig } from "./types.js";
 
 type QueryEntryRuntime = {
+  assessDataCoverage?: HetangDataCoverageAssessor;
   resolveSemanticFallbackIntent?: (params: {
     config: HetangOpsConfig;
     text: string;
@@ -30,6 +36,7 @@ export type HetangQueryEntryResolution =
       text: string;
       source: "rule_clarifier" | "ai_fallback";
       reason: string;
+      failureClass?: string;
     }
   | {
       kind: "unresolved";
@@ -41,7 +48,7 @@ function resolveUnsupportedQueryEntryReply(params: {
   config: HetangOpsConfig;
   binding: HetangEmployeeBinding;
   text: string;
-}): { text: string; reason: string } | null {
+}): { text: string; reason: string; failureClass: string } | null {
   const semanticContext = resolveHetangQuerySemanticContext({
     config: params.config,
     text: params.text,
@@ -64,26 +71,37 @@ function resolveUnsupportedQueryEntryReply(params: {
       return {
         text: `当前还没接入${boundStoreName}等位 / 候钟实时状态，暂时不能严肃回答有没有客人在等位。现在已支持：上钟中技师人数、空闲技师名单。`,
         reason: "unsupported-realtime-queue",
+        failureClass: "unsupported_realtime_queue",
       };
     case "unsupported_pending_settlement":
       return {
         text: `当前还没接入${boundStoreName}待结账 / 待结算实时单据状态，暂时不能严肃回答后台还有几张待结账的单。现在已支持：当前上钟中人数、空闲技师名单。`,
         reason: "unsupported-pending-settlement",
+        failureClass: "unsupported_pending_settlement",
       };
     case "unsupported_customer_satisfaction":
       return {
         text: "当前还没接入顾客评价 / 满意度字段，暂时不能严肃给出满意度结论。你可以先改问点钟率、加钟率、复购或储值转化。",
         reason: "unsupported-customer-satisfaction",
+        failureClass: "unsupported_customer_satisfaction",
       };
     case "unsupported_schedule_detail":
       return {
         text: "当前还没接入完整班表和预约排班明细，暂时不能直接给出排班表。现在可以先问钟效、点钟率、加钟率和技师画像。",
         reason: "unsupported-schedule-detail",
+        failureClass: "unsupported_schedule_detail",
       };
     case "unsupported_forecast":
       return {
         text: "当前先基于历史经营数据做复盘，还没开放未来客流 / 营收预测口径。",
         reason: "unsupported-forecast",
+        failureClass: "unsupported_forecast",
+      };
+    case "unsupported_external_research":
+      return {
+        text: "当前这套门店语义层主要回答门店经营数据、规则口径和受控经营分析。品牌 / 竞品 / 行业研究要走 HQ 外部情报 / 外部研究 lane，不能直接当作门店经营查询来答。",
+        reason: "unsupported-external-research",
+        failureClass: "unsupported_external_research",
       };
     default:
       return null;
@@ -204,6 +222,25 @@ export async function resolveHetangQueryEntry(params: {
       text: unsupportedReply.text,
       source: "rule_clarifier",
       reason: unsupportedReply.reason,
+      failureClass: unsupportedReply.failureClass,
+    };
+  }
+  const answerability = await resolveSemanticAnswerability({
+    config: params.config,
+    binding: params.binding,
+    text: params.text,
+    now: params.now,
+    intent: ruleIntent,
+    assessDataCoverage: params.runtime.assessDataCoverage,
+  });
+  const answerabilityText = renderSemanticAnswerabilityText(answerability);
+  if (answerabilityText) {
+    return {
+      kind: "clarify",
+      text: answerabilityText,
+      source: "rule_clarifier",
+      reason: `answerability-${answerability.decision.replace("_", "-")}`,
+      failureClass: answerability.reason,
     };
   }
   if (ruleIntent?.routeConfidence === "high") {

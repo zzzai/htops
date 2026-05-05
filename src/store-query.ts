@@ -30,6 +30,7 @@ import { renderStoreAdviceWorldModelSupplement } from "./world-model/rendering.j
 import type { HetangQueryIntent, HetangQueryTimeFrame } from "./query-intent.js";
 import type {
   CustomerOperatingProfileDailyRecord,
+  ConsumeBillRecord,
   CustomerSegmentRecord,
   DailyStoreMetrics,
   DailyStoreReport,
@@ -37,10 +38,13 @@ import type {
   HetangOpsConfig,
   HetangStoreExternalContextEntry,
   MemberReactivationOutcomeSnapshotRecord,
+  RechargeBillRecord,
   StoreManagerDailyKpiRow,
   StoreReview7dRow,
   StoreSummary30dRow,
+  TechCurrentRecord,
   TechMarketRecord,
+  TechUpClockRecord,
 } from "./types.js";
 
 export type StoreQueryRuntime = {
@@ -73,6 +77,22 @@ export type StoreQueryRuntime = {
     startBizDate: string;
     endBizDate: string;
   }) => Promise<TechMarketRecord[]>;
+  listConsumeBillsByDateRange?: (params: {
+    orgId: string;
+    startBizDate: string;
+    endBizDate: string;
+  }) => Promise<ConsumeBillRecord[]>;
+  listRechargeBillsByDateRange?: (params: {
+    orgId: string;
+    startBizDate: string;
+    endBizDate: string;
+  }) => Promise<RechargeBillRecord[]>;
+  listTechUpClockByDateRange?: (params: {
+    orgId: string;
+    startBizDate: string;
+    endBizDate: string;
+  }) => Promise<TechUpClockRecord[]>;
+  listCurrentTech?: (orgId: string) => Promise<TechCurrentRecord[]>;
   listStoreExternalContextEntries?: (params: {
     orgId: string;
     snapshotDate?: string;
@@ -1454,12 +1474,429 @@ async function renderStoreMarketBreakdownRuntimeText(params: {
   return lines.join("\n");
 }
 
+function shouldRenderMonthlyAverageCustomerFlow(intent: HetangQueryIntent): boolean {
+  return (
+    intent.kind === "metric" &&
+    intent.timeFrame.kind === "range" &&
+    intent.timeFrame.startBizDate.slice(0, 7) !== intent.timeFrame.endBizDate.slice(0, 7) &&
+    intent.metrics.some((metric) => metric.key === "customerCount") &&
+    /日均/u.test(intent.rawText)
+  );
+}
+
+function renderMonthlyAverageCustomerFlowText(params: {
+  storeName: string;
+  frame: HetangQueryTimeFrame;
+  reports: DailyStoreReport[];
+}): string {
+  const monthly = new Map<
+    string,
+    { totalCustomers: number; totalOrders: number; dayCount: number }
+  >();
+
+  for (const report of params.reports) {
+    const monthKey = report.bizDate.slice(0, 7);
+    const entry = monthly.get(monthKey) ?? {
+      totalCustomers: 0,
+      totalOrders: 0,
+      dayCount: 0,
+    };
+    entry.totalCustomers += Number(report.metrics.customerCount ?? 0);
+    entry.totalOrders += Number(report.metrics.serviceOrderCount ?? 0);
+    entry.dayCount += 1;
+    monthly.set(monthKey, entry);
+  }
+
+  const lines = [`${params.storeName} ${params.frame.label} 日均客流`];
+  Array.from(monthly.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .forEach(([monthKey, entry]) => {
+      const [year, month] = monthKey.split("-");
+      if (entry.totalCustomers <= 0 && entry.totalOrders <= 0) {
+        lines.push(`- ${year}年${Number(month)}月: 暂无可用消费明细，待补齐`);
+        return;
+      }
+      const average = entry.dayCount > 0 ? entry.totalCustomers / entry.dayCount : 0;
+      lines.push(`- ${year}年${Number(month)}月: 日均 ${formatCount(average, 1)} 人`);
+    });
+  return lines.join("\n");
+}
+
+type MonthlyOperatingMetricKey =
+  | "totalLaborPerformance"
+  | "receivedLaborPerformance"
+  | "cashPerformance"
+  | "rechargeCash"
+  | "rechargeBonusValue"
+  | "memberPaymentAmount"
+  | "memberDiscountAmount"
+  | "memberDiscountRate"
+  | "meituanGroupbuyAmount"
+  | "meituanGroupbuyOrderCount"
+  | "douyinGroupbuyAmount"
+  | "douyinGroupbuyOrderCount"
+  | "totalClockCount"
+  | "fullAttendancePeople"
+  | "attendanceRate";
+
+type MonthlyOperatingMetrics = Record<MonthlyOperatingMetricKey, number> & {
+  registeredTechCount: number;
+  actualWorkPersonDays: number;
+};
+
+const MONTHLY_OPERATING_METRIC_KEYS = new Set<HetangSupportedMetricKey>([
+  "totalLaborPerformance",
+  "receivedLaborPerformance",
+  "cashPerformance",
+  "rechargeCash",
+  "rechargeBonusValue",
+  "memberPaymentAmount",
+  "memberDiscountAmount",
+  "memberDiscountRate",
+  "meituanGroupbuyAmount",
+  "meituanGroupbuyOrderCount",
+  "douyinGroupbuyAmount",
+  "douyinGroupbuyOrderCount",
+  "totalClockCount",
+  "fullAttendancePeople",
+  "attendanceRate",
+]);
+
+const NON_CASH_PERFORMANCE_PAYMENT_RE = /(全免券|全免劵|消费券|代金券|四舍五入)/u;
+
+function parseRawJsonRecord(rawJson: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(rawJson) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function parsePayments(rawJson: string): Array<{ name: string; paymentType: string; amount: number }> {
+  const raw = parseRawJsonRecord(rawJson);
+  const payments = raw.Payments;
+  if (!Array.isArray(payments)) {
+    return [];
+  }
+  return payments
+    .map((entry) => {
+      const value = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+      return {
+        name: String(value.Name ?? "").trim(),
+        paymentType: String(value.PaymentType ?? value.PyamentType ?? "").trim(),
+        amount: Number(value.Amount ?? 0),
+      };
+    })
+    .filter((entry) => Number.isFinite(entry.amount));
+}
+
+function signedAmount(antiFlag: boolean, amount: number): number {
+  return antiFlag ? -amount : amount;
+}
+
+function formatMonthlyMoney(value: number): string {
+  return `${round(value, 2).toFixed(2)} 元`;
+}
+
+function formatMonthlyPercent(rate: number): string {
+  return `${round(rate * 100, 1).toFixed(1)}%`;
+}
+
+function formatMonthlyCount(value: number, unit: string): string {
+  return `${round(value, 1).toFixed(Number.isInteger(value) ? 0 : 1)} ${unit}`;
+}
+
+function collectRequestedMonthlyOperatingMetricKeys(
+  intent: HetangQueryIntent,
+): MonthlyOperatingMetricKey[] {
+  const keys = new Set<MonthlyOperatingMetricKey>();
+  for (const metric of intent.metrics) {
+    if (MONTHLY_OPERATING_METRIC_KEYS.has(metric.key)) {
+      keys.add(metric.key as MonthlyOperatingMetricKey);
+    }
+  }
+  const text = intent.rawText;
+  if (/现金业绩|真实到账|到账业绩/u.test(text)) keys.add("cashPerformance");
+  if (/总劳动业绩|劳动业绩(?!利润)|劳动产值/u.test(text)) keys.add("totalLaborPerformance");
+  if (/实收劳动业绩|劳动实收|实收上钟/u.test(text)) keys.add("receivedLaborPerformance");
+  if (/满勤/u.test(text)) keys.add("fullAttendancePeople");
+  if (/出勤率|上岗率/u.test(text)) keys.add("attendanceRate");
+  if (/会员消费优惠|会员优惠|优惠率/u.test(text)) {
+    keys.add("memberDiscountAmount");
+    keys.add("memberDiscountRate");
+  }
+  if (/会员.*实耗|会员消费|会员支付/u.test(text)) keys.add("memberPaymentAmount");
+  if (/充值.*实充|实充|充值金额|充了多少钱/u.test(text)) keys.add("rechargeCash");
+  if (/赠送/u.test(text)) keys.add("rechargeBonusValue");
+  if (/美团/u.test(text)) {
+    keys.add("meituanGroupbuyAmount");
+    if (/单|订单/u.test(text)) keys.add("meituanGroupbuyOrderCount");
+  }
+  if (/抖音/u.test(text)) {
+    keys.add("douyinGroupbuyAmount");
+    if (/单|订单/u.test(text)) keys.add("douyinGroupbuyOrderCount");
+  }
+  if (/总钟|钟数/u.test(text)) keys.add("totalClockCount");
+  if (/经营月报|三张图|图表指标|这些指标/u.test(text)) {
+    [
+      "totalLaborPerformance",
+      "receivedLaborPerformance",
+      "cashPerformance",
+      "rechargeCash",
+      "rechargeBonusValue",
+      "memberPaymentAmount",
+      "meituanGroupbuyAmount",
+      "douyinGroupbuyAmount",
+      "fullAttendancePeople",
+      "attendanceRate",
+      "totalClockCount",
+    ].forEach((key) => keys.add(key as MonthlyOperatingMetricKey));
+  }
+  return Array.from(keys);
+}
+
+async function collectMonthlyOperatingMetrics(params: {
+  runtime: StoreQueryRuntime;
+  orgId: string;
+  frame: HetangQueryTimeFrame;
+}): Promise<MonthlyOperatingMetrics | null> {
+  if (
+    !params.runtime.listConsumeBillsByDateRange ||
+    !params.runtime.listRechargeBillsByDateRange ||
+    !params.runtime.listTechUpClockByDateRange
+  ) {
+    return null;
+  }
+  const startBizDate =
+    params.frame.kind === "single" ? params.frame.bizDate : params.frame.startBizDate;
+  const endBizDate = params.frame.kind === "single" ? params.frame.bizDate : params.frame.endBizDate;
+  const [consumeBills, rechargeBills, techRows, currentTech] = await Promise.all([
+    params.runtime.listConsumeBillsByDateRange({
+      orgId: params.orgId,
+      startBizDate,
+      endBizDate,
+    }),
+    params.runtime.listRechargeBillsByDateRange({
+      orgId: params.orgId,
+      startBizDate,
+      endBizDate,
+    }),
+    params.runtime.listTechUpClockByDateRange({
+      orgId: params.orgId,
+      startBizDate,
+      endBizDate,
+    }),
+    params.runtime.listCurrentTech ? params.runtime.listCurrentTech(params.orgId) : Promise.resolve([]),
+  ]);
+
+  let cashPerformance = 0;
+  let memberPaymentAmount = 0;
+  let memberDiscountAmount = 0;
+  let meituanGroupbuyAmount = 0;
+  let douyinGroupbuyAmount = 0;
+  const meituanOrderIds = new Set<string>();
+  const douyinOrderIds = new Set<string>();
+
+  for (const bill of consumeBills) {
+    const payments = parsePayments(bill.rawJson);
+    const sign = bill.antiFlag ? -1 : 1;
+    const hasMemberPayment = payments.some(
+      (payment) => payment.paymentType === "3" || payment.name.includes("会员"),
+    );
+    if (hasMemberPayment) {
+      memberDiscountAmount += sign * Math.max(bill.consumeAmount - bill.payAmount, 0);
+    }
+    for (const payment of payments) {
+      if (!NON_CASH_PERFORMANCE_PAYMENT_RE.test(payment.name)) {
+        cashPerformance += sign * payment.amount;
+      }
+      if (payment.paymentType === "3" || payment.name.includes("会员")) {
+        memberPaymentAmount += sign * payment.amount;
+      }
+      if (payment.name.includes("美团")) {
+        meituanGroupbuyAmount += sign * payment.amount;
+        if (!bill.antiFlag) meituanOrderIds.add(bill.settleId);
+      }
+      if (payment.name.includes("抖音")) {
+        douyinGroupbuyAmount += sign * payment.amount;
+        if (!bill.antiFlag) douyinOrderIds.add(bill.settleId);
+      }
+    }
+  }
+
+  const rechargeCash = rechargeBills.reduce(
+    (sum, row) => sum + signedAmount(row.antiFlag, row.realityAmount),
+    0,
+  );
+  const rechargeBonusValue = rechargeBills.reduce(
+    (sum, row) => sum + signedAmount(row.antiFlag, row.donateAmount),
+    0,
+  );
+
+  let totalLaborPerformance = 0;
+  let receivedLaborPerformance = 0;
+  let totalClockCount = 0;
+  const workDaysByTech = new Map<string, Set<string>>();
+
+  for (const row of techRows) {
+    totalLaborPerformance += row.turnover;
+    totalClockCount += row.count;
+    const raw = parseRawJsonRecord(row.rawJson);
+    const income = Number(raw.Income ?? row.turnover);
+    receivedLaborPerformance += Number.isFinite(income) ? income : row.turnover;
+    const workDays = workDaysByTech.get(row.personCode) ?? new Set<string>();
+    workDays.add(row.bizDate);
+    workDaysByTech.set(row.personCode, workDays);
+  }
+
+  const registeredTechCount = currentTech.filter((row) => row.isJob).length;
+  const fullAttendancePeople = Array.from(workDaysByTech.values()).filter(
+    (days) => days.size >= 28,
+  ).length;
+  const actualWorkPersonDays = Array.from(workDaysByTech.values()).reduce(
+    (sum, days) => sum + days.size,
+    0,
+  );
+  const attendanceRate =
+    registeredTechCount > 0 && params.frame.days > 0
+      ? actualWorkPersonDays / (registeredTechCount * params.frame.days)
+      : 0;
+  const memberDiscountRate =
+    memberPaymentAmount + memberDiscountAmount > 0
+      ? memberDiscountAmount / (memberPaymentAmount + memberDiscountAmount)
+      : 0;
+
+  return {
+    totalLaborPerformance: round(totalLaborPerformance),
+    receivedLaborPerformance: round(receivedLaborPerformance),
+    cashPerformance: round(cashPerformance),
+    rechargeCash: round(rechargeCash),
+    rechargeBonusValue: round(rechargeBonusValue),
+    memberPaymentAmount: round(memberPaymentAmount),
+    memberDiscountAmount: round(memberDiscountAmount),
+    memberDiscountRate: round(memberDiscountRate, 4),
+    meituanGroupbuyAmount: round(meituanGroupbuyAmount),
+    meituanGroupbuyOrderCount: meituanOrderIds.size,
+    douyinGroupbuyAmount: round(douyinGroupbuyAmount),
+    douyinGroupbuyOrderCount: douyinOrderIds.size,
+    totalClockCount: round(totalClockCount, 1),
+    fullAttendancePeople,
+    attendanceRate: round(attendanceRate, 4),
+    registeredTechCount,
+    actualWorkPersonDays,
+  };
+}
+
+function formatMonthlyOperatingMetricLine(
+  key: MonthlyOperatingMetricKey,
+  metrics: MonthlyOperatingMetrics,
+): string {
+  switch (key) {
+    case "totalLaborPerformance":
+      return `总劳动业绩: ${formatMonthlyMoney(metrics.totalLaborPerformance)}`;
+    case "receivedLaborPerformance":
+      return `实收劳动业绩: ${formatMonthlyMoney(metrics.receivedLaborPerformance)}`;
+    case "cashPerformance":
+      return `现金业绩: ${formatMonthlyMoney(metrics.cashPerformance)}`;
+    case "rechargeCash":
+      return `会员充值实充: ${formatMonthlyMoney(metrics.rechargeCash)}`;
+    case "rechargeBonusValue":
+      return `会员充值赠送: ${formatMonthlyMoney(metrics.rechargeBonusValue)}`;
+    case "memberPaymentAmount":
+      return `会员消费实耗: ${formatMonthlyMoney(metrics.memberPaymentAmount)}`;
+    case "memberDiscountAmount":
+      return `会员消费优惠: ${formatMonthlyMoney(metrics.memberDiscountAmount)}`;
+    case "memberDiscountRate":
+      return `会员消费优惠率: ${formatMonthlyPercent(metrics.memberDiscountRate)}`;
+    case "meituanGroupbuyAmount":
+      return `美团金额: ${formatMonthlyMoney(metrics.meituanGroupbuyAmount)}`;
+    case "meituanGroupbuyOrderCount":
+      return `美团订单数: ${formatMonthlyCount(metrics.meituanGroupbuyOrderCount, "单")}`;
+    case "douyinGroupbuyAmount":
+      return `抖音金额: ${formatMonthlyMoney(metrics.douyinGroupbuyAmount)}`;
+    case "douyinGroupbuyOrderCount":
+      return `抖音订单数: ${formatMonthlyCount(metrics.douyinGroupbuyOrderCount, "单")}`;
+    case "totalClockCount":
+      return `总钟: ${formatMonthlyCount(metrics.totalClockCount, "钟")}`;
+    case "fullAttendancePeople":
+      return `满勤人数: ${formatMonthlyCount(metrics.fullAttendancePeople, "人")}`;
+    case "attendanceRate":
+      return `出勤率: ${formatMonthlyPercent(metrics.attendanceRate)}`;
+  }
+}
+
+async function renderMonthlyOperatingMetricRuntimeText(params: {
+  runtime: StoreQueryRuntime;
+  config: HetangOpsConfig;
+  orgId: string;
+  intent: HetangQueryIntent;
+}): Promise<string | null> {
+  const requestedKeys = collectRequestedMonthlyOperatingMetricKeys(params.intent);
+  if (requestedKeys.length === 0) {
+    return null;
+  }
+  const metrics = await collectMonthlyOperatingMetrics({
+    runtime: params.runtime,
+    orgId: params.orgId,
+    frame: params.intent.timeFrame,
+  });
+  if (!metrics) {
+    return null;
+  }
+  const storeName = getStoreName(params.config, params.orgId);
+  const frameLabel =
+    params.intent.timeFrame.kind === "single"
+      ? params.intent.timeFrame.label
+      : params.intent.timeFrame.label;
+  const lines = [`${storeName} ${frameLabel} 经营月报指标`];
+  for (const key of requestedKeys) {
+    lines.push(`- ${formatMonthlyOperatingMetricLine(key, metrics)}`);
+  }
+  if (requestedKeys.includes("cashPerformance")) {
+    lines.push(
+      "现金口径：现金业绩按消费结算真实到账支付金额汇总，剔除全免券、消费券、代金券、四舍五入等非现金项。",
+    );
+  }
+  if (
+    requestedKeys.includes("totalLaborPerformance") ||
+    requestedKeys.includes("receivedLaborPerformance")
+  ) {
+    lines.push(
+      "劳动业绩口径：总劳动业绩 = 上钟明细 Turnover 汇总；实收劳动业绩 = 上钟明细 Income 汇总。",
+    );
+  }
+  if (requestedKeys.includes("attendanceRate") || requestedKeys.includes("fullAttendancePeople")) {
+    lines.push(
+      `出勤口径：满勤人数 = 当月上岗天数 ≥ 28 天；出勤率 = 实际上岗人天 /（在册人数 × 当月自然天数）。本次在册人数 ${metrics.registeredTechCount} 人，实际上岗人天 ${metrics.actualWorkPersonDays}。`,
+    );
+  }
+  return lines.join("\n");
+}
+
 async function renderStoreMetricSummaryRuntimeText(params: {
   runtime: StoreQueryRuntime;
+  config: HetangOpsConfig;
   orgId: string;
   intent: HetangQueryIntent;
   now: Date;
 }): Promise<string | null> {
+  if (/(劳动业绩利润|可分配现金利润|门店利润|净利润|运营成本|成本利润)/u.test(params.intent.rawText)) {
+    return null;
+  }
+
+  const monthlyOperatingMetricText = await renderMonthlyOperatingMetricRuntimeText({
+    runtime: params.runtime,
+    config: params.config,
+    orgId: params.orgId,
+    intent: params.intent,
+  });
+  if (monthlyOperatingMetricText) {
+    return monthlyOperatingMetricText;
+  }
+
   const resolution = resolveMetricResolution(params.intent);
   if (canAnswerWithSingleDayDailyKpi(params.intent)) {
     const row = await loadSingleDayDailyKpiRow({
@@ -1488,6 +1925,13 @@ async function renderStoreMetricSummaryRuntimeText(params: {
     now: params.now,
     requestedMetrics: params.intent.metrics.map((metric) => metric.key),
   });
+  if (shouldRenderMonthlyAverageCustomerFlow(params.intent)) {
+    return renderMonthlyAverageCustomerFlowText({
+      storeName: summary.storeName,
+      frame: params.intent.timeFrame,
+      reports: summary.reports,
+    });
+  }
   return renderMetricQueryResponse({
     storeName: summary.storeName,
     bizDate:

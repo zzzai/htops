@@ -44,6 +44,9 @@ const FORECAST_LOOKUP_KEYWORDS =
   /(预测|预估|预计|估计|明天客流|下周客流|明天营收|下周营收|明天单数|下周单数)/u;
 const REALTIME_QUEUE_LOOKUP_KEYWORDS = /(等位|排队|候钟|等钟)/u;
 const PENDING_SETTLEMENT_LOOKUP_KEYWORDS = /(待结账|未结账|待结算|未结算)/u;
+const EXTERNAL_RESEARCH_DOMAIN_KEYWORDS =
+  /(品牌|竞品|竞争对手|行业|市场|赛道|舆情|全网|华与华)/u;
+const EXTERNAL_RESEARCH_ACTION_KEYWORDS = /(分析|研究|拆解|洞察|报告|调研|搜索|对比)/u;
 
 export type HetangSemanticLane = "meta" | "query" | "analysis";
 
@@ -55,6 +58,7 @@ export type HetangSemanticIntentKind =
   | "unsupported_schedule_detail"
   | "unsupported_forecast"
   | "unsupported_realtime_queue"
+  | "unsupported_external_research"
   | "unsupported_pending_settlement"
   | "structured_report_draft"
   | "negative_constraint"
@@ -136,6 +140,7 @@ type HetangUnsupportedPreRouteResolution =
         | "unsupported_schedule_detail"
         | "unsupported_forecast"
         | "unsupported_realtime_queue"
+        | "unsupported_external_research"
         | "unsupported_pending_settlement";
       object: HetangSemanticIntentObject;
       action: HetangSemanticIntentAction;
@@ -531,6 +536,24 @@ export function resolveUnsupportedPreRouteIntent(params: {
       action: "clarify",
       clarificationNeeded: false,
       reason: "unsupported-pending-settlement",
+    };
+  }
+
+  if (
+    !params.semanticContext.hasStoreContext &&
+    !params.semanticContext.allStoresRequested &&
+    !params.semanticContext.hasDataKeyword &&
+    params.semanticContext.metrics.supported.length === 0 &&
+    params.semanticContext.metrics.unsupported.length === 0 &&
+    EXTERNAL_RESEARCH_DOMAIN_KEYWORDS.test(semanticText) &&
+    EXTERNAL_RESEARCH_ACTION_KEYWORDS.test(semanticText)
+  ) {
+    return {
+      kind: "unsupported_external_research",
+      object: "assistant",
+      action: "clarify",
+      clarificationNeeded: false,
+      reason: "unsupported-external-research",
     };
   }
 

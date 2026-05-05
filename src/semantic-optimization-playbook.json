@@ -117,6 +117,50 @@
           "prompt": "义乌店昨天盘里收了多少"
         }
       ]
+    },
+    "unsupported_realtime_queue": {
+      "owner_module": "src/semantic-intent.ts",
+      "recommended_action": "接入等位 / 候钟实时事实源，并把边界回复迁到受控 realtime surface。",
+      "priority": "medium",
+      "samples": [
+        {
+          "sample_tag": "realtime_queue_boundary",
+          "prompt": "义乌店现在有客人在等位吗"
+        }
+      ]
+    },
+    "unsupported_pending_settlement": {
+      "owner_module": "src/semantic-intent.ts",
+      "recommended_action": "接入待结账 / 待结算实时单据事实源，并把边界回复迁到受控 realtime surface。",
+      "priority": "medium",
+      "samples": [
+        {
+          "sample_tag": "pending_settlement_boundary",
+          "prompt": "义乌店后台有几张待结账的单"
+        }
+      ]
+    },
+    "unsupported_external_research": {
+      "owner_module": "src/semantic-intent.ts",
+      "recommended_action": "把品牌 / 竞品 / 行业类问题分流到 HQ 外部情报 / 外部研究 lane，不再混入门店经营查询主链。",
+      "priority": "medium",
+      "samples": [
+        {
+          "sample_tag": "external_research_lane",
+          "prompt": "帮我做长风拨筋这个品牌的竞品分析"
+        }
+      ]
+    },
+    "missing_cost_model_contract": {
+      "owner_module": "src/semantic-answerability.ts",
+      "recommended_action": "补正式 store_cost_model contract，并把利润/成本问法绑定到成本模型缺口边界，不再落入泛化澄清。",
+      "priority": "high",
+      "samples": [
+        {
+          "sample_tag": "cost_model_boundary",
+          "prompt": "义乌店3月可分配现金利润多少"
+        }
+      ]
     }
   }
 }

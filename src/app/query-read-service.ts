@@ -1,4 +1,10 @@
 import { HetangOpsStore } from "../store.js";
+import {
+  assessDateRangeDataCoverage,
+  listBizDates,
+  type HetangDataCoverageAssessment,
+  type HetangDataCoverageRequest,
+} from "../data-coverage.js";
 import type {
   ConsumeBillRecord,
   CustomerProfile90dRow,
@@ -16,6 +22,7 @@ import type {
   HetangStoreExternalContextEntry,
   StoreReview7dRow,
   StoreSummary30dRow,
+  TechCurrentRecord,
   TechLeaderboardRow,
   TechMarketRecord,
   TechProfile30dRow,
@@ -335,6 +342,57 @@ export class HetangQueryReadService {
     );
   }
 
+  async assessDataCoverage(
+    params: HetangDataCoverageRequest,
+  ): Promise<HetangDataCoverageAssessment> {
+    if (params.requiredFacts.includes("current_tech_status")) {
+      const presentDatesByOrg: Record<string, string[]> = {};
+      await Promise.all(
+        params.orgIds.map(async (orgId) => {
+          const rows = await this.listCurrentTech(orgId);
+          presentDatesByOrg[orgId] = rows.length > 0 ? [params.startBizDate] : [];
+        }),
+      );
+      return assessDateRangeDataCoverage({
+        orgIds: params.orgIds,
+        startBizDate: params.startBizDate,
+        endBizDate: params.endBizDate,
+        presentDatesByOrg,
+        requiredFacts: params.requiredFacts,
+      });
+    }
+
+    const presentDatesByOrg: Record<string, string[]> = {};
+    await Promise.all(
+      params.orgIds.map(async (orgId) => {
+        const rows = await this.listStoreManagerDailyKpiByDateRange({
+          orgId,
+          startBizDate: params.startBizDate,
+          endBizDate: params.endBizDate,
+        });
+        const presentDates = new Set(rows.map((row) => row.bizDate));
+        const missingDates = listBizDates(params.startBizDate, params.endBizDate).filter(
+          (bizDate) => !presentDates.has(bizDate),
+        );
+        for (const bizDate of missingDates) {
+          const snapshot = await this.getDailyReportSnapshot({ orgId, bizDate });
+          if (snapshot?.complete) {
+            presentDates.add(bizDate);
+          }
+        }
+        presentDatesByOrg[orgId] = Array.from(presentDates);
+      }),
+    );
+
+    return assessDateRangeDataCoverage({
+      orgIds: params.orgIds,
+      startBizDate: params.startBizDate,
+      endBizDate: params.endBizDate,
+      presentDatesByOrg,
+      requiredFacts: params.requiredFacts,
+    });
+  }
+
   async listTechProfile30dByDateRange(params: {
     orgId: string;
     startBizDate: string;
@@ -387,6 +445,10 @@ export class HetangQueryReadService {
 
   async listCurrentMemberCards(params: { orgId: string }): Promise<MemberCardCurrentRecord[]> {
     return await (await this.getStore()).listCurrentMemberCards(params.orgId);
+  }
+
+  async listCurrentTech(orgId: string): Promise<TechCurrentRecord[]> {
+    return await (await this.getStore()).listCurrentTech(orgId);
   }
 
   async listConsumeBillsByDateRange(params: {

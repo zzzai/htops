@@ -388,7 +388,10 @@ export type HetangSemanticExecutionFailureClass =
   | "execution_failed"
   | "unsupported_customer_satisfaction"
   | "unsupported_schedule_detail"
-  | "unsupported_forecast";
+  | "unsupported_forecast"
+  | "unsupported_realtime_queue"
+  | "unsupported_pending_settlement"
+  | "unsupported_external_research";
 
 export type HetangSemanticExecutionAuditRecord = {
   auditId?: number;

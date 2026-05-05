@@ -626,6 +626,7 @@ export function resolveSemanticMetaReply(params: {
     case "unsupported_schedule_detail":
     case "unsupported_forecast":
     case "unsupported_realtime_queue":
+    case "unsupported_external_research":
     case "unsupported_pending_settlement":
     case "unsupported_lookup":
       return (

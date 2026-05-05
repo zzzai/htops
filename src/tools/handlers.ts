@@ -1,4 +1,9 @@
 import { resolveStoreOrgId } from "../config.js";
+import {
+  executeControlledDataExplorer,
+  type ControlledDataExplorerFilter,
+  type ControlledDataExplorerRequest,
+} from "../controlled-data-explorer.js";
 import { lookupStructuredCustomerProfile } from "../customer-growth/profile.js";
 import { lookupStructuredMemberRecallCandidates } from "../customer-growth/query.js";
 import {
@@ -123,6 +128,12 @@ type HetangToolsRuntime = {
     signalDomain?: string;
     limit?: number;
   }) => Promise<CustomerServiceObservationRecord[]>;
+  executeCompiledServingQuery: (params: {
+    sql: string;
+    queryParams?: unknown[];
+    cacheKey?: string;
+    ttlSeconds?: number;
+  }) => Promise<Record<string, unknown>[]>;
 };
 
 const TOOL_DESCRIPTORS = listHetangToolDescriptors();
@@ -324,6 +335,125 @@ function searchOperatingKnowledge(args: Record<string, unknown>) {
   });
 }
 
+function requestExternalResearchContext(args: Record<string, unknown>) {
+  const topic = readString(args.topic);
+  if (!topic) {
+    throw new HetangToolError(400, "topic_required", "Missing external research topic.");
+  }
+  return {
+    scope: "hq_external_research_lane",
+    status: "boundary_only",
+    lane: "meta",
+    topic,
+    query: readString(args.query) ?? topic,
+    guidance:
+      "Use HQ 外部情报 / 外部研究 lane. Do not redirect this request to store facts or serving surfaces.",
+  };
+}
+
+function readStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const values = value
+    .map((entry) => readString(entry))
+    .filter((entry): entry is string => Boolean(entry));
+  return values.length === value.length ? values : undefined;
+}
+
+function readExplorerFilters(value: unknown): ControlledDataExplorerFilter[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new HetangToolError(
+      400,
+      "controlled_data_explorer_invalid_request",
+      "filters must be an array.",
+    );
+  }
+  return value.map((entry) => {
+    const filter = asRecord(entry);
+    const field = readString(filter.field);
+    const op = readString(filter.op);
+    if (!field || !op || !("value" in filter)) {
+      throw new HetangToolError(
+        400,
+        "controlled_data_explorer_invalid_request",
+        "Each filter must include field, op, and value.",
+      );
+    }
+    return {
+      field,
+      op,
+      value: filter.value as ControlledDataExplorerFilter["value"],
+    } as ControlledDataExplorerFilter;
+  });
+}
+
+function readExplorerOrderBy(value: unknown): ControlledDataExplorerRequest["orderBy"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  const orderBy = asRecord(value);
+  const field = readString(orderBy.field);
+  if (!field) {
+    throw new HetangToolError(
+      400,
+      "controlled_data_explorer_invalid_request",
+      "order_by.field is required when order_by is provided.",
+    );
+  }
+  const direction = readString(orderBy.direction);
+  return {
+    field,
+    direction: direction === "asc" ? "asc" : "desc",
+  };
+}
+
+function buildControlledDataExplorerRequest(
+  args: Record<string, unknown>,
+): ControlledDataExplorerRequest {
+  const surface = readString(args.surface);
+  const select = readStringArray(args.select);
+  if (!surface || !select || select.length === 0) {
+    throw new HetangToolError(
+      400,
+      "controlled_data_explorer_invalid_request",
+      "surface and non-empty select are required.",
+    );
+  }
+
+  return {
+    surface,
+    select,
+    filters: readExplorerFilters(args.filters),
+    orderBy: readExplorerOrderBy(args.order_by ?? args.orderBy),
+    limit: readNumber(args.limit),
+  };
+}
+
+async function controlledDataExplorer(params: {
+  runtime: HetangToolsRuntime;
+  args: Record<string, unknown>;
+}) {
+  try {
+    return await executeControlledDataExplorer({
+      request: buildControlledDataExplorerRequest(params.args),
+      executeQuery: params.runtime.executeCompiledServingQuery,
+    });
+  } catch (error) {
+    if (error instanceof HetangToolError) {
+      throw error;
+    }
+    throw new HetangToolError(
+      400,
+      "controlled_data_explorer_invalid_request",
+      error instanceof Error ? error.message : "Invalid controlled data explorer request.",
+    );
+  }
+}
+
 export function createHetangToolsService(params: {
   config: HetangOpsConfig;
   runtime: HetangToolsRuntime;
@@ -403,6 +533,21 @@ export function createHetangToolsService(params: {
             ok: true,
             tool,
             result: searchOperatingKnowledge(args),
+          };
+        case "request_external_research_context":
+          return {
+            ok: true,
+            tool,
+            result: requestExternalResearchContext(args),
+          };
+        case "controlled_data_explorer":
+          return {
+            ok: true,
+            tool,
+            result: await controlledDataExplorer({
+              runtime: params.runtime,
+              args,
+            }),
           };
       }
     },

@@ -108,7 +108,7 @@ export class HetangConversationSemanticStateStore {
       ALTER TABLE conversation_semantic_state
         ALTER COLUMN expires_at TYPE TIMESTAMPTZ
         USING CASE
-          WHEN expires_at IS NULL OR btrim(expires_at) = '' THEN NULL
+          WHEN expires_at IS NULL OR btrim(expires_at::text) = '' THEN NULL
           ELSE expires_at::timestamptz
         END;
     `);

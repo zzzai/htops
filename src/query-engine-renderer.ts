@@ -751,6 +751,26 @@ function deriveClockCountsFromServingSummaryRow(row: Record<string, unknown>): {
   };
 }
 
+function resolveExplicitMonthSpanLabel(text: string): string | null {
+  const match = text.match(
+    /(?:(\d{4})年)?\s*(1[0-2]|0?[1-9])月(?:份)?\s*(?:至|到|-|~|～)\s*(?:(\d{4})年)?\s*(1[0-2]|0?[1-9])月(?:份)?/u,
+  );
+  return match ? match[0].replace(/\s+/gu, "") : null;
+}
+
+function resolveServingTimeLabel(plan: QueryPlan, row: Record<string, unknown>): string {
+  if (plan.time.mode === "day") {
+    return (row.biz_date as string | undefined) ?? plan.time.biz_date ?? "当日";
+  }
+  if (plan.time.mode === "window") {
+    return (
+      resolveExplicitMonthSpanLabel(plan.planner_meta.normalized_question) ??
+      `近${plan.time.window_days ?? row.window_days ?? ""}天`
+    );
+  }
+  return plan.time.as_of_biz_date ?? "当前";
+}
+
 export function renderServingQueryResult(params: {
   rows: Record<string, unknown>[];
   plan: QueryPlan;
@@ -953,9 +973,7 @@ export function renderServingQueryResult(params: {
       const currentLabel =
         params.plan.compare?.baseline === "peer_group" && baselineStoreName
           ? storeName
-          : params.plan.time.mode === "window"
-            ? `近${params.plan.time.window_days ?? row.window_days ?? ""}天`
-            : String(params.plan.time.biz_date ?? row.biz_date ?? "当前");
+          : resolveServingTimeLabel(params.plan, row);
       const baselineLabel =
         params.plan.compare?.baseline === "peer_group" && baselineStoreName
           ? baselineStoreName
@@ -980,12 +998,7 @@ export function renderServingQueryResult(params: {
       }
       const [row] = params.rows;
       const storeName = resolveStoreName(row);
-      const dateLabel =
-        params.plan.time.mode === "day"
-          ? (row.biz_date as string | undefined) ?? params.plan.time.biz_date ?? "当日"
-          : params.plan.time.mode === "window"
-            ? `近${params.plan.time.window_days ?? row.window_days ?? ""}天`
-            : params.plan.time.as_of_biz_date ?? "当前";
+      const dateLabel = resolveServingTimeLabel(params.plan, row);
       const lines = [`${storeName} ${dateLabel}`];
       if (metric === "pointClockRate" || metric === "addClockRate") {
         const derivedClockCounts = deriveClockCountsFromServingSummaryRow(row);
@@ -997,6 +1010,19 @@ export function renderServingQueryResult(params: {
         if (metric === "addClockRate" && addClockCount !== null && addClockCount !== undefined) {
           lines.push(`- 加钟数量: ${formatCount(addClockCount, 0)} 个`);
         }
+      }
+      if (
+        metric === "customerCount" &&
+        params.plan.time.mode === "window" &&
+        /日均/u.test(params.plan.planner_meta.normalized_question)
+      ) {
+        const totalCustomers = Number(resolveRowMetricValue(row) ?? 0);
+        const dayCount =
+          params.plan.time.window_days ?? Number(row.window_days ?? 0) ?? 0;
+        const averageCustomers = dayCount > 0 ? totalCustomers / dayCount : 0;
+        lines.push(`- 消费人数合计: ${formatCount(totalCustomers, 0)} 人`);
+        lines.push(`- 日均客流: ${formatCount(averageCustomers, 1)} 人`);
+        return lines.join("\n");
       }
       lines.push(`- ${metricLabel}: ${renderMetricValue(resolveRowMetricValue(row))}`);
       return lines.join("\n");
