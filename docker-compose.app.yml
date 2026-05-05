@@ -1,0 +1,144 @@
+services:
+  bridge:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bridge
+    container_name: htops-bridge
+    restart: unless-stopped
+    env_file:
+      - .env.runtime
+    environment:
+      HETANG_ROOT_DIR: /app
+      HTOPS_CONFIG_PATH: /app/htops.json
+      HETANG_RUNTIME_ENV_FILE: /app/.env.runtime
+      HTOPS_STATE_DIR: /root/.htops
+      HETANG_NODE_BIN: /usr/local/bin/node
+      HETANG_MESSAGE_SEND_BIN: /app/ops/hermes-send
+      HETANG_WECOM_GROUP_SENDER: /app/ops/wecom-send-group.mjs
+      HETANG_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+      HETANG_QUERY_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+      HETANG_SYNC_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+      HETANG_ANALYSIS_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+      HETANG_BRIDGE_HOST: 0.0.0.0
+      HETANG_BRIDGE_PORT: 18891
+    volumes:
+      - ./htops.json:/app/htops.json:ro
+      - ./.env.runtime:/app/.env.runtime:ro
+      - ./data/htops-state:/root/.htops
+      - ${HETANG_HERMES_CREDENTIALS_DIR:-/root/.hermes/credentials}:/root/.hermes/credentials:ro
+    ports:
+      - 127.0.0.1:18891:18891
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:18891/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+
+  query-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.query-api
+    container_name: htops-query-api
+    restart: unless-stopped
+    env_file:
+      - .env.runtime
+    environment:
+      HETANG_ROOT_DIR: /app
+      HTOPS_CONFIG_PATH: /app/htops.json
+      HETANG_RUNTIME_ENV_FILE: /app/.env.runtime
+      HTOPS_STATE_DIR: /root/.htops
+      HETANG_QUERY_API_PYTHON: /usr/local/bin/python
+      HETANG_QUERY_API_HOST: 0.0.0.0
+      HETANG_QUERY_API_PORT: 18890
+      HETANG_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+      HETANG_QUERY_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+    volumes:
+      - ./htops.json:/app/htops.json:ro
+      - ./.env.runtime:/app/.env.runtime:ro
+      - ./data/htops-state:/root/.htops
+      - ${HETANG_HERMES_CREDENTIALS_DIR:-/root/.hermes/credentials}:/root/.hermes/credentials:ro
+    ports:
+      - 127.0.0.1:18890:18890
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:18890/health', timeout=3).status == 200 else 1)
+
+  scheduled-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.scheduled-worker
+    container_name: htops-scheduled-worker
+    restart: unless-stopped
+    env_file:
+      - .env.runtime
+    environment:
+      HETANG_ROOT_DIR: /app
+      HTOPS_CONFIG_PATH: /app/htops.json
+      HETANG_RUNTIME_ENV_FILE: /app/.env.runtime
+      HTOPS_STATE_DIR: /root/.htops
+      HETANG_NODE_BIN: /usr/local/bin/node
+      HETANG_MESSAGE_SEND_BIN: /app/ops/hermes-send
+      HETANG_WECOM_GROUP_SENDER: /app/ops/wecom-send-group.mjs
+      HETANG_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+      HETANG_QUERY_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+      HETANG_SYNC_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+      HETANG_ANALYSIS_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+    volumes:
+      - ./htops.json:/app/htops.json:ro
+      - ./.env.runtime:/app/.env.runtime:ro
+      - ./data/htops-state:/root/.htops
+      - ${HETANG_HERMES_CREDENTIALS_DIR:-/root/.hermes/credentials}:/root/.hermes/credentials:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - try { process.kill(1, 0); process.exit(0); } catch (error) { process.exit(1); }
+
+  analysis-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.analysis-worker
+    container_name: htops-analysis-worker
+    restart: unless-stopped
+    env_file:
+      - .env.runtime
+    environment:
+      HETANG_ROOT_DIR: /app
+      HTOPS_CONFIG_PATH: /app/htops.json
+      HETANG_RUNTIME_ENV_FILE: /app/.env.runtime
+      HTOPS_STATE_DIR: /root/.htops
+      HETANG_NODE_BIN: /usr/local/bin/node
+      HETANG_MESSAGE_SEND_BIN: /app/ops/hermes-send
+      HETANG_WECOM_GROUP_SENDER: /app/ops/wecom-send-group.mjs
+      HETANG_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+      HETANG_QUERY_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+      HETANG_SYNC_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+      HETANG_ANALYSIS_DATABASE_URL: postgresql://${HETANG_PG_USER:-hetang_app}:${HETANG_PG_PASSWORD}@postgres:5432/${HETANG_PG_DATABASE:-hetang_ops}
+    volumes:
+      - ./htops.json:/app/htops.json:ro
+      - ./.env.runtime:/app/.env.runtime:ro
+      - ./data/htops-state:/root/.htops
+      - ${HETANG_HERMES_CREDENTIALS_DIR:-/root/.hermes/credentials}:/root/.hermes/credentials:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - try { process.kill(1, 0); process.exit(0); } catch (error) { process.exit(1); }

@@ -1,0 +1,26 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+COPY api/requirements.txt /app/api/requirements.txt
+RUN pip install --no-cache-dir -r /app/api/requirements.txt
+
+COPY . .
+
+ENV HETANG_ROOT_DIR=/app
+ENV HTOPS_CONFIG_PATH=/app/htops.json
+ENV HETANG_RUNTIME_ENV_FILE=/app/.env.runtime
+ENV HTOPS_STATE_DIR=/root/.htops
+ENV HETANG_QUERY_API_PYTHON=/usr/local/bin/python
+ENV HETANG_QUERY_API_HOST=0.0.0.0
+ENV HETANG_QUERY_API_PORT=18890
+
+EXPOSE 18890
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:18890/health', timeout=3).status == 200 else 1)"
+
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "18890", "--app-dir", "/app/api"]

@@ -1,0 +1,23 @@
+FROM node:24-bookworm-slim
+
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install
+
+COPY . .
+
+ENV HETANG_ROOT_DIR=/app
+ENV HTOPS_CONFIG_PATH=/app/htops.json
+ENV HETANG_RUNTIME_ENV_FILE=/app/.env.runtime
+ENV HETANG_NODE_BIN=/usr/local/bin/node
+ENV HTOPS_STATE_DIR=/root/.htops
+ENV HETANG_MESSAGE_SEND_BIN=/app/ops/hermes-send
+ENV HETANG_WECOM_GROUP_SENDER=/app/ops/wecom-send-group.mjs
+
+EXPOSE 18891
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:18891/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "--import", "tsx", "scripts/run-bridge-service.ts", "--host", "0.0.0.0", "--port", "18891"]

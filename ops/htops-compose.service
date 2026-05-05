@@ -1,0 +1,20 @@
+[Unit]
+Description=htops Docker Compose Stack
+Requires=docker.service
+Wants=network-online.target htops-iptables-compat.service
+After=htops-iptables-compat.service docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/root/htops
+Environment=COMPOSE_PROJECT_NAME=htops
+ExecStartPre=/usr/local/sbin/htops-ensure-iptables
+ExecStartPre=/usr/bin/mkdir -p /root/htops/data/postgres /root/htops/data/htops-state
+ExecStart=/usr/bin/docker compose --env-file /root/htops/.env.postgres -f /root/htops/docker-compose.postgres.yml -f /root/htops/docker-compose.app.yml up -d --remove-orphans
+ExecStop=/usr/bin/docker compose --env-file /root/htops/.env.postgres -f /root/htops/docker-compose.postgres.yml -f /root/htops/docker-compose.app.yml stop
+ExecReload=/usr/bin/docker compose --env-file /root/htops/.env.postgres -f /root/htops/docker-compose.postgres.yml -f /root/htops/docker-compose.app.yml up -d --remove-orphans
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

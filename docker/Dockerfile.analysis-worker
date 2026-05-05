@@ -1,0 +1,21 @@
+FROM node:24-bookworm-slim
+
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install
+
+COPY . .
+
+ENV HETANG_ROOT_DIR=/app
+ENV HTOPS_CONFIG_PATH=/app/htops.json
+ENV HETANG_RUNTIME_ENV_FILE=/app/.env.runtime
+ENV HETANG_NODE_BIN=/usr/local/bin/node
+ENV HTOPS_STATE_DIR=/root/.htops
+ENV HETANG_MESSAGE_SEND_BIN=/app/ops/hermes-send
+ENV HETANG_WECOM_GROUP_SENDER=/app/ops/wecom-send-group.mjs
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "try { process.kill(1, 0); process.exit(0); } catch (error) { process.exit(1); }"
+
+CMD ["node", "--import", "tsx", "scripts/run-worker-service.ts", "--mode", "analysis"]
