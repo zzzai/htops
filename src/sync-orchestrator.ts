@@ -12,6 +12,8 @@ import type {
 
 const SCHEDULED_SYNC_RUNNER_ADVISORY_LOCK_KEY = 42_060_407;
 const SCHEDULED_DELIVERY_RUNNER_ADVISORY_LOCK_KEY = 42_060_408;
+const NIGHTLY_HISTORY_BACKFILL_DEFERRED_STORE_MATCHERS = ["迎宾"] as const;
+const NIGHTLY_HISTORY_BACKFILL_MAX_PLANS_PER_POLL = 4;
 
 type ExternalBriefIssue = {
   issueDate: string;
@@ -124,6 +126,20 @@ function summarizeNightlyProbeLines(lines: string[]): string {
     `currentOnly=${currentOnly}`,
     `cardScoped=${cardScoped}`,
   ].join(" ");
+}
+
+function resolveNightlyHistoryBackfillMaxPlans(config: HetangOpsConfig): number {
+  const activeStores = config.stores.filter((entry) => entry.isActive);
+  if (activeStores.length === 0) {
+    return 1;
+  }
+  const deferredStoreCount = activeStores.filter((entry) =>
+    NIGHTLY_HISTORY_BACKFILL_DEFERRED_STORE_MATCHERS.some((matcher) =>
+      entry.storeName.includes(matcher),
+    ),
+  ).length;
+  const preferredStoreCount = Math.max(1, activeStores.length - deferredStoreCount);
+  return Math.min(NIGHTLY_HISTORY_BACKFILL_MAX_PLANS_PER_POLL, preferredStoreCount);
 }
 
 function logNightlyPhase(
@@ -349,7 +365,7 @@ export class HetangSyncOrchestrator {
           const backfillLines = await this.deps.runNightlyHistoryBackfill(now, {
             publishAnalytics: true,
             maxPasses: 1,
-            maxPlans: 1,
+            maxPlans: resolveNightlyHistoryBackfillMaxPlans(this.deps.config),
           });
           lines.push(...backfillLines);
           logNightlyPhase(

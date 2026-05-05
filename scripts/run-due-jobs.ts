@@ -24,6 +24,7 @@ async function main(): Promise<void> {
     },
     resolveStateDir: () => resolveStandaloneStateDir(),
     runCommandWithTimeout,
+    poolRole: "sync",
   });
 
   try {

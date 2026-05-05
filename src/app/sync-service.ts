@@ -71,6 +71,13 @@ const FEBRUARY_2026_BACKFILL_RANGE = {
   endBizDate: "2026-02-28",
 } as const;
 
+function matchesAnyStoreName(params: {
+  storeName: string;
+  matchers: readonly string[];
+}): boolean {
+  return params.matchers.some((matcher) => params.storeName.includes(matcher));
+}
+
 type NightlyHistoryBackfillStoreCursor = {
   orgId: string;
   nextStartBizDate: string;
@@ -553,7 +560,10 @@ export class HetangSyncService {
     const requestedSet = new Set(requestedOrgIds);
     const priorityOrgIds = this.deps.config.stores
       .filter((entry) =>
-        NIGHTLY_SYNC_PRIORITY_STORE_MATCHERS.some((matcher) => entry.storeName.includes(matcher)),
+        matchesAnyStoreName({
+          storeName: entry.storeName,
+          matchers: NIGHTLY_SYNC_PRIORITY_STORE_MATCHERS,
+        }),
       )
       .map((entry) => entry.orgId);
     const configuredOrder = this.deps.config.stores.map((entry) => entry.orgId);
@@ -564,6 +574,28 @@ export class HetangSyncService {
     const orderedOrgIds = prioritizedConfiguredOrder.filter((orgId) => requestedSet.has(orgId));
     const remainingOrgIds = requestedOrgIds.filter((orgId) => !orderedOrgIds.includes(orgId));
     return [...orderedOrgIds, ...remainingOrgIds];
+  }
+
+  private resolveNightlyHistoryBackfillStoreEntries(): HetangStoreConfig[] {
+    const activeEntries = this.deps.config.stores.filter((entry) => entry.isActive);
+    const sharedEntries = activeEntries.filter((entry) =>
+      matchesAnyStoreName({
+        storeName: entry.storeName,
+        matchers: SHARED_HISTORY_BACKFILL_FLOOR_STORE_MATCHERS,
+      }),
+    );
+    const deferredEntries = activeEntries.filter((entry) =>
+      matchesAnyStoreName({
+        storeName: entry.storeName,
+        matchers: NIGHTLY_SYNC_PRIORITY_STORE_MATCHERS,
+      }),
+    );
+    const remainingEntries = activeEntries.filter(
+      (entry) =>
+        !sharedEntries.some((candidate) => candidate.orgId === entry.orgId) &&
+        !deferredEntries.some((candidate) => candidate.orgId === entry.orgId),
+    );
+    return [...sharedEntries, ...remainingEntries, ...deferredEntries];
   }
 
   private resolveStoreNightlyHistoryBackfillCandidateRanges(params: {
@@ -596,9 +628,10 @@ export class HetangSyncService {
     };
 
     if (
-      NIGHTLY_SYNC_PRIORITY_STORE_MATCHERS.some((matcher) =>
-        params.entry.storeName.includes(matcher),
-      )
+      matchesAnyStoreName({
+        storeName: params.entry.storeName,
+        matchers: NIGHTLY_SYNC_PRIORITY_STORE_MATCHERS,
+      })
     ) {
       addRange(clippedRecentPriorityStartBizDate, params.globalEndBizDate);
       addRange(YINGBIN_FULL_HISTORY_START_BIZ_DATE, params.globalEndBizDate);
@@ -606,9 +639,10 @@ export class HetangSyncService {
     }
 
     if (
-      SHARED_HISTORY_BACKFILL_FLOOR_STORE_MATCHERS.some((matcher) =>
-        params.entry.storeName.includes(matcher),
-      )
+      matchesAnyStoreName({
+        storeName: params.entry.storeName,
+        matchers: SHARED_HISTORY_BACKFILL_FLOOR_STORE_MATCHERS,
+      })
     ) {
       addRange(
         SHARED_HISTORY_BACKFILL_FLOOR_BIZ_DATE,
@@ -1038,8 +1072,7 @@ export class HetangSyncService {
       anchorStartBizDate,
       anchorEndBizDate,
       sliceDays: this.deps.config.sync.historyBackfillSliceDays,
-      stores: this.deps.config.stores
-        .filter((entry) => entry.isActive)
+      stores: this.resolveNightlyHistoryBackfillStoreEntries()
         .map((entry) => ({
           orgId: entry.orgId,
           nextStartBizDate: anchorStartBizDate,
@@ -1178,7 +1211,7 @@ export class HetangSyncService {
         .filter((storeEntry) => storeEntry.isActive)
         .map((storeEntry) => storeEntry.orgId),
     });
-    for (const entry of this.deps.config.stores.filter((storeEntry) => storeEntry.isActive)) {
+    for (const entry of this.resolveNightlyHistoryBackfillStoreEntries()) {
       const candidateRanges = this.resolveStoreNightlyHistoryBackfillCandidateRanges({
         entry,
         globalStartBizDate: params.startBizDate,
