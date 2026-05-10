@@ -115,6 +115,39 @@ describe("resolveHetangQueryEntry answerability gate", () => {
     });
   });
 
+  it("keeps concept and methodology asks out of store data clarification", async () => {
+    await expect(
+      resolveHetangQueryEntry({
+        runtime: {},
+        config,
+        binding: HQ_BINDING,
+        text: "门店的世界模型 如何搭建",
+        now,
+      }),
+    ).resolves.toEqual({
+      kind: "clarify",
+      source: "rule_clarifier",
+      reason: "concept-explain",
+      failureClass: "concept_explain",
+      text: "这是经营方法论问题，不是门店数据查询。建议按「经营现实 + 外部环境 + 语义中枢 + AI动作 + 反馈飞轮」定义门店世界模型：先明确数据事实和指标口径，再把天气、商圈、竞品、口碑等外部变量入模，最后用 Agent 生成动作并追踪结果。",
+    });
+
+    await expect(
+      resolveHetangQueryEntry({
+        runtime: {},
+        config,
+        binding: HQ_BINDING,
+        text: "门店的 ai物理模型，如何定义",
+        now,
+      }),
+    ).resolves.toMatchObject({
+      kind: "clarify",
+      reason: "concept-explain",
+      failureClass: "concept_explain",
+      text: expect.stringContaining("不是门店数据查询"),
+    });
+  });
+
   it("uses semantic fallback for a natural-language diagnostic ask without explicit business keywords", async () => {
     const resolveSemanticFallbackIntent = vi.fn().mockResolvedValue({
       clarificationText: "这句话能看出你想排查问题，但还缺门店范围，请先说具体门店或直接问五店全景。",

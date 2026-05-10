@@ -264,6 +264,9 @@ function toFiveStoreDailyOverviewMetrics(report: DailyStoreReport): FiveStoreDai
     memberRepurchaseBaseCustomerCount7d: report.metrics.memberRepurchaseBaseCustomerCount7d,
     memberRepurchaseReturnedCustomerCount7d: report.metrics.memberRepurchaseReturnedCustomerCount7d,
     memberRepurchaseRate7d: report.metrics.memberRepurchaseRate7d,
+    incompleteSync: report.metrics.incompleteSync,
+    staleSyncEndpoints: report.metrics.staleSyncEndpoints,
+    unavailableMetrics: report.metrics.unavailableMetrics,
   };
 }
 

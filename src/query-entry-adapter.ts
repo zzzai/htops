@@ -136,6 +136,28 @@ function resolveSemanticGuidanceClarification(params: {
   }
 }
 
+function resolveMetaConceptExplanation(params: {
+  config: HetangOpsConfig;
+  binding: HetangEmployeeBinding;
+  text: string;
+  now: Date;
+}): { text: string; reason: "concept-explain"; failureClass: "concept_explain" } | null {
+  const semanticIntent = resolveSemanticIntent({
+    config: params.config,
+    text: params.text,
+    now: params.now,
+    binding: params.binding,
+  });
+  if (semanticIntent.kind !== "concept_explain") {
+    return null;
+  }
+  return {
+    text: "这是经营方法论问题，不是门店数据查询。建议按「经营现实 + 外部环境 + 语义中枢 + AI动作 + 反馈飞轮」定义门店世界模型：先明确数据事实和指标口径，再把天气、商圈、竞品、口碑等外部变量入模，最后用 Agent 生成动作并追踪结果。",
+    reason: "concept-explain",
+    failureClass: "concept_explain",
+  };
+}
+
 const NATURAL_LANGUAGE_FALLBACK_KEYWORDS =
   /(帮我|帮忙|看下|看看|看看下|分析|判断|解释|定义|为什么|为啥|怎么|如何|啥|哪些|哪个|多少|几|能不能|可不可以|要不要|是不是|有没有|行不行|稳不稳|对不对|感觉|想看|想知道|请问|麻烦)/u;
 const NON_QUERY_CHAT_KEYWORDS =
@@ -275,6 +297,21 @@ export async function resolveHetangQueryEntry(params: {
       text: semanticGuidanceClarification.text,
       source: "rule_clarifier",
       reason: semanticGuidanceClarification.reason,
+    };
+  }
+  const metaConceptExplanation = resolveMetaConceptExplanation({
+    config: params.config,
+    binding: params.binding,
+    text: params.text,
+    now: params.now,
+  });
+  if (metaConceptExplanation) {
+    return {
+      kind: "clarify",
+      text: metaConceptExplanation.text,
+      source: "rule_clarifier",
+      reason: metaConceptExplanation.reason,
+      failureClass: metaConceptExplanation.failureClass,
     };
   }
   const unsupportedReply = resolveUnsupportedQueryEntryReply({

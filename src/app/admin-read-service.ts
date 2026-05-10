@@ -7,6 +7,10 @@ import { HetangOpsStore } from "../store.js";
 import { CONTROL_PLANE_CONTRACT_VERSION, listAuthoritativeSchedulerJobs } from "../schedule.js";
 import { resolveLocalDayStartIso, resolveReportBizDate } from "../time.js";
 import { parseConversationReviewSummaryJson } from "./conversation-review-service.js";
+import {
+  buildProjectDataCoverageGaps,
+  buildProjectDataCoverageReport,
+} from "../project-data-coverage.js";
 import type {
   HetangActionItem,
   HetangAnalysisDeadLetterCleanupResult,
@@ -31,6 +35,8 @@ import type {
   HetangLegacyServicePollerHealth,
   HetangEnvironmentMemoryReadinessSummary,
   HetangEnvironmentMemoryStoreStatus,
+  HetangProjectDataCoverageProgressState,
+  HetangProjectDataCoverageSummary,
   HetangLogger,
   HetangNotificationTarget,
   HetangOpsConfig,
@@ -78,6 +84,9 @@ const ANALYSIS_DEAD_LETTER_SUBSCRIBER_FANOUT_EXHAUSTED_REASON =
   "delivery abandoned after subscriber fan-out exhaustion";
 const FIVE_STORE_DAILY_OVERVIEW_JOB_TYPE = "send-five-store-daily-overview";
 const DAILY_REPORT_AUDIT_JOB_TYPE = "audit-daily-report-window";
+const PROJECT_DATA_COVERAGE_JOB_TYPE = "project-data-coverage";
+const PROJECT_DATA_COVERAGE_START_BIZ_DATE = "2025-10-01";
+const PROJECT_DATA_COVERAGE_TOP_GAP_LIMIT = 8;
 const RUNTIME_QUERY_ENTRY_SURFACE = {
   entryRole: "runtime_query_api",
   accessMode: "read_only",
@@ -237,6 +246,93 @@ function formatIdleScheduledSyncPollerWarning(params: {
     `syncJob=${params.syncJobLastRanAt}`,
     "no active sync wave; scheduler job sync is authoritative",
   ].join(" | ");
+}
+
+function normalizeProjectDataCoverageProgressState(
+  rawState: Record<string, unknown> | null,
+): HetangProjectDataCoverageProgressState | undefined {
+  if (!rawState) {
+    return undefined;
+  }
+  const checkedAt = normalizeStringField(rawState.checkedAt);
+  const startBizDate = normalizeStringField(rawState.startBizDate);
+  const endBizDate = normalizeStringField(rawState.endBizDate);
+  const focusMetricKey = normalizeStringField(rawState.focusMetricKey);
+  const status = normalizeStringField(rawState.status);
+  const focusCoveredDays = normalizeNumberField(rawState.focusCoveredDays);
+  const focusExpectedDays = normalizeNumberField(rawState.focusExpectedDays);
+  const focusCoverageRate = normalizeNumberField(rawState.focusCoverageRate);
+  const noProgressNightCount = normalizeNumberField(rawState.noProgressNightCount);
+  if (
+    !checkedAt ||
+    !startBizDate ||
+    !endBizDate ||
+    !focusMetricKey ||
+    (status !== "complete" &&
+      status !== "progressed" &&
+      status !== "no_progress" &&
+      status !== "stalled") ||
+    focusCoveredDays === undefined ||
+    focusExpectedDays === undefined ||
+    focusCoverageRate === undefined ||
+    noProgressNightCount === undefined
+  ) {
+    return undefined;
+  }
+
+  const stores: HetangProjectDataCoverageProgressState["stores"] = [];
+  if (Array.isArray(rawState.stores)) {
+    for (const entry of rawState.stores) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      const raw = entry as Record<string, unknown>;
+      const orgId = normalizeStringField(raw.orgId);
+      const storeName = normalizeStringField(raw.storeName);
+      const dayCount = normalizeNumberField(raw.dayCount);
+      const expectedDays = normalizeNumberField(raw.expectedDays);
+      const coverageRate = normalizeNumberField(raw.coverageRate);
+      if (
+        !orgId ||
+        !storeName ||
+        dayCount === undefined ||
+        expectedDays === undefined ||
+        coverageRate === undefined
+      ) {
+        continue;
+      }
+      stores.push({
+        orgId,
+        storeName,
+        dayCount,
+        expectedDays,
+        coverageRate,
+        firstMissingBizDate: normalizeStringField(raw.firstMissingBizDate),
+      });
+    }
+  }
+
+  return {
+    checkedAt,
+    startBizDate,
+    endBizDate,
+    focusMetricKey,
+    focusCoveredDays,
+    focusExpectedDays,
+    focusCoverageRate,
+    noProgressNightCount,
+    status,
+    stores,
+  };
+}
+
+function formatProjectDataCoverageStalledWarning(
+  progress: HetangProjectDataCoverageProgressState,
+): string {
+  return [
+    `project data coverage stalled: ${progress.focusMetricKey} no_progress_nights=${progress.noProgressNightCount};`,
+    "check upstream window/card candidates/lock/task order/api failures",
+  ].join(" ");
 }
 
 function needsDailyReportMarkdownRefresh(
@@ -1022,6 +1118,94 @@ export class HetangAdminReadService {
     };
   }
 
+  private async resolveProjectDataCoverageSummary(params: {
+    store: HetangOpsStore;
+    queueStore: {
+      getScheduledJobState?: (
+        jobType: string,
+        stateKey: string,
+      ) => Promise<Record<string, unknown> | null>;
+    };
+    now: Date;
+  }): Promise<HetangProjectDataCoverageSummary | undefined> {
+    if (
+      typeof (
+        params.store as {
+          getHistoricalCoverageSnapshot?: unknown;
+        }
+      ).getHistoricalCoverageSnapshot !== "function"
+    ) {
+      return undefined;
+    }
+    const activeStores = this.deps.config.stores.filter((entry) => entry.isActive);
+    if (activeStores.length === 0) {
+      return undefined;
+    }
+    const endBizDate = resolveReportBizDate({
+      now: params.now,
+      timeZone: this.deps.config.timeZone,
+      cutoffLocalTime: this.deps.config.sync.businessDayCutoffLocalTime,
+    });
+    const snapshots = await Promise.all(
+      activeStores.map((entry) =>
+        (
+          params.store as {
+            getHistoricalCoverageSnapshot: (request: {
+              orgId: string;
+              startBizDate: string;
+              endBizDate: string;
+            }) => ReturnType<HetangOpsStore["getHistoricalCoverageSnapshot"]>;
+          }
+        ).getHistoricalCoverageSnapshot({
+          orgId: entry.orgId,
+          startBizDate: PROJECT_DATA_COVERAGE_START_BIZ_DATE,
+          endBizDate,
+        }),
+      ),
+    );
+    const report = buildProjectDataCoverageReport({
+      startBizDate: PROJECT_DATA_COVERAGE_START_BIZ_DATE,
+      endBizDate,
+      stores: activeStores.map((entry) => ({
+        orgId: entry.orgId,
+        storeName: entry.storeName,
+      })),
+      snapshots,
+    });
+    const progress =
+      typeof params.queueStore.getScheduledJobState === "function"
+        ? normalizeProjectDataCoverageProgressState(
+            await params.queueStore.getScheduledJobState(
+              PROJECT_DATA_COVERAGE_JOB_TYPE,
+              "latest-progress",
+            ),
+          )
+        : undefined;
+    return {
+      startBizDate: report.startBizDate,
+      endBizDate: report.endBizDate,
+      expectedDays: report.expectedDays,
+      overallStatus: report.overallStatus,
+      storeCount: report.stores.length,
+      incompleteStoreCount: report.stores.filter((entry) => entry.status !== "complete").length,
+      topGaps: buildProjectDataCoverageGaps(report)
+        .slice(0, PROJECT_DATA_COVERAGE_TOP_GAP_LIMIT)
+        .map((gap) => ({
+          orgId: gap.orgId,
+          storeName: gap.storeName,
+          key: gap.key,
+          label: gap.label,
+          coverageRate: gap.coverageRate,
+          firstMissingBizDate: gap.firstMissingBizDate,
+          affectsDailyReport: gap.affectsDailyReport,
+          affectsQuestionAnswering: gap.affectsQuestionAnswering,
+          affectsActionLoop: gap.affectsActionLoop,
+          impactLabels: gap.impactLabels,
+        })),
+      progress,
+    };
+  }
+
   private async resolveSyncExecutionSummary(
     store: HetangOpsStore,
     now: Date,
@@ -1173,6 +1357,7 @@ export class HetangAdminReadService {
       industryContextSummary,
       environmentMemorySummary,
       syncExecutionSummary,
+      projectDataCoverageSummary,
     ] = await Promise.all([
         Promise.all(
           AUTHORITATIVE_SERVICE_POLLERS.map(async (poller) =>
@@ -1191,11 +1376,19 @@ export class HetangAdminReadService {
         this.resolveIndustryContextReadinessSummary(baseStore, now),
         this.resolveEnvironmentMemoryReadinessSummary(baseStore, now),
         this.resolveSyncExecutionSummary(baseStore, now),
+        this.resolveProjectDataCoverageSummary({
+          store: baseStore,
+          queueStore,
+          now,
+        }),
       ]);
     const legacyPollers = legacyScheduled ? [legacyScheduled] : [];
     const warnings = legacyPollers.map((entry) => formatLegacyPollerWarning(entry));
     if ((syncExecutionSummary?.staleRunningCount ?? 0) > 0) {
       warnings.push(formatStaleSyncRunWarning(syncExecutionSummary!));
+    }
+    if (projectDataCoverageSummary?.progress?.status === "stalled") {
+      warnings.push(formatProjectDataCoverageStalledWarning(projectDataCoverageSummary.progress));
     }
     const pollers: HetangServicePollerHealth[] = AUTHORITATIVE_SERVICE_POLLERS.map(
       (poller, index) =>
@@ -1265,6 +1458,7 @@ export class HetangAdminReadService {
         ...(reportReadinessSummary ? ["daily_report_readiness_summary" as const] : []),
         ...(industryContextSummary ? ["industry_context_summary" as const] : []),
         ...(environmentMemorySummary ? ["environment_memory_summary" as const] : []),
+        ...(projectDataCoverageSummary ? ["project_data_coverage_summary" as const] : []),
         "five_store_daily_overview_summary",
         "legacy_poller_warning",
       ],
@@ -1279,6 +1473,7 @@ export class HetangAdminReadService {
       industryContextSummary,
       environmentMemorySummary,
       fiveStoreDailyOverviewSummary,
+      projectDataCoverageSummary,
     };
   }
 

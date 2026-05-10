@@ -130,15 +130,36 @@ describe("semantic operating metric contracts", () => {
     );
   });
 
-  it("binds at least 100 high-frequency natural questions to answer templates", () => {
+  it("binds all 150 high-frequency natural questions to answer templates and executable boundaries", () => {
     const families = listSemanticQuestionFamilies();
     const templates = listOperatingAnswerTemplates();
     const templatedFamilyIds = new Set(templates.map((template) => template.family_id));
     const coveredQuestionCount = families
       .filter((family) => templatedFamilyIds.has(family.id))
       .reduce((sum, family) => sum + family.question_count, 0);
+    const totalQuestionCount = families.reduce((sum, family) => sum + family.question_count, 0);
 
-    expect(coveredQuestionCount).toBeGreaterThanOrEqual(100);
+    expect(totalQuestionCount).toBe(150);
+    expect(coveredQuestionCount).toBe(150);
+    for (const family of families) {
+      expect(family.mappings.length).toBeGreaterThan(0);
+      for (const mapping of family.mappings) {
+        expect(mapping.recipe_refs.length).toBeGreaterThan(0);
+        if (mapping.support_status === "implemented") {
+          expect(mapping.capability_id).toMatch(/_v\d+$/u);
+        } else {
+          expect(mapping.support_status).toMatch(/capability_gap|data_gap_realtime|data_gap_model|planned/u);
+        }
+      }
+      expect(findOperatingAnswerTemplateByFamilyId(family.id)).toEqual(
+        expect.objectContaining({
+          family_id: family.id,
+          required_refs: expect.any(Array),
+          template: expect.any(String),
+          unavailable_template: expect.stringMatching(/不能|不足|缺少|暂时|不完整/u),
+        }),
+      );
+    }
     expect(findOperatingAnswerTemplateByFamilyId("boss-daily-revenue")).toMatchObject({
       family_id: "boss-daily-revenue",
       answer_mode: "metric_snapshot",

@@ -337,6 +337,33 @@ describe("HetangReportingService five-store daily overview", () => {
     });
   });
 
+  it("threads daily report data-risk fields into the five-store trust section", async () => {
+    const reportMap = seedCompleteReportMap();
+    const yiwuReport = reportMap.get("1004:2026-04-22");
+    if (!yiwuReport) {
+      throw new Error("missing seeded yiwu report");
+    }
+    reportMap.set("1004:2026-04-22", {
+      ...yiwuReport,
+      metrics: {
+        ...yiwuReport.metrics,
+        incompleteSync: true,
+        staleSyncEndpoints: ["1.4"],
+        unavailableMetrics: ["消费流水覆盖缺口：1.4 自 2025-10-01 起不完整，影响日报/问答/动作闭环"],
+      },
+    });
+    const { service } = buildService(reportMap);
+
+    const markdown = await service.renderFiveStoreDailyOverview({
+      bizDate: "2026-04-22",
+    });
+
+    expect(markdown).toContain("## 数据可信度");
+    expect(markdown).toContain("义乌店：数据风险");
+    expect(markdown).toContain("1.4");
+    expect(markdown).toContain("消费流水覆盖缺口");
+  });
+
   it("keeps preview mode available for manual operator review", async () => {
     const reportMap = seedCompleteReportMap();
     const { service, scheduledJobState } = buildService(reportMap);

@@ -33,6 +33,45 @@ export type ProjectDataCoverageReport = {
   stores: ProjectDataCoverageStoreReport[];
 };
 
+export type ProjectDataCoverageGapImpact = "日报" | "问答" | "动作闭环";
+
+export type ProjectDataCoverageGap = ProjectDataCoverageMetric & {
+  storeName: string;
+  orgId: string;
+  affectsDailyReport: boolean;
+  affectsQuestionAnswering: boolean;
+  affectsActionLoop: boolean;
+  impactLabels: ProjectDataCoverageGapImpact[];
+};
+
+export type ProjectDataCoverageProgressStoreState = {
+  orgId: string;
+  storeName: string;
+  dayCount: number;
+  expectedDays: number;
+  coverageRate: number;
+  firstMissingBizDate?: string;
+};
+
+export type ProjectDataCoverageProgressStatus =
+  | "complete"
+  | "progressed"
+  | "no_progress"
+  | "stalled";
+
+export type ProjectDataCoverageProgressState = {
+  checkedAt: string;
+  startBizDate: string;
+  endBizDate: string;
+  focusMetricKey: string;
+  focusCoveredDays: number;
+  focusExpectedDays: number;
+  focusCoverageRate: number;
+  noProgressNightCount: number;
+  status: ProjectDataCoverageProgressStatus;
+  stores: ProjectDataCoverageProgressStoreState[];
+};
+
 const RAW_FACT_LABELS: Array<[EndpointCode, string]> = [
   ["1.2", "消费明细"],
   ["1.3", "充值明细"],
@@ -166,6 +205,261 @@ export function buildProjectDataCoverageReport(params: {
 
 function pct(rate: number): string {
   return `${(rate * 100).toFixed(1)}%`;
+}
+
+function resolveMetricImpact(metric: ProjectDataCoverageMetric): {
+  affectsDailyReport: boolean;
+  affectsQuestionAnswering: boolean;
+  affectsActionLoop: boolean;
+} {
+  const affectsDailyReport = ["1.2", "1.3", "1.4", "1.6", "1.7", "factMemberDailySnapshot"].includes(
+    metric.key,
+  );
+  const affectsActionLoop = [
+    "1.1",
+    "1.2",
+    "1.3",
+    "1.4",
+    "factMemberDailySnapshot",
+    "martCustomerSegments",
+    "martCustomerConversionCohorts",
+    "mvCustomerProfile90d",
+  ].includes(metric.key);
+  return {
+    affectsDailyReport,
+    affectsQuestionAnswering: true,
+    affectsActionLoop,
+  };
+}
+
+function resolveImpactLabels(gap: {
+  affectsDailyReport: boolean;
+  affectsQuestionAnswering: boolean;
+  affectsActionLoop: boolean;
+}): ProjectDataCoverageGapImpact[] {
+  return [
+    ...(gap.affectsDailyReport ? (["日报"] as const) : []),
+    ...(gap.affectsQuestionAnswering ? (["问答"] as const) : []),
+    ...(gap.affectsActionLoop ? (["动作闭环"] as const) : []),
+  ];
+}
+
+export function buildStoreDataCoverageGaps(
+  store: ProjectDataCoverageStoreReport,
+): ProjectDataCoverageGap[] {
+  return [...store.rawFacts, ...store.derivedLayers]
+    .filter((metric) => metric.status !== "complete")
+    .map((metric) => {
+      const impact = resolveMetricImpact(metric);
+      return {
+        ...metric,
+        orgId: store.orgId,
+        storeName: store.storeName,
+        ...impact,
+        impactLabels: resolveImpactLabels(impact),
+      };
+    })
+    .sort(
+      (left, right) =>
+        Number(right.affectsDailyReport) - Number(left.affectsDailyReport) ||
+        Number(right.affectsActionLoop) - Number(left.affectsActionLoop) ||
+        left.key.localeCompare(right.key),
+    );
+}
+
+export function buildProjectDataCoverageGaps(
+  report: ProjectDataCoverageReport,
+): ProjectDataCoverageGap[] {
+  return report.stores.flatMap((store) => buildStoreDataCoverageGaps(store));
+}
+
+export function formatProjectDataCoverageDoctorLines(
+  report: ProjectDataCoverageReport,
+  options: { maxGaps?: number } = {},
+): string[] {
+  const lines = [
+    `Data coverage ${report.startBizDate}..${report.endBizDate}: ${report.overallStatus} | stores=${report.stores.length} | expected_days=${report.expectedDays}`,
+  ];
+  const maxGaps = Math.max(0, Math.trunc(options.maxGaps ?? 12));
+  const gaps = buildProjectDataCoverageGaps(report).slice(0, maxGaps);
+  for (const gap of gaps) {
+    lines.push(
+      [
+        `Data coverage gap: ${gap.storeName}`,
+        `${gap.key} ${gap.label}`,
+        `rate=${pct(gap.coverageRate)}`,
+        `first_missing=${gap.firstMissingBizDate ?? "unknown"}`,
+        `affects=${gap.impactLabels.join(",") || "none"}`,
+      ].join(" | "),
+    );
+  }
+  return lines;
+}
+
+function buildProgressStores(params: {
+  report: ProjectDataCoverageReport;
+  focusMetricKey: string;
+}): ProjectDataCoverageProgressStoreState[] {
+  return params.report.stores.map((store) => {
+    const metric = [...store.rawFacts, ...store.derivedLayers].find(
+      (entry) => entry.key === params.focusMetricKey,
+    );
+    return {
+      orgId: store.orgId,
+      storeName: store.storeName,
+      dayCount: metric?.dayCount ?? 0,
+      expectedDays: metric?.expectedDays ?? params.report.expectedDays,
+      coverageRate: metric?.coverageRate ?? 0,
+      firstMissingBizDate: metric?.firstMissingBizDate,
+    };
+  });
+}
+
+export function buildProjectDataCoverageProgressState(params: {
+  report: ProjectDataCoverageReport;
+  previousState?: ProjectDataCoverageProgressState | null;
+  checkedAt: string;
+  focusMetricKey?: string;
+}): ProjectDataCoverageProgressState {
+  const focusMetricKey = params.focusMetricKey ?? "1.4";
+  const stores = buildProgressStores({
+    report: params.report,
+    focusMetricKey,
+  });
+  const focusCoveredDays = stores.reduce((sum, store) => sum + store.dayCount, 0);
+  const focusExpectedDays = stores.reduce((sum, store) => sum + store.expectedDays, 0);
+  const focusCoverageRate =
+    focusExpectedDays <= 0 ? 1 : round(Math.min(focusCoveredDays / focusExpectedDays, 1), 4);
+  const progressed =
+    !params.previousState ||
+    params.previousState.focusMetricKey !== focusMetricKey ||
+    focusCoveredDays > params.previousState.focusCoveredDays ||
+    focusCoverageRate > params.previousState.focusCoverageRate;
+  const complete = focusCoverageRate >= 1;
+  const noProgressNightCount = complete
+    ? 0
+    : progressed
+      ? 0
+      : (params.previousState?.noProgressNightCount ?? 0) + 1;
+  const status: ProjectDataCoverageProgressStatus = complete
+    ? "complete"
+    : progressed
+      ? "progressed"
+      : noProgressNightCount >= 2
+        ? "stalled"
+        : "no_progress";
+
+  return {
+    checkedAt: params.checkedAt,
+    startBizDate: params.report.startBizDate,
+    endBizDate: params.report.endBizDate,
+    focusMetricKey,
+    focusCoveredDays,
+    focusExpectedDays,
+    focusCoverageRate,
+    noProgressNightCount,
+    status,
+    stores,
+  };
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+export function parseProjectDataCoverageProgressState(
+  value: unknown,
+): ProjectDataCoverageProgressState | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const raw = value as Record<string, unknown>;
+  const checkedAt = readString(raw.checkedAt);
+  const startBizDate = readString(raw.startBizDate);
+  const endBizDate = readString(raw.endBizDate);
+  const focusMetricKey = readString(raw.focusMetricKey);
+  const status = readString(raw.status);
+  const focusCoveredDays = readNumber(raw.focusCoveredDays);
+  const focusExpectedDays = readNumber(raw.focusExpectedDays);
+  const focusCoverageRate = readNumber(raw.focusCoverageRate);
+  const noProgressNightCount = readNumber(raw.noProgressNightCount);
+  if (
+    !checkedAt ||
+    !startBizDate ||
+    !endBizDate ||
+    !focusMetricKey ||
+    (status !== "complete" &&
+      status !== "progressed" &&
+      status !== "no_progress" &&
+      status !== "stalled") ||
+    focusCoveredDays === undefined ||
+    focusExpectedDays === undefined ||
+    focusCoverageRate === undefined ||
+    noProgressNightCount === undefined
+  ) {
+    return undefined;
+  }
+  const stores: ProjectDataCoverageProgressStoreState[] = [];
+  if (Array.isArray(raw.stores)) {
+    for (const entry of raw.stores) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        continue;
+      }
+      const row = entry as Record<string, unknown>;
+      const orgId = readString(row.orgId);
+      const storeName = readString(row.storeName);
+      const dayCount = readNumber(row.dayCount);
+      const expectedDays = readNumber(row.expectedDays);
+      const coverageRate = readNumber(row.coverageRate);
+      if (
+        !orgId ||
+        !storeName ||
+        dayCount === undefined ||
+        expectedDays === undefined ||
+        coverageRate === undefined
+      ) {
+        continue;
+      }
+      stores.push({
+        orgId,
+        storeName,
+        dayCount,
+        expectedDays,
+        coverageRate,
+        firstMissingBizDate: readString(row.firstMissingBizDate),
+      });
+    }
+  }
+  return {
+    checkedAt,
+    startBizDate,
+    endBizDate,
+    focusMetricKey,
+    focusCoveredDays,
+    focusExpectedDays,
+    focusCoverageRate,
+    noProgressNightCount,
+    status,
+    stores,
+  };
+}
+
+export function formatProjectDataCoverageProgressLine(
+  state: ProjectDataCoverageProgressState,
+): string {
+  const details = [
+    `Data coverage progress: ${state.focusMetricKey} ${state.focusCoveredDays}/${state.focusExpectedDays} days ${pct(state.focusCoverageRate)}`,
+    `status=${state.status}`,
+    `no_progress_nights=${state.noProgressNightCount}`,
+  ];
+  if (state.status === "stalled") {
+    details.push("check upstream window/card candidates/lock/task order/api failures");
+  }
+  return details.join(" | ");
 }
 
 function formatMetricGap(metric: ProjectDataCoverageMetric): string | undefined {

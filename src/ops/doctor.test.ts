@@ -18,6 +18,7 @@ import {
   formatSemanticQualityLine,
   formatQueueLaneLine,
   formatSyncExecutionLine,
+  formatProjectDataCoverageSummary,
   formatSchedulerJobDoctorLine,
   summarizeHermesGatewayLog,
   renderHetangDoctorReport,
@@ -283,6 +284,49 @@ describe("doctor formatting helpers", () => {
     );
 
     expect(formatDailyReportAuditSummary(null)).toBe("Daily report audit (7d): no runs recorded");
+  });
+
+  it("formats project data coverage gaps and progress for doctor output", () => {
+    expect(
+      formatProjectDataCoverageSummary({
+        startBizDate: "2025-10-01",
+        endBizDate: "2026-05-08",
+        expectedDays: 220,
+        overallStatus: "incomplete",
+        storeCount: 5,
+        incompleteStoreCount: 5,
+        progress: {
+          checkedAt: "2026-05-09T04:00:00.000+08:00",
+          startBizDate: "2025-10-01",
+          endBizDate: "2026-05-08",
+          focusMetricKey: "1.4",
+          focusCoveredDays: 225,
+          focusExpectedDays: 1100,
+          focusCoverageRate: 0.2045,
+          noProgressNightCount: 2,
+          status: "stalled",
+          stores: [],
+        },
+        topGaps: [
+          {
+            orgId: "1001",
+            storeName: "义乌店",
+            key: "1.4",
+            label: "消费流水",
+            coverageRate: 0.208,
+            firstMissingBizDate: "2025-10-01",
+            affectsDailyReport: true,
+            affectsQuestionAnswering: true,
+            affectsActionLoop: true,
+            impactLabels: ["日报", "问答", "动作闭环"],
+          },
+        ],
+      }),
+    ).toEqual([
+      "Project data coverage: incomplete | 2025-10-01..2026-05-08 | stores=5 incomplete=5 | expected_days=220",
+      "Project data coverage progress: 1.4 225/1100 days 20.5% | status=stalled | no_progress_nights=2",
+      "Project data gap: 义乌店 | 1.4 消费流水 | rate=20.8% | first_missing=2025-10-01 | affects=日报,问答,动作闭环",
+    ]);
   });
 
   it("surfaces nightly conversation review input=0 as an explicit doctor warning", () => {

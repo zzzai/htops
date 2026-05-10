@@ -11,6 +11,7 @@ import type {
   HetangRecentCommandAuditSummary,
   HetangConversationReviewOverview,
   HetangQueueStatusSummary,
+  HetangProjectDataCoverageSummary,
   HetangReportDeliveryUpgradeSummary,
   HetangSchedulerJobSummary,
   HetangSemanticQualitySummary,
@@ -45,6 +46,13 @@ function formatPercent(value: number | null): string {
     return "n/a";
   }
   return `${Number.isInteger(value) ? value : value.toFixed(1).replace(/\.0$/u, "")}%`;
+}
+
+function formatCoverageRate(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "n/a";
+  }
+  return `${(Math.round((value * 100 + Number.EPSILON) * 10) / 10).toFixed(1)}%`;
 }
 
 function formatLatency(value: number | null): string {
@@ -272,6 +280,40 @@ export function formatDailyReportReadinessSummary(
     details.push(`pending=${pending}`);
   }
   return details.join(" | ");
+}
+
+export function formatProjectDataCoverageSummary(
+  summary: HetangProjectDataCoverageSummary,
+): string[] {
+  const lines = [
+    [
+      `Project data coverage: ${summary.overallStatus}`,
+      `${summary.startBizDate}..${summary.endBizDate}`,
+      `stores=${summary.storeCount} incomplete=${summary.incompleteStoreCount}`,
+      `expected_days=${summary.expectedDays}`,
+    ].join(" | "),
+  ];
+  if (summary.progress) {
+    lines.push(
+      [
+        `Project data coverage progress: ${summary.progress.focusMetricKey} ${summary.progress.focusCoveredDays}/${summary.progress.focusExpectedDays} days ${formatCoverageRate(summary.progress.focusCoverageRate)}`,
+        `status=${summary.progress.status}`,
+        `no_progress_nights=${summary.progress.noProgressNightCount}`,
+      ].join(" | "),
+    );
+  }
+  for (const gap of summary.topGaps.slice(0, 8)) {
+    lines.push(
+      [
+        `Project data gap: ${gap.storeName}`,
+        `${gap.key} ${gap.label}`,
+        `rate=${formatCoverageRate(gap.coverageRate)}`,
+        `first_missing=${gap.firstMissingBizDate ?? "unknown"}`,
+        `affects=${gap.impactLabels.join(",") || "none"}`,
+      ].join(" | "),
+    );
+  }
+  return lines;
 }
 
 export function formatEnvironmentMemoryReadinessSummary(

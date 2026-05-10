@@ -10,6 +10,12 @@ import {
   type NightlyPriorityBackfillTask,
 } from "../src/nightly-priority-backfill.js";
 import {
+  buildProjectDataCoverageProgressState,
+  buildProjectDataCoverageReport,
+  formatProjectDataCoverageProgressLine,
+  parseProjectDataCoverageProgressState,
+} from "../src/project-data-coverage.js";
+import {
   resolveLocalDate,
   resolveOperationalBizDateFromTimestamp,
   resolveReportBizDate,
@@ -469,6 +475,62 @@ async function executeTask(params: {
   });
 }
 
+async function persistProjectDataCoverageProgress(params: {
+  config: HetangOpsConfig;
+  store: HetangOpsStore;
+  stores: HetangStoreConfig[];
+  startBizDate: string;
+  endBizDate: string;
+  checkedAt: string;
+  dryRun: boolean;
+}): Promise<void> {
+  const snapshots = await Promise.all(
+    params.stores.map((storeConfig) =>
+      params.store.getHistoricalCoverageSnapshot({
+        orgId: storeConfig.orgId,
+        startBizDate: params.startBizDate,
+        endBizDate: params.endBizDate,
+      }),
+    ),
+  );
+  const report = buildProjectDataCoverageReport({
+    startBizDate: params.startBizDate,
+    endBizDate: params.endBizDate,
+    stores: params.stores.map((entry) => ({
+      orgId: entry.orgId,
+      storeName: entry.storeName,
+    })),
+    snapshots,
+  });
+  const previousState = parseProjectDataCoverageProgressState(
+    await params.store.getScheduledJobState("project-data-coverage", "latest-progress"),
+  );
+  const progress = buildProjectDataCoverageProgressState({
+    report,
+    previousState,
+    checkedAt: params.checkedAt,
+    focusMetricKey: "1.4",
+  });
+  logJson("project-data-coverage-progress", {
+    focusMetricKey: progress.focusMetricKey,
+    focusCoveredDays: progress.focusCoveredDays,
+    focusExpectedDays: progress.focusExpectedDays,
+    focusCoverageRate: progress.focusCoverageRate,
+    noProgressNightCount: progress.noProgressNightCount,
+    status: progress.status,
+    dryRun: params.dryRun,
+  });
+  console.log(formatProjectDataCoverageProgressLine(progress));
+  if (!params.dryRun) {
+    await params.store.setScheduledJobState(
+      "project-data-coverage",
+      "latest-progress",
+      progress as unknown as Record<string, unknown>,
+      params.checkedAt,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   await loadStandaloneRuntimeEnv();
   const options = parseArgs(process.argv.slice(2));
@@ -625,6 +687,15 @@ async function main(): Promise<void> {
     }
 
     const finishedAt = new Date().toISOString();
+    await persistProjectDataCoverageProgress({
+      config,
+      store,
+      stores,
+      startBizDate: options.startBizDate,
+      endBizDate,
+      checkedAt: finishedAt,
+      dryRun: options.dryRun,
+    });
     if (!options.dryRun) {
       await store.setScheduledJobState(
         "nightly-priority-backfill",

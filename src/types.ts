@@ -81,6 +81,50 @@ export type HetangHistoricalCoverageSnapshot = {
   };
 };
 
+export type HetangProjectDataCoverageProgressState = {
+  checkedAt: string;
+  startBizDate: string;
+  endBizDate: string;
+  focusMetricKey: string;
+  focusCoveredDays: number;
+  focusExpectedDays: number;
+  focusCoverageRate: number;
+  noProgressNightCount: number;
+  status: "complete" | "progressed" | "no_progress" | "stalled";
+  stores: Array<{
+    orgId: string;
+    storeName: string;
+    dayCount: number;
+    expectedDays: number;
+    coverageRate: number;
+    firstMissingBizDate?: string;
+  }>;
+};
+
+export type HetangProjectDataCoverageGapSummary = {
+  orgId: string;
+  storeName: string;
+  key: string;
+  label: string;
+  coverageRate: number;
+  firstMissingBizDate?: string;
+  affectsDailyReport: boolean;
+  affectsQuestionAnswering: boolean;
+  affectsActionLoop: boolean;
+  impactLabels: string[];
+};
+
+export type HetangProjectDataCoverageSummary = {
+  startBizDate: string;
+  endBizDate: string;
+  expectedDays: number;
+  overallStatus: "complete" | "incomplete";
+  storeCount: number;
+  incompleteStoreCount: number;
+  topGaps: HetangProjectDataCoverageGapSummary[];
+  progress?: HetangProjectDataCoverageProgressState;
+};
+
 export type HetangReportingConfig = {
   enabled: boolean;
   buildAtLocalTime: string;
@@ -1145,6 +1189,7 @@ export type HetangSchedulerStatusSummary = {
     | "industry_context_summary"
     | "environment_memory_summary"
     | "five_store_daily_overview_summary"
+    | "project_data_coverage_summary"
     | "legacy_poller_warning"
   >;
   pollers: HetangServicePollerHealth[];
@@ -1158,6 +1203,7 @@ export type HetangSchedulerStatusSummary = {
   industryContextSummary?: HetangIndustryContextReadinessSummary;
   environmentMemorySummary?: HetangEnvironmentMemoryReadinessSummary;
   fiveStoreDailyOverviewSummary?: HetangFiveStoreDailyOverviewSummary;
+  projectDataCoverageSummary?: HetangProjectDataCoverageSummary;
 };
 
 export type HetangAnalysisQueueSummary = {
@@ -2472,6 +2518,41 @@ export type MemberReactivationExecutionSummary = {
   priorityBandCounts: MemberReactivationExecutionPriorityBandCount[];
   followupBucketCounts: MemberReactivationExecutionFollowupBucketCount[];
   topPendingTasks: MemberReactivationExecutionTaskRecord[];
+};
+
+export type MemberReactivationActionLoopResultStatus = "pending" | "done" | "not_applicable";
+
+export type MemberReactivationActionLoopTask = {
+  memberId: string;
+  customerDisplayName: string;
+  priorityBand: MemberReactivationPriorityBand;
+  selectionReason: string;
+  touchScript: string;
+  owner: string;
+  executionStatus: MemberReactivationFeedbackStatus;
+  arrivalResult: MemberReactivationActionLoopResultStatus;
+  consumeResult: MemberReactivationActionLoopResultStatus;
+  rechargeResult: MemberReactivationActionLoopResultStatus;
+  consumeAmount?: number;
+  rechargeAmount?: number;
+  note?: string;
+};
+
+export type MemberReactivationActionLoopSummary = {
+  orgId: string;
+  bizDate: string;
+  theme: "high-balance-sleeping-member-reactivation";
+  totalTaskCount: number;
+  ownerCoverage: {
+    assignedCount: number;
+    unassignedCount: number;
+  };
+  results: {
+    arrivedCount: number;
+    consumedCount: number;
+    rechargedCount: number;
+  };
+  tasks: MemberReactivationActionLoopTask[];
 };
 
 export type DailyGroupbuyPlatformMetric = {

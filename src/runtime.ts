@@ -13,6 +13,7 @@ import {
   formatConversationReviewInputWarning,
   formatDailyReportAuditSummary,
   formatDailyReportReadinessSummary,
+  formatProjectDataCoverageSummary,
   formatEnvironmentMemoryDisturbanceSummary,
   formatEnvironmentMemoryReadinessSummary,
   formatFiveStoreDailyOverviewSummary,
@@ -325,6 +326,9 @@ export class HetangOpsRuntime {
             formatDailyReportAuditSummary(schedulerStatus.dailyReportAuditSummary),
             ...(schedulerStatus.reportReadinessSummary
               ? [formatDailyReportReadinessSummary(schedulerStatus.reportReadinessSummary)]
+              : []),
+            ...(schedulerStatus.projectDataCoverageSummary
+              ? formatProjectDataCoverageSummary(schedulerStatus.projectDataCoverageSummary)
               : []),
             ...(schedulerStatus.industryContextSummary
               ? [formatIndustryContextReadinessSummary(schedulerStatus.industryContextSummary)]

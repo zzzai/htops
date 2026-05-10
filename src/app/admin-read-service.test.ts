@@ -479,6 +479,73 @@ describe("HetangAdminReadService", () => {
     });
   });
 
+  it("threads historical data coverage and stalled 1.4 progress into scheduler status", async () => {
+    const queueStore = {
+      getScheduledJobState: vi.fn(async (jobType: string, stateKey: string) => {
+        if (jobType === "project-data-coverage" && stateKey === "latest-progress") {
+          return {
+            checkedAt: "2026-05-08T04:00:00.000+08:00",
+            startBizDate: "2025-10-01",
+            endBizDate: "2026-05-07",
+            focusMetricKey: "1.4",
+            focusCoveredDays: 210,
+            focusExpectedDays: 1095,
+            focusCoverageRate: 0.1918,
+            noProgressNightCount: 2,
+            status: "stalled",
+            stores: [],
+          };
+        }
+        return null;
+      }),
+      listCompletedRunKeys: vi.fn().mockResolvedValue(new Set<string>()),
+      getLatestScheduledJobRunTimes: vi.fn().mockResolvedValue({}),
+    };
+    const martStore = {
+      listRecentReportDeliveryUpgrades: vi.fn().mockResolvedValue([]),
+      getDailyReport: vi.fn().mockResolvedValue(null),
+    };
+    const store = {
+      getQueueAccessControlStore: vi.fn().mockReturnValue(queueStore),
+      getMartDerivedStore: vi.fn().mockReturnValue(martStore),
+      getHistoricalCoverageSnapshot: vi.fn(async ({ orgId }: { orgId: string }) => ({
+        orgId,
+        startBizDate: "2025-10-01",
+        endBizDate: "2026-05-07",
+        rawFacts: {
+          "1.2": { rowCount: 220, dayCount: 219 },
+          "1.3": { rowCount: 220, dayCount: 219 },
+          "1.4": { rowCount: 40, dayCount: 42, firstMissingBizDate: "2025-10-01" },
+          "1.6": { rowCount: 220, dayCount: 219 },
+          "1.7": { rowCount: 220, dayCount: 219 },
+        },
+        derivedLayers: {
+          martCustomerSegments: { rowCount: 0, dayCount: 0 },
+        },
+      })),
+    };
+
+    const service = new HetangAdminReadService({
+      config: buildMultiStoreConfig(),
+      logger: { info() {}, warn() {}, error() {}, debug() {} },
+      getStore: async () => store as never,
+    });
+
+    const status = await service.getSchedulerStatus(new Date("2026-05-08T10:00:00+08:00"));
+
+    expect(status.projectDataCoverageSummary).toMatchObject({
+      overallStatus: "incomplete",
+      progress: {
+        focusMetricKey: "1.4",
+        status: "stalled",
+        noProgressNightCount: 2,
+      },
+    });
+    expect(status.warnings).toContain(
+      "project data coverage stalled: 1.4 no_progress_nights=2; check upstream window/card candidates/lock/task order/api failures",
+    );
+  });
+
   it("summarizes environment memory readiness and recent disturbance highlights", async () => {
     const bizDate = "2026-04-23";
     const queueStore = {
