@@ -658,12 +658,22 @@ export type HetangConversationReviewCustomerProfileSignal = {
 };
 
 export type HetangConversationReviewShadowSignal = {
+  requestId?: string;
   conversationId?: string;
+  channel?: string;
+  senderId?: string;
   orgId?: string;
   storeName?: string;
-  legacyLane?: string;
+  rawText?: string;
+  occurredAt?: string;
   semanticLane?: string;
+  capabilityId?: string;
+  legacyLane?: string;
   mismatchClass?: string;
+  failureClass?: string;
+  clarificationNeeded?: boolean;
+  fallbackUsed?: boolean;
+  success?: boolean;
 };
 
 export type HetangConversationReviewFindingCandidate = {

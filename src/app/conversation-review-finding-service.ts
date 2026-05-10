@@ -229,6 +229,72 @@ function buildAnalysisGapFinding(
   };
 }
 
+function buildShadowSignalFinding(
+  signal: HetangConversationReviewShadowSignal,
+): HetangConversationReviewFindingCandidate | null {
+  const failureClass = signal.failureClass?.trim();
+  const mismatchClass = signal.mismatchClass?.trim();
+  const hasFailure = Boolean(failureClass);
+  const hasClarification = signal.clarificationNeeded === true;
+  const hasFallback = signal.fallbackUsed === true;
+  const hasMismatch = Boolean(mismatchClass);
+  if (!hasFailure && !hasClarification && !hasFallback && !hasMismatch) {
+    return null;
+  }
+
+  const findingType: HetangConversationReviewFindingCandidate["findingType"] =
+    hasFailure || hasClarification || hasMismatch ? "intent_gap" : "analysis_gap";
+  const evidenceJson = JSON.stringify({
+    source: "semantic_execution_audit",
+    requestId: signal.requestId,
+    rawText: signal.rawText,
+    occurredAt: signal.occurredAt,
+    semanticLane: signal.semanticLane,
+    capabilityId: signal.capabilityId,
+    failureClass,
+    mismatchClass,
+    clarificationNeeded: signal.clarificationNeeded,
+    fallbackUsed: signal.fallbackUsed,
+    success: signal.success,
+  });
+
+  return {
+    conversationId: signal.conversationId,
+    channel: signal.channel,
+    chatId: signal.conversationId,
+    senderId: signal.senderId,
+    orgId: signal.orgId,
+    storeName: signal.storeName,
+    findingType,
+    severity: hasFailure || hasMismatch ? "high" : "medium",
+    confidence: hasFailure || hasMismatch ? 0.93 : 0.86,
+    title: hasFailure
+      ? "语义执行失败样本进入复盘"
+      : hasMismatch
+        ? "语义路由和旧路由存在差异"
+        : hasClarification
+          ? "语义入口触发澄清样本"
+          : "语义入口发生 fallback",
+    summary: hasFailure
+      ? `semantic execution failure=${failureClass}，该问法需要进入 capability / template / answerability 回归。`
+      : hasMismatch
+        ? `semantic route mismatch=${mismatchClass}，需要确认新旧路由差异是否合理。`
+        : hasClarification
+          ? "语义入口要求澄清，需确认是正常缺槽位还是识别能力不足。"
+          : "语义入口发生 fallback，需确认是否需要补 contract、recipe 或回答模板。",
+    evidenceJson,
+    suggestedActionType: hasFailure || hasMismatch ? "add_eval_sample" : "tighten_guardrail",
+    suggestedActionPayloadJson: JSON.stringify({
+      rawText: signal.rawText,
+      failureClass,
+      mismatchClass,
+      semanticLane: signal.semanticLane,
+      capabilityId: signal.capabilityId,
+    }),
+    followupTargets: resolveFollowupTargets(findingType),
+  };
+}
+
 function dedupeFindings(
   findings: HetangConversationReviewFindingCandidate[],
 ): HetangConversationReviewFindingCandidate[] {
@@ -289,7 +355,12 @@ export function buildConversationReviewFindingCandidates(params: {
     }
   }
 
-  void params.shadowSignals;
+  for (const signal of params.shadowSignals) {
+    const shadowFinding = buildShadowSignalFinding(signal);
+    if (shadowFinding) {
+      findings.push(shadowFinding);
+    }
+  }
 
   return {
     findings: dedupeFindings(findings),

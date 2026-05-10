@@ -1,6 +1,7 @@
 import type {
   HetangSemanticAnalysisFrameworkCount,
   HetangConversationReviewFinding,
+  HetangConversationReviewShadowSignal,
   HetangConversationClarificationReason,
   HetangSemanticExecutionAuditInput,
   HetangSemanticExecutionAuditRecord,
@@ -28,6 +29,11 @@ type SemanticExecutionAuditStore = {
     now: Date;
     limit: number;
   }) => Promise<Array<{ failureClass: string; count: number }>>;
+  listSemanticExecutionAuditsByTimeRange?: (params: {
+    startTime: string;
+    endTime: string;
+    limit?: number;
+  }) => Promise<HetangSemanticExecutionAuditRecord[]>;
 };
 
 const DEFAULT_TOP_FAILURE_LIMIT = 5;
@@ -411,5 +417,35 @@ export class HetangSemanticQualityService {
         ? countReviewDeployFollowups(await this.deps.listLatestConversationReviewFindings())
         : 0,
     };
+  }
+
+  async listConversationReviewShadowSignals(params: {
+    sourceWindowStart: string;
+    sourceWindowEnd: string;
+    limit?: number;
+  }): Promise<HetangConversationReviewShadowSignal[]> {
+    if (!this.deps.store.listSemanticExecutionAuditsByTimeRange) {
+      return [];
+    }
+    const rows = await this.deps.store.listSemanticExecutionAuditsByTimeRange({
+      startTime: params.sourceWindowStart,
+      endTime: params.sourceWindowEnd,
+      limit: params.limit ?? 200,
+    });
+    return rows.map((row) => ({
+      requestId: row.requestId,
+      conversationId: row.conversationId,
+      channel: row.channel,
+      senderId: row.senderId,
+      rawText: row.rawText,
+      occurredAt: row.occurredAt,
+      semanticLane: row.semanticLane,
+      capabilityId: row.capabilityId,
+      mismatchClass: row.routeUpgradeKind,
+      failureClass: row.failureClass,
+      clarificationNeeded: row.clarificationNeeded,
+      fallbackUsed: row.fallbackUsed,
+      success: row.success,
+    }));
   }
 }

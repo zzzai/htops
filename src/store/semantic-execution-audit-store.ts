@@ -50,6 +50,51 @@ function normalizeNullableNumeric(value: unknown): number | null {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function mapSemanticExecutionAuditRow(
+  row: Record<string, unknown>,
+): HetangSemanticExecutionAuditRecord {
+  return {
+    auditId: normalizeNumeric(row.audit_id),
+    requestId: typeof row.request_id === "string" ? row.request_id : undefined,
+    entry: String(row.entry) as HetangSemanticExecutionAuditRecord["entry"],
+    entrySource:
+      typeof row.entry_source === "string"
+        ? (row.entry_source as HetangSemanticExecutionAuditRecord["entrySource"])
+        : undefined,
+    channel: typeof row.channel === "string" ? row.channel : undefined,
+    senderId: typeof row.sender_id === "string" ? row.sender_id : undefined,
+    conversationId:
+      typeof row.conversation_id === "string" ? row.conversation_id : undefined,
+    rawText: String(row.raw_text ?? ""),
+    effectiveText: typeof row.effective_text === "string" ? row.effective_text : undefined,
+    semanticLane:
+      typeof row.semantic_lane === "string"
+        ? (row.semantic_lane as HetangSemanticExecutionAuditRecord["semanticLane"])
+        : undefined,
+    intentKind: typeof row.intent_kind === "string" ? row.intent_kind : undefined,
+    capabilityId: typeof row.capability_id === "string" ? row.capability_id : undefined,
+    analysisFrameworkId:
+      typeof row.analysis_framework_id === "string" ? row.analysis_framework_id : undefined,
+    analysisPersonaId:
+      typeof row.analysis_persona_id === "string" ? row.analysis_persona_id : undefined,
+    routeUpgradeKind:
+      typeof row.route_upgrade_kind === "string" ? row.route_upgrade_kind : undefined,
+    stateCarriedForward: row.state_carried_forward === true,
+    topicSwitchDetected: row.topic_switch_detected === true,
+    deployMarker: typeof row.deploy_marker === "string" ? row.deploy_marker : undefined,
+    servingVersion: typeof row.serving_version === "string" ? row.serving_version : undefined,
+    clarificationNeeded: row.clarification_needed === true,
+    clarificationReason:
+      typeof row.clarification_reason === "string" ? row.clarification_reason : undefined,
+    fallbackUsed: row.fallback_used === true,
+    executed: row.executed === true,
+    success: row.success === true,
+    failureClass: typeof row.failure_class === "string" ? row.failure_class : undefined,
+    durationMs: normalizeNullableNumeric(row.duration_ms) ?? undefined,
+    occurredAt: normalizeTimestampField(row.occurred_at) ?? String(row.occurred_at ?? ""),
+  };
+}
+
 export class HetangSemanticExecutionAuditStore {
   private initialized = false;
 
@@ -176,6 +221,27 @@ export class HetangSemanticExecutionAuditStore {
         record.occurredAt,
       ],
     );
+  }
+
+  async listSemanticExecutionAuditsByTimeRange(params: {
+    startTime: string;
+    endTime: string;
+    limit?: number;
+  }): Promise<HetangSemanticExecutionAuditRecord[]> {
+    await this.initialize();
+    const limit = Math.max(1, Math.min(500, Math.trunc(params.limit ?? 200)));
+    const result = await this.queryable.query(
+      `
+        SELECT *
+        FROM semantic_execution_audits
+        WHERE occurred_at >= $1::timestamptz
+          AND occurred_at < $2::timestamptz
+        ORDER BY occurred_at DESC, audit_id DESC
+        LIMIT $3
+      `,
+      [params.startTime, params.endTime, limit],
+    );
+    return result.rows.map((row: Record<string, unknown>) => mapSemanticExecutionAuditRow(row));
   }
 
   private buildSemanticQualityFilter(params: {

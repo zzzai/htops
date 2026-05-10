@@ -655,6 +655,10 @@ export class HetangOpsRuntime {
             logger: this.params.logger,
             getStore: () => this.getStore(),
             now: () => this.resolveNow(),
+            listSemanticExecutionReviewSignals: async (reviewParams) =>
+              await (
+                await this.getSemanticQualityService()
+              ).listConversationReviewShadowSignals(reviewParams),
           }).runNightlyConversationReview(params),
       });
     }

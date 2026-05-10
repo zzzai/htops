@@ -11,6 +11,7 @@ import type {
   HetangConversationReviewFindingType,
   HetangConversationReviewRun,
   HetangConversationReviewRunResult,
+  HetangConversationReviewShadowSignal,
   HetangConversationReviewSummary,
   HetangConversationReviewSynthesis,
   HetangInboundMessageAuditRecord,
@@ -236,6 +237,11 @@ export class HetangConversationReviewService {
         sourceWindowStart: string;
         sourceWindowEnd: string;
       }) => Promise<HetangConversationReviewCustomerProfileSignal[]>;
+      listSemanticExecutionReviewSignals?: (params: {
+        reviewDate: string;
+        sourceWindowStart: string;
+        sourceWindowEnd: string;
+      }) => Promise<HetangConversationReviewShadowSignal[]>;
     },
   ) {}
 
@@ -299,7 +305,13 @@ export class HetangConversationReviewService {
           sourceWindowEnd: params.sourceWindowEnd,
         })
       : [];
-    const shadowSignals: [] = [];
+    const shadowSignals = this.deps.listSemanticExecutionReviewSignals
+      ? await this.deps.listSemanticExecutionReviewSignals({
+          reviewDate: params.reviewDate,
+          sourceWindowStart: params.sourceWindowStart,
+          sourceWindowEnd: params.sourceWindowEnd,
+        })
+      : [];
     const reviewRunId = this.deps.createReviewRunId?.() ?? `review-${randomUUID()}`;
     const nowIso = (this.deps.now ?? (() => new Date()))().toISOString();
 
