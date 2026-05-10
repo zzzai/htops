@@ -304,11 +304,11 @@ describe("HetangReportingService five-store daily overview", () => {
 
     expect(fakeStore.getDailyReport).toHaveBeenCalledWith("1001", "2026-04-22");
     expect(fakeStore.getDailyReport).toHaveBeenCalledWith("1001", "2026-04-15");
-    expect(markdown).toContain("# 荷塘悦色5店经营雷达");
-    expect(markdown).toContain("## 一、5店总判断");
-    expect(markdown).toContain("## 二、今日最该盯的3个痛点");
-    expect(markdown).toContain("## 三、门店处理优先级");
-    expect(markdown).toContain("## 四、今天只做一件事");
+    expect(markdown).toContain("# 荷塘悦色5店每日经营简报");
+    expect(markdown).toContain("## 一、核心指标与总判断");
+    expect(markdown).toContain("## 二、今日最重要的3个经营问题");
+    expect(markdown).toContain("## 三、门店动作清单");
+    expect(markdown).toContain("## 四、总部今天只盯一件事");
     expect(markdown).toContain("命中门店：");
     expect(markdown).not.toContain("## 二、证据链");
     expect(markdown).not.toContain("## 三、真正的核心问题");
@@ -358,7 +358,7 @@ describe("HetangReportingService five-store daily overview", () => {
       bizDate: "2026-04-22",
     });
 
-    expect(markdown).toContain("## 数据可信度");
+    expect(markdown).toContain("## 数据可信度提示");
     expect(markdown).toContain("义乌店：数据风险");
     expect(markdown).toContain("1.4");
     expect(markdown).toContain("消费流水覆盖缺口");
@@ -435,7 +435,7 @@ describe("HetangReportingService five-store daily overview", () => {
           channel: "wecom",
           target: "hetang-managers",
         }),
-        message: expect.stringContaining("## 三、门店处理优先级"),
+        message: expect.stringContaining("## 三、门店动作清单"),
       }),
     );
     expect(fakeStore.markScheduledJobCompleted).toHaveBeenCalledWith(

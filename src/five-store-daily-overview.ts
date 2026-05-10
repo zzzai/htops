@@ -1432,7 +1432,7 @@ function buildDataRiskLines(hits: StorePainHit[]): string[] {
   }
 
   return [
-    "## 数据可信度",
+    "## 数据可信度提示",
     ...dataRiskHits.map(
       (hit) =>
         `- ${hit.store.storeName}：数据风险。证据：${hit.signal.evidence}。处理：${hit.signal.recommendedAction}`,
@@ -1575,34 +1575,34 @@ export function renderFiveStoreDailyOverview(params: FiveStoreDailyOverviewInput
     groupedPainSignals.find((group) => group.signal.id !== "pain:data_risk") ?? null;
 
   const sections = [
-    "# 荷塘悦色5店经营雷达",
+    "# 荷塘悦色5店每日经营简报",
     `日期：${params.bizDate}`,
     ...(params.baselineBizDate ? [`对比：${params.baselineBizDate}`] : []),
     ...(params.backgroundHint ? [`背景提示：${params.backgroundHint}`] : []),
     "",
     ...buildDataRiskLines(painHits),
     ...buildEnvironmentContextLines(params),
-    "## 一、5店总判断",
+    "## 一、核心指标与总判断",
     ...buildRadarSummaryLines({
       currentAggregate,
       baselineAggregate,
       commonGap,
     }),
     "",
-    "## 二、今日最该盯的3个痛点",
+    "## 二、今日最重要的3个经营问题",
     ...buildTopPainLines({
       groups: groupedPainSignals,
       commonGap,
     }),
     "",
-    "## 三、门店处理优先级",
+    "## 三、门店动作清单",
     ...buildStorePriorityLines({
       stores: params.stores,
       hits: painHits,
       commonGap,
     }),
     "",
-    "## 四、今天只做一件事",
+    "## 四、总部今天只盯一件事",
     ...buildSingleRadarActionLines({
       topGroup: topBusinessPainGroup,
       currentAggregate,

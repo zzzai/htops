@@ -276,11 +276,11 @@ describe("renderFiveStoreDailyOverview", () => {
   it("renders the headquarters radar structure instead of the long deep-diagnosis layout", () => {
     const text = renderFiveStoreDailyOverview(buildInput());
 
-    expect(text).toContain("# 荷塘悦色5店经营雷达");
-    expect(text).toContain("## 一、5店总判断");
-    expect(text).toContain("## 二、今日最该盯的3个痛点");
-    expect(text).toContain("## 三、门店处理优先级");
-    expect(text).toContain("## 四、今天只做一件事");
+    expect(text).toContain("# 荷塘悦色5店每日经营简报");
+    expect(text).toContain("## 一、核心指标与总判断");
+    expect(text).toContain("## 二、今日最重要的3个经营问题");
+    expect(text).toContain("## 三、门店动作清单");
+    expect(text).toContain("## 四、总部今天只盯一件事");
     expect(text).toContain("命中门店：");
     expect(text).toContain("储值压力");
     expect(text).not.toContain("## 二、证据链");
@@ -313,7 +313,7 @@ describe("renderFiveStoreDailyOverview", () => {
 
     const text = renderFiveStoreDailyOverview(input);
 
-    expect(text).toContain("## 数据可信度");
+    expect(text).toContain("## 数据可信度提示");
     expect(text).toContain("数据风险");
     expect(text).toContain("迎宾店");
     expect(text).toContain("不可用指标 1.1,1.7");
@@ -340,8 +340,8 @@ describe("renderFiveStoreDailyOverview", () => {
     expect(text).toContain("- 判断：");
     expect(text).toContain("- 营收：");
     expect(text).toContain("- 客流：");
-    expect(text).toContain("## 三、门店处理优先级");
-    expect(text).toContain("## 四、今天只做一件事");
+    expect(text).toContain("## 三、门店动作清单");
+    expect(text).toContain("## 四、总部今天只盯一件事");
     expect(text).not.toContain("迎宾店：角色是");
   });
 
@@ -366,7 +366,7 @@ describe("renderFiveStoreDailyOverview", () => {
     expect(text).toContain("天气扰动会影响即时到店");
     expect(text).toContain("今天先补预约确认和临时改约");
     expect(text.indexOf("## 外部环境解释")).toBeLessThan(
-      text.indexOf("## 一、5店总判断"),
+      text.indexOf("## 一、核心指标与总判断"),
     );
   });
 });
