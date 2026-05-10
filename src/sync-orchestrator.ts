@@ -162,58 +162,6 @@ function summarizeSyncResult(storeName: string, report: DailyStoreReport): strin
   ].join(" | ");
 }
 
-function formatChineseBizDate(bizDate: string): string {
-  const [year, month, day] = bizDate.split("-");
-  if (!year || !month || !day) {
-    return bizDate;
-  }
-  return `${Number(year)}年${Number(month)}月${Number(day)}日`;
-}
-
-function sameNotificationTarget(
-  left: HetangNotificationTarget | undefined,
-  right: HetangNotificationTarget | undefined,
-): boolean {
-  if (!left || !right) {
-    return false;
-  }
-  return (
-    left.enabled !== false &&
-    right.enabled !== false &&
-    left.channel === right.channel &&
-    left.target === right.target &&
-    (left.accountId ?? "") === (right.accountId ?? "") &&
-    (left.threadId ?? "") === (right.threadId ?? "")
-  );
-}
-
-function resolveSharedReportAnnouncementTarget(
-  config: HetangOpsConfig,
-): HetangNotificationTarget | null {
-  const activeStores = config.stores.filter((entry) => entry.isActive);
-  if (activeStores.length === 0) {
-    return null;
-  }
-
-  const targets = activeStores.map(
-    (entry) => entry.notification ?? config.reporting.sharedDelivery,
-  );
-  const firstTarget = targets[0];
-  if (!firstTarget || firstTarget.enabled === false) {
-    return null;
-  }
-  if (!targets.every((target) => sameNotificationTarget(firstTarget, target))) {
-    return null;
-  }
-  return firstTarget;
-}
-
-function buildSharedReportAnnouncementMessage(bizDate: string, storeCount: number): string {
-  return [`${formatChineseBizDate(bizDate)} ${storeCount}家店前一营业日日报如下。`, `@所有人`].join(
-    "\n",
-  );
-}
-
 function isFinalReportDeliveryState(
   existing: { sentAt?: string | null; sendStatus?: string | null } | null,
   line: string | null,
@@ -226,6 +174,7 @@ function isFinalReportDeliveryState(
   }
   return (
     line.endsWith(": report sent") ||
+    line.includes(": skipped - store manager notification target matches shared delivery") ||
     line.includes(": notification disabled by control tower")
   );
 }
@@ -511,27 +460,12 @@ export class HetangSyncOrchestrator {
               ),
             ),
           );
-          const sharedAnnouncementTarget = resolveSharedReportAnnouncementTarget(this.deps.config);
-          const shouldSendSharedAnnouncement =
-            sharedAnnouncementTarget !== null &&
-            activeStores.every((entry) => !existingReports.get(entry.orgId)?.sentAt);
-
-          if (shouldSendSharedAnnouncement) {
-            try {
-              await this.deps.sendNotificationMessage({
-                notification: sharedAnnouncementTarget,
-                message: buildSharedReportAnnouncementMessage(job.runKey, activeStores.length),
-              });
-            } catch (error) {
-              allSent = false;
-              const message = summarizeUnknownError(error);
-              this.deps.logger.warn(
-                `hetang-ops: send report announcement failed for ${job.runKey}: ${message}`,
-              );
-            }
-          }
-
           for (const entry of activeStores) {
+            const notification = entry.notification;
+            if (!notification || !notification.enabled) {
+              lines.push(`${entry.storeName}: skipped - no store manager notification configured`);
+              continue;
+            }
             try {
               const existing = existingReports.get(entry.orgId) ?? null;
               if (existing?.sentAt && existing.sendStatus === "sent") {
@@ -588,8 +522,11 @@ export class HetangSyncOrchestrator {
         }
 
         if (job.jobType === "send-five-store-daily-overview") {
-          if (!completedRunKeys.has(`send-report:${job.runKey}`)) {
-            lines.push(`${job.runKey} five-store daily overview waiting - daily reports not fully sent yet`);
+          if (
+            !completedRunKeys.has(`build-report:${job.runKey}`) ||
+            !completedRunKeys.has(`audit-daily-report-window:${job.runKey}`)
+          ) {
+            lines.push(`${job.runKey} five-store daily overview waiting - daily reports not built/audited yet`);
             continue;
           }
           try {

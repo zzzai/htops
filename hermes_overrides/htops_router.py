@@ -16,7 +16,12 @@ STRONG_DOMAIN_TERMS = (
     "五店",
     "总部",
     "营收",
+    "进账",
+    "实收",
+    "到手",
     "业绩",
+    "现金业绩",
+    "劳动业绩",
     "经营",
     "复盘",
     "日报",
@@ -43,6 +48,7 @@ WEAK_DOMAIN_TERMS = (
     "顾客",
     "客户",
     "会员",
+    "老客",
     "召回",
     "唤回",
     "复购",
@@ -54,6 +60,9 @@ WEAK_DOMAIN_TERMS = (
     "标签",
     "余额",
     "卡项",
+    "沉默",
+    "沉睡",
+    "跑了",
 )
 HIGH_FREQUENCY_METRIC_TERMS = (
     "客流",
@@ -70,6 +79,9 @@ HIGH_FREQUENCY_METRIC_TERMS = (
 BUSINESS_ASK_HINTS = (
     "多少",
     "几",
+    "哪些",
+    "哪个",
+    "谁",
     "如何",
     "咋样",
     "怎么样",
@@ -240,6 +252,9 @@ def should_route_to_htops(text: str, store_aliases: Sequence[str] | None = None)
 
     weak_match_count = sum(1 for term in WEAK_DOMAIN_TERMS if term in normalized_text)
     if weak_match_count >= 2:
+        return True
+
+    if weak_match_count >= 1 and any(term in normalized_text for term in BUSINESS_ASK_HINTS):
         return True
 
     return weak_match_count >= 1 and TIME_HINT_PATTERN.search(normalized_text) is not None

@@ -14,6 +14,7 @@ import {
   type HetangQuerySemanticContext,
   type HetangSemanticObject as HetangQuerySemanticObject,
 } from "./query-semantics.js";
+import { HETANG_CONCEPT_EXPLAIN_KEYWORDS } from "./semantic-question-patterns.js";
 import type {
   HetangAnalysisJobType,
   HetangConversationSemanticStateSnapshot,
@@ -29,8 +30,6 @@ const BUSINESS_CORRECTION_KEYWORDS =
   /(乱回|乱答|乱回复|瞎回|瞎回复|答非所问|没听懂|没理解|理解错|不是这个意思|别套模板|不要模板|别给模板|别发清单|别发能力清单|重新回答|重答)/u;
 const BUSINESS_DOMAIN_KEYWORDS =
   /(营收|业绩|经营|复盘|顾客|会员|客户|技师|总部|门店|团购|储值|开卡|复购|留存|流失|唤回|跟进|名单|画像|点钟|加钟|钟效|人效|排班|风险|危险|盘子|大盘)/u;
-const CONCEPT_EXPLAIN_KEYWORDS =
-  /(什么是|什么意思|是什么意思|如何复盘|怎么复盘|如何做复盘|怎么做复盘|点钟率是什么意思|加钟率是什么意思|钟效是什么意思|人效是什么意思)/u;
 const TIME_SCOPE_HINT_KEYWORDS =
   /(今天|今日|昨天|昨日|明天|本周|本月|上周|上月|下周|下月|最近|近期|这几天|近几天|最近这几天|前几天|近\d+[天周月年]|过去\d+[天周月年]|最近\d+[天周月年]|\d{4}-\d{2}-\d{2}|\d{4}年\s*\d{1,2}月\s*\d{1,2}日|\d{1,2}月\s*\d{1,2}日)/u;
 const BUSINESS_GUIDANCE_PROMPT_KEYWORDS =
@@ -647,7 +646,7 @@ export function resolveSemanticIntent(params: {
 
   const semanticText = normalizeHetangSemanticText(rawText);
   const looksConceptExplain =
-    CONCEPT_EXPLAIN_KEYWORDS.test(semanticText) &&
+    HETANG_CONCEPT_EXPLAIN_KEYWORDS.test(semanticText) &&
     BUSINESS_DOMAIN_KEYWORDS.test(semanticText) &&
     !semanticContext.hasStoreContext &&
     !TIME_SCOPE_HINT_KEYWORDS.test(rawText);

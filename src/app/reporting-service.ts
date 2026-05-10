@@ -35,6 +35,7 @@ import { renderFiveStoreWeeklyReport } from "../weekly-report.js";
 import type {
   CustomerSegmentRecord,
   DailyStoreReport,
+  FiveStoreDailyOverviewEnvironmentContext,
   FiveStoreDailyOverviewCoreMetrics,
   FiveStoreDailyOverviewInput,
   FiveStoreDailyOverviewStoreSnapshot,
@@ -93,6 +94,22 @@ function cloneNotificationTarget(target: HetangNotificationTarget): HetangNotifi
     threadId: target.threadId,
     enabled: target.enabled,
   };
+}
+
+function notificationTargetsMatch(
+  left: HetangNotificationTarget | undefined,
+  right: HetangNotificationTarget | undefined,
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+  return (
+    left.channel === right.channel &&
+    left.target === right.target &&
+    left.enabled === right.enabled &&
+    left.accountId === right.accountId &&
+    left.threadId === right.threadId
+  );
 }
 
 function normalizeStringField(value: unknown): string | undefined {
@@ -287,6 +304,73 @@ function resolveFiveStoreOverviewBackgroundHint(
     return "昨日存在天气扰动，跨店差异需结合天气影响一起看。";
   }
   return "昨日存在环境扰动，跨店对比请结合背景因子一起看。";
+}
+
+function resolveFiveStoreOverviewEnvironmentContext(
+  snapshots: Array<StoreEnvironmentDailySnapshotRecord | null | undefined>,
+): FiveStoreDailyOverviewEnvironmentContext | undefined {
+  const rows = snapshots.filter(
+    (entry): entry is StoreEnvironmentDailySnapshotRecord =>
+      entry != null && entry.narrativePolicy !== undefined && entry.narrativePolicy !== "suppress",
+  );
+  if (rows.length === 0) {
+    return undefined;
+  }
+
+  const holiday = rows.find((entry) => entry.holidayTag === "holiday" && entry.holidayName);
+  const badWeatherRows = rows.filter(
+    (entry) =>
+      entry.badWeatherTouchPenalty === "medium" || entry.badWeatherTouchPenalty === "high",
+  );
+  const eveningRows = rows.filter(
+    (entry) =>
+      entry.eveningOutingLikelihood === "high" || entry.postDinnerLeisureBias === "high",
+  );
+  const transition = rows.find((entry) =>
+    ["pre_holiday", "post_holiday", "adjusted_workday"].includes(entry.holidayTag ?? ""),
+  );
+
+  const explanationLines: string[] = [];
+  if (holiday?.holidayName) {
+    explanationLines.push(`${holiday.holidayName}会改变到店节奏，日报里的环比要结合节假日窗口看。`);
+  } else if (transition?.holidayTag === "adjusted_workday") {
+    explanationLines.push("调休工作日会压低休闲消费时段，对比同周普通工作日容易失真。");
+  } else if (transition?.holidayTag === "pre_holiday") {
+    explanationLines.push("节前窗口可能提前释放到店需求，也可能让充值决策后移。");
+  } else if (transition?.holidayTag === "post_holiday") {
+    explanationLines.push("节后回落窗口会影响客流恢复速度，不能只按单日涨跌下判断。");
+  }
+  if (badWeatherRows.length > 0) {
+    explanationLines.push("天气扰动会影响即时到店和老客临时取消，客流波动需和预约承接一起看。");
+  }
+  if (eveningRows.length > 0) {
+    explanationLines.push("晚饭后和夜场需求偏强，今天更适合把晚场技师、房态和熟客预约前置。");
+  }
+
+  if (explanationLines.length === 0) {
+    explanationLines.push("昨日存在外部环境扰动，经营判断应同时看内部指标和外部背景。");
+  }
+
+  const headline =
+    holiday?.holidayName
+      ? `${holiday.holidayName}窗口扰动`
+      : badWeatherRows.length > 0
+        ? "天气扰动影响到店"
+        : eveningRows.length > 0
+          ? "晚场机会窗口"
+          : "外部环境存在扰动";
+  const actionHint =
+    eveningRows.length > 0
+      ? "今天先锁定晚场承接能力，再放大熟客召回和线上到店承接。"
+      : badWeatherRows.length > 0
+        ? "今天先补预约确认和临时改约，避免天气导致有效客流流失。"
+        : "今天所有经营判断都先和节假日、天气、晚场需求这些外部变量对齐。";
+
+  return {
+    headline,
+    explanationLines,
+    actionHint,
+  };
 }
 
 export class HetangReportingService {
@@ -640,6 +724,7 @@ export class HetangReportingService {
         bizDate: params.bizDate,
         baselineBizDate: params.baselineBizDate,
         backgroundHint: resolveFiveStoreOverviewBackgroundHint(environmentSnapshots),
+        environmentContext: resolveFiveStoreOverviewEnvironmentContext(environmentSnapshots),
         stores: snapshots,
       },
     };
@@ -693,9 +778,14 @@ export class HetangReportingService {
     if (booleanSetting(controlTowerSettings, "notification.enabled") === false) {
       return `${storeConfig.storeName}: notification disabled by control tower`;
     }
-    const notification = storeConfig.notification ?? this.deps.config.reporting.sharedDelivery;
+    const notification = storeConfig.notification;
     if (!notification || !notification.enabled) {
-      throw new Error(`No enabled notification target configured for ${storeConfig.storeName}`);
+      throw new Error(
+        `No enabled store manager notification target configured for ${storeConfig.storeName}`,
+      );
+    }
+    if (notificationTargetsMatch(notification, this.deps.config.reporting.sharedDelivery)) {
+      return `${storeConfig.storeName}: skipped - store manager notification target matches shared delivery`;
     }
     const existingReport =
       typeof (martStore as { getDailyReport?: unknown }).getDailyReport === "function"

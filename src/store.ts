@@ -3730,7 +3730,10 @@ export class HetangOpsStore {
           tech.is_job AS is_job,
           tech.point_clock_num AS point_clock_num,
           tech.wheel_clock_num AS wheel_clock_num,
-          NULLIF(tech.raw_json::jsonb ->> 'PersonStateName', '') AS state_name
+          CASE
+            WHEN (tech.raw_json::jsonb ->> 'PersonStateName') = '' THEN NULL
+            ELSE tech.raw_json::jsonb ->> 'PersonStateName'
+          END AS state_name
         FROM dim_tech_current AS tech
         LEFT JOIN dim_store AS store
           ON store.org_id = tech.org_id
@@ -3745,8 +3748,18 @@ export class HetangOpsStore {
         state_name,
         CASE
           WHEN is_job IS FALSE OR is_work IS FALSE THEN 'off'
-          WHEN COALESCE(state_name, '') ~ '(上钟|服务中|上钟中|忙)' THEN 'busy'
-          WHEN COALESCE(state_name, '') ~ '(空闲|待钟|待客|空档|可接)' THEN 'idle'
+          WHEN
+            COALESCE(state_name, '') LIKE '%上钟%' OR
+            COALESCE(state_name, '') LIKE '%服务中%' OR
+            COALESCE(state_name, '') LIKE '%忙%'
+          THEN 'busy'
+          WHEN
+            COALESCE(state_name, '') LIKE '%空闲%' OR
+            COALESCE(state_name, '') LIKE '%待钟%' OR
+            COALESCE(state_name, '') LIKE '%待客%' OR
+            COALESCE(state_name, '') LIKE '%空档%' OR
+            COALESCE(state_name, '') LIKE '%可接%'
+          THEN 'idle'
           ELSE 'unknown'
         END AS state_kind,
         point_clock_num,

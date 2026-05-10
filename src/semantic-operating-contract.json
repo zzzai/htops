@@ -1145,6 +1145,242 @@
         "supporting_metric_keys": ["cashPerformance", "totalLaborPerformance", "receivedLaborPerformance"],
         "decomposition_logic": ["利润诊断依赖完整成本模型", "当前只允许占位，不允许伪造利润结论"]
       }
+    ],
+    "answer_templates": [
+      {
+        "id": "template:boss-daily-revenue",
+        "family_id": "boss-daily-revenue",
+        "answer_mode": "metric_snapshot",
+        "required_refs": ["metric:daily_cash_in", "metric:daily_discount_given"],
+        "template": "{store}{date}实收 {daily_cash_in}，比{baseline} {delta}；标价与实收差额 {discount_given}，主要来自折扣/反结。",
+        "unavailable_template": "当前{store}{date}消费实收数据覆盖不完整，不能严肃回答进账问题。需要先补齐 API 1.2 的 Pay / CTime。",
+        "notes": ["进账按 Pay 实收，不按 Consume 标价。"]
+      },
+      {
+        "id": "template:boss-period-compare",
+        "family_id": "boss-period-compare",
+        "answer_mode": "comparison",
+        "required_refs": ["analysis:week_vs_last_week_store", "analysis:month_vs_last_month_store"],
+        "template": "{store}{period}整体{direction}：实收 {service_revenue}，客流 {customer_count}，客单 {average_ticket}，充值 {recharge_cash}。核心变化是 {main_driver}。",
+        "unavailable_template": "当前{store}{period}对比窗口数据不完整，不能严肃下整体判断。需要补齐消费、充值、钟数和新客数据。",
+        "notes": ["先拆营收、客流、客单，再补充值与供给。"]
+      },
+      {
+        "id": "template:boss-recharge-health",
+        "family_id": "boss-recharge-health",
+        "answer_mode": "metric_snapshot",
+        "required_refs": ["metric:recharge_cash", "metric:recharge_total_with_bonus", "metric:recharge_bonus_value"],
+        "template": "{store}{period}充值 {recharge_count} 笔，本金 {recharge_cash}，赠送 {recharge_bonus_value}，赠送比 {bonus_rate}，比{baseline} {delta}。",
+        "unavailable_template": "当前{store}{period}充值明细不完整，不能严肃回答充值金额。需要 API 1.3 的 Reality / Donate / CTime。",
+        "notes": ["本金和赠送必须分开说。"]
+      },
+      {
+        "id": "template:boss-stored-balance-pressure",
+        "family_id": "boss-stored-balance-pressure",
+        "answer_mode": "segment_list",
+        "required_refs": ["metric:stored_balance", "segment:high_balance_silent_customer"],
+        "template": "{store}当前储值余额 {stored_balance}；其中高余额沉默会员 {member_count} 人，余额合计 {silent_balance}，优先看 {top_segments}。",
+        "unavailable_template": "当前会员余额或沉默天数字段不完整，不能严肃回答卡里压了多少钱。需要 API 1.1 的 StoredAmount / SilentDays。",
+        "notes": ["余额压仓同时是负债和唤回机会。"]
+      },
+      {
+        "id": "template:boss-member-churn",
+        "family_id": "boss-member-churn",
+        "answer_mode": "segment_list",
+        "required_refs": ["segment:sleeping_customer", "analysis:member_churn_review"],
+        "template": "{store}流失风险会员 {member_count} 人；60 天以上 {warning_count} 人，90 天以上 {high_risk_count} 人，优先联系余额高且上次消费项目明确的人。",
+        "unavailable_template": "当前会员沉默天数或余额数据不完整，不能严肃给出快流失名单。需要 API 1.1 的 SilentDays / StoredAmount。",
+        "notes": ["老板要名单和金额，不只是沉默天数。"]
+      },
+      {
+        "id": "template:boss-tech-output",
+        "family_id": "boss-tech-output",
+        "answer_mode": "ranked_list",
+        "required_refs": ["metric:tech_service_revenue", "metric:tech_clock_efficiency", "metric:tech_point_clock_rate"],
+        "template": "{store}{period}技师产出 TOP{n}：{ranking}。公平看法：同时比较收入、单钟收入和点钟率，避免只奖励钟数多的人。",
+        "unavailable_template": "当前技师上钟明细不完整，不能严肃排名。需要 API 1.6 的 Income / Count / ClockType。",
+        "notes": ["收入排名必须配钟效和点钟率。"]
+      },
+      {
+        "id": "template:boss-risk-anomaly",
+        "family_id": "boss-risk-anomaly",
+        "answer_mode": "analysis_brief",
+        "required_refs": ["metric:anti_settle_amount", "analysis:anti_settle_anomaly_review"],
+        "template": "{store}{period}发现 {anomaly_count} 条异常反结/退款线索，金额合计 {anti_settle_amount}；优先复核 {top_cases}。",
+        "unavailable_template": "当前反结/账户流水数据不完整，不能严肃判断异常交易。需要 API 1.2 IsAnti 或 API 1.4 CardOptType。",
+        "notes": ["金额大、同日多笔、操作人异常优先。"]
+      },
+      {
+        "id": "template:boss-channel-growth",
+        "family_id": "boss-channel-growth",
+        "answer_mode": "analysis_brief",
+        "required_refs": ["metric:groupbuy_revisit_rate", "analysis:groupbuy_conversion_review"],
+        "template": "{store}{period}团购客复到店率 {groupbuy_revisit_rate}，转会员 {member_conversion_rate}；如果二次非团购消费低，说明渠道只带来一次性流量。",
+        "unavailable_template": "当前支付来源或二次消费链路不完整，不能严肃回答团购回头。需要 API 1.2 的 Payments.Name / UserId / CTime。",
+        "notes": ["美团/抖音客要看非团购二次到店。"]
+      },
+      {
+        "id": "template:boss-overall-health",
+        "family_id": "boss-overall-health",
+        "answer_mode": "analysis_brief",
+        "required_refs": ["analysis:store_health_review"],
+        "template": "{store}{period}整体判断：{health_status}。主要依据：营收 {service_revenue}、客流 {customer_count}、客单 {average_ticket}、充值 {recharge_cash}、沉默会员 {sleeping_members}。",
+        "unavailable_template": "当前关键经营数据覆盖不完整，不能严肃下整体健康结论。可先回答已覆盖的单项指标。",
+        "notes": ["综合判断必须说明依据和主要驱动。"]
+      },
+      {
+        "id": "template:manager-realtime-floor",
+        "family_id": "manager-realtime-floor",
+        "answer_mode": "boundary_reply",
+        "required_refs": ["analysis:realtime_floor_state", "metric:realtime_queue_status", "metric:pending_settlement_status"],
+        "template": "{store}当前上钟中 {working_tech_count} 人，空闲 {idle_tech_count} 人；等位/待结账若未接实时源，只能明确提示未接入。",
+        "unavailable_template": "当前还没接入完整等位、候钟、待结账实时状态，不能严肃回答楼面实时全貌。现在只回答已接入的技师状态。",
+        "notes": ["实时问题先看 freshness，再回答。"]
+      },
+      {
+        "id": "template:manager-today-summary",
+        "family_id": "manager-today-summary",
+        "answer_mode": "metric_snapshot",
+        "required_refs": ["metric:customer_count", "metric:total_clock_count", "metric:add_clock_rate"],
+        "template": "{store}今天到店 {customer_count} 人，总钟数 {total_clock_count}，加钟率 {add_clock_rate}，点钟率 {point_clock_rate}；下午重点看 {action_focus}。",
+        "unavailable_template": "当前今日消费或上钟数据未完整入库，不能严肃回答今日经营概况。",
+        "notes": ["店长答案要短、可用于班会。"]
+      },
+      {
+        "id": "template:manager-tech-daily",
+        "family_id": "manager-tech-daily",
+        "answer_mode": "ranked_list",
+        "required_refs": ["analysis:tech_daily_state_review"],
+        "template": "{store}{date}技师表现：上钟 TOP 为 {clock_ranking}，点钟 TOP 为 {point_ranking}，需要关注 {attention_list}。",
+        "unavailable_template": "当前技师日内上钟明细不完整，不能严肃回答单技师表现。",
+        "notes": ["适合店长排班和辅导。"]
+      },
+      {
+        "id": "template:manager-market-attach",
+        "family_id": "manager-market-attach",
+        "answer_mode": "analysis_brief",
+        "required_refs": ["metric:market_revenue", "analysis:market_attach_review"],
+        "template": "{store}{date}副项收入 {market_revenue}，品类 TOP 为 {category_ranking}，技师 TOP 为 {tech_ranking}，高钟数零副项样本 {zero_attach_cases}。",
+        "unavailable_template": "当前副项推销明细还没形成稳定能力，不能严肃回答谁卖了什么副项。",
+        "notes": ["副项用于班会表扬和辅导。"]
+      },
+      {
+        "id": "template:manager-customer-events",
+        "family_id": "manager-customer-events",
+        "answer_mode": "segment_list",
+        "required_refs": ["segment:first_visit_new_customer", "analysis:first_visit_conversion_review"],
+        "template": "{store}{date}新客 {new_customer_count} 人，首访客 {first_visit_count} 人；建议今天优先跟进 {followup_list}。",
+        "unavailable_template": "当前新客注册或首次消费口径不完整，不能严肃回答今天来了几个新客。",
+        "notes": ["注册新客和首次消费新客要分开。"]
+      },
+      {
+        "id": "template:manager-shift-arrangement",
+        "family_id": "manager-shift-arrangement",
+        "answer_mode": "boundary_reply",
+        "required_refs": ["analysis:shift_capacity_review"],
+        "template": "{store}{period}承接容量：实际在岗 {attendance_rate}，高峰钟数 {peak_clock_count}；如果问未来排班，需要班表/预约事实源。",
+        "unavailable_template": "当前未接入完整班表、预约和房间状态，不能严肃生成排班表。",
+        "notes": ["没有班表事实时只做历史容量复盘。"]
+      },
+      {
+        "id": "template:manager-target-progress",
+        "family_id": "manager-target-progress",
+        "answer_mode": "analysis_brief",
+        "required_refs": ["analysis:daily_target_progress_review"],
+        "template": "{store}{date}目标进度：已完成 {done_value}，差额 {gap_value}；如果没有目标配置，只输出过程盘点，不伪造达成率。",
+        "unavailable_template": "当前缺少目标配置或今日过程数据，不能严肃回答目标差多少。",
+        "notes": ["目标和预测不能靠模型编。"]
+      },
+      {
+        "id": "template:manager-person-or-order-lookup",
+        "family_id": "manager-person-or-order-lookup",
+        "answer_mode": "ranked_list",
+        "required_refs": ["analysis:customer_profile_review", "analysis:tech_daily_state_review"],
+        "template": "已按{name_or_keyword}查到 {result_count} 条相关记录：{summary_list}。只展示当前权限范围内可看的信息。",
+        "unavailable_template": "当前缺少明确对象或权限不足，不能直接展开人员/订单明细。",
+        "notes": ["明细查询必须受权限约束。"]
+      },
+      {
+        "id": "template:crm-silent-layering",
+        "family_id": "crm-silent-layering",
+        "answer_mode": "segment_list",
+        "required_refs": ["segment:sleeping_customer", "analysis:member_churn_review"],
+        "template": "{store}沉默会员分层：30-60 天 {light_count} 人，60-90 天 {warning_count} 人，90 天以上 {high_risk_count} 人；优先名单 {top_list}。",
+        "unavailable_template": "当前 SilentDays 或最近消费项目缺失，不能严肃生成沉默会员分层。",
+        "notes": ["运营需要名单、上次项目和话术方向。"]
+      },
+      {
+        "id": "template:crm-today-followup",
+        "family_id": "crm-today-followup",
+        "answer_mode": "action_loop",
+        "required_refs": ["analysis:customer_followup_task_review"],
+        "template": "{store}今日建议跟进 {task_count} 人：生日窗口 {birthday_count} 人，高余额沉默 {silent_count} 人，充值未到店 {recharge_not_visited_count} 人。",
+        "unavailable_template": "当前缺少会员分层或触达状态，不能严肃生成今日跟进任务。",
+        "notes": ["输出名单后必须能记录执行反馈。"]
+      },
+      {
+        "id": "template:crm-tech-loyalty-risk",
+        "family_id": "crm-tech-loyalty-risk",
+        "answer_mode": "analysis_brief",
+        "required_refs": ["segment:tech_loyal_customer", "analysis:tech_dependency_risk_review"],
+        "template": "{tech_name}绑定客 {customer_count} 人，绑定客余额 {stored_balance}，依赖度 {dependency_rate}；超过阈值时标记技师依赖风险。",
+        "unavailable_template": "当前技师点钟关系链不完整，不能严肃回答客人依赖度。",
+        "notes": ["用于技师离职风险。"]
+      },
+      {
+        "id": "template:crm-coupon-effect",
+        "family_id": "crm-coupon-effect",
+        "answer_mode": "analysis_brief",
+        "required_refs": ["segment:coupon_received_unused_customer", "analysis:coupon_redemption_review"],
+        "template": "{campaign}领券 {received_count} 人，核销 {used_count} 人，核销率 {redemption_rate}；快过期未用 {expiring_unused_count} 人。",
+        "unavailable_template": "当前优惠券领取/核销/过期字段不完整，不能严肃回答券有没有用。",
+        "notes": ["领了不用和快过期没用是两个动作窗口。"]
+      },
+      {
+        "id": "template:crm-recharge-behavior",
+        "family_id": "crm-recharge-behavior",
+        "answer_mode": "segment_list",
+        "required_refs": ["segment:recharge_not_visited_member", "analysis:recharge_activation_review"],
+        "template": "{store}{period}充值未到店 {member_count} 人，充值本金 {recharge_cash}；优先联系充值后超过 7 天未消费的人。",
+        "unavailable_template": "当前充值与消费链路无法打通，不能严肃找出充了钱还没来的人。",
+        "notes": ["这类人比普通沉默会员更适合快速触达。"]
+      },
+      {
+        "id": "template:crm-groupbuy-conversion",
+        "family_id": "crm-groupbuy-conversion",
+        "answer_mode": "analysis_brief",
+        "required_refs": ["segment:groupbuy_revisit_customer", "analysis:groupbuy_conversion_review"],
+        "template": "{store}{period}团购客 {groupbuy_count} 人，非团购二次到店 {revisit_count} 人，回头率 {revisit_rate}。",
+        "unavailable_template": "当前团购支付来源或后续消费链路不完整，不能严肃回答美团/抖音客是否回头。",
+        "notes": ["转化率决定团购投放是否值得继续。"]
+      },
+      {
+        "id": "template:crm-new-customer-followup",
+        "family_id": "crm-new-customer-followup",
+        "answer_mode": "action_loop",
+        "required_refs": ["segment:first_visit_new_customer", "analysis:first_visit_conversion_review"],
+        "template": "{store}{period}首访新客 {first_visit_count} 人，二访 {second_visit_count} 人，二访率 {second_visit_rate}；建议优先跟进 {top_list}。",
+        "unavailable_template": "当前首访/二访链路不完整，不能严肃回答新客转化。",
+        "notes": ["新客运营重点是一访到二访。"]
+      },
+      {
+        "id": "template:crm-tech-customer-history",
+        "family_id": "crm-tech-customer-history",
+        "answer_mode": "ranked_list",
+        "required_refs": ["segment:tech_loyal_customer", "analysis:customer_profile_review"],
+        "template": "{tech_name}相关顾客 {customer_count} 人；点钟客 {appointed_count} 人，近 90 天消费 {pay_90d}，余额 {stored_balance}。",
+        "unavailable_template": "当前技师-顾客服务历史不完整，不能严肃回答指名客数量。",
+        "notes": ["需要按 CustomerId 去重。"]
+      },
+      {
+        "id": "template:crm-member-insight-profile",
+        "family_id": "crm-member-insight-profile",
+        "answer_mode": "analysis_brief",
+        "required_refs": ["segment:high_value_member", "analysis:customer_profile_review", "analysis:arrival_pattern_review"],
+        "template": "{store}高价值会员 TOP{n}：{ranking}；常来频次 {visit_frequency}，偏好时段 {arrival_pattern}，适合的触达动作 {next_action}。",
+        "unavailable_template": "当前会员画像、消费频次或到店时段数据不完整，不能严肃回答会员洞察。",
+        "notes": ["画像回答要转成下一步运营动作。"]
+      }
     ]
   },
   "dependency_contracts": [
@@ -1253,6 +1489,138 @@
         "delivery_surface": "planned manager exception brief"
       },
       "objective": "识别忙了一天但一单副项都没推的技师样本。"
+    },
+    {
+      "id": "pain:revenue_drop",
+      "label": "营收下滑",
+      "recipe_refs": ["metric:daily_cash_in", "analysis:store_health_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "build-report",
+        "delivery_surface": "daily report pain radar + HQ overview"
+      },
+      "objective": "服务营收环比下降但客流没明显下降时，主动提示客单价或项目结构问题。"
+    },
+    {
+      "id": "pain:traffic_drop",
+      "label": "客流下滑",
+      "recipe_refs": ["metric:customer_count", "analysis:store_health_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "build-report",
+        "delivery_surface": "daily report pain radar + HQ overview"
+      },
+      "objective": "到店人数下降但技师出勤基本正常时，主动提示获客或老客回访问题。"
+    },
+    {
+      "id": "pain:recharge_weakening",
+      "label": "充值变弱",
+      "recipe_refs": ["metric:recharge_cash", "metric:daily_cash_in", "analysis:recharge_health_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "build-report",
+        "delivery_surface": "daily report pain radar + manager action"
+      },
+      "objective": "消费正常但充值下滑时，主动提示老客仍在消耗但续费意愿变弱。"
+    },
+    {
+      "id": "pain:stored_value_pressure",
+      "label": "储值压力",
+      "recipe_refs": ["metric:stored_balance", "segment:high_balance_silent_customer", "analysis:member_churn_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "send-reactivation-push",
+        "delivery_surface": "daily report pain radar + reactivation queue"
+      },
+      "objective": "高余额会员长期不来时，主动提示沉睡资金、负债压力和唤回优先级。"
+    },
+    {
+      "id": "pain:new_customer_waste",
+      "label": "新客浪费",
+      "recipe_refs": ["analysis:groupbuy_conversion_review", "analysis:first_visit_conversion_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "build-report",
+        "delivery_surface": "daily report pain radar + manager action"
+      },
+      "objective": "团购/新客 7 天或 30 天无二访时，主动提示拉新成本浪费和承接问题。"
+    },
+    {
+      "id": "pain:tech_dependency",
+      "label": "技师依赖",
+      "recipe_refs": ["segment:tech_loyal_customer", "analysis:tech_dependency_risk_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "build-report",
+        "delivery_surface": "daily report pain radar + customer relation review"
+      },
+      "objective": "某技师绑定大量高余额客户时，主动提示离职或排班变化带来的门店级风险。"
+    },
+    {
+      "id": "pain:tech_productivity_anomaly",
+      "label": "技师产能异常",
+      "recipe_refs": ["metric:add_clock_rate", "metric:market_revenue", "analysis:market_attach_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "build-report",
+        "delivery_surface": "daily report pain radar + manager action"
+      },
+      "objective": "上钟多但副项/加钟低时，主动提示服务转化能力弱。"
+    },
+    {
+      "id": "pain:point_clock_drop",
+      "label": "点钟率异常",
+      "recipe_refs": ["metric:point_clock_rate", "analysis:tech_daily_state_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "build-report",
+        "delivery_surface": "daily report pain radar + manager action"
+      },
+      "objective": "点钟率突然下降时，主动提示技师口碑、前台推荐或排班承接问题。"
+    },
+    {
+      "id": "pain:attendance_anomaly",
+      "label": "出勤异常",
+      "recipe_refs": ["metric:attendance_rate", "analysis:shift_capacity_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "build-report",
+        "delivery_surface": "daily report pain radar + manager action"
+      },
+      "objective": "在册人数够但日均出勤率低时，主动提示排班稳定性和供给问题。"
+    },
+    {
+      "id": "pain:anti_settle_anomaly",
+      "label": "反结异常",
+      "recipe_refs": ["metric:anti_settle_amount", "analysis:anti_settle_anomaly_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "audit-daily-report-window",
+        "delivery_surface": "daily report pain radar + doctor/admin anomaly summary"
+      },
+      "objective": "反结金额或次数突增时，主动提示财务和管理风险。"
+    },
+    {
+      "id": "pain:discount_anomaly",
+      "label": "折扣异常",
+      "recipe_refs": ["metric:daily_discount_given", "analysis:store_health_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "build-report",
+        "delivery_surface": "daily report pain radar + manager action"
+      },
+      "objective": "实收与标价差距扩大时，主动提示优惠失控或员工操作问题。"
+    },
+    {
+      "id": "pain:data_risk",
+      "label": "数据风险",
+      "recipe_refs": ["analysis:data_coverage_review"],
+      "execution": {
+        "mode": "scheduled_diagnosis",
+        "scheduler_hook": "audit-daily-report-window",
+        "delivery_surface": "daily report pain radar + doctor/admin data quality summary"
+      },
+      "objective": "某接口数据缺口影响回答或日报时，主动提示系统可信度风险。"
     }
   ],
   "knowledge_registry": {

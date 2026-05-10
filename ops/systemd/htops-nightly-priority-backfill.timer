@@ -1,0 +1,11 @@
+[Unit]
+Description=Run htops nightly priority data backfill during upstream API window
+
+[Timer]
+OnCalendar=*-*-* 03:35:00
+RandomizedDelaySec=20
+Persistent=false
+Unit=htops-nightly-priority-backfill.service
+
+[Install]
+WantedBy=timers.target

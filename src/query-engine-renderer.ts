@@ -1488,6 +1488,62 @@ function resolveStoreExternalContextExplanationHint(
     storeExternalContext.estimatedMarketContext,
     "hotel_poi_count_3km",
   );
+  const competitor3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "competitor_poi_count_3km",
+  );
+  const transport3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "transport_poi_count_3km",
+  );
+  const entertainment3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "entertainment_poi_count_3km",
+  );
+  const shopping3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "shopping_poi_count_3km",
+  );
+  const office3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "office_poi_count_3km",
+  );
+  const residential3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "residential_poi_count_3km",
+  );
+  const population1km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "population_count_1km",
+  );
+  const population3kmOpen = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "population_count_3km",
+  );
+  const population5km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "population_count_5km",
+  );
+  const populationDensity3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "population_density_3km",
+  );
+  const commercialVitalityScore3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "commercial_vitality_score_3km",
+  );
+  const nightConsumptionSupportScore3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "night_consumption_support_score_3km",
+  );
+  const transportAccessScore3km = readStoreExternalContextNumber(
+    storeExternalContext.estimatedMarketContext,
+    "transport_access_score_3km",
+  );
+  const competitorPressureBand3km = readStoreExternalContextText(
+    storeExternalContext.estimatedMarketContext,
+    "competitor_pressure_band_3km",
+  );
   const businessScene = storeExternalContext.researchNotes.find(
     (entry) =>
       entry.metricKey === "store_business_scene_inference" && typeof entry.value === "string",
@@ -1501,7 +1557,59 @@ function resolveStoreExternalContextExplanationHint(
   if (serviceHours) {
     parts.push(`确认营业时段 ${serviceHours}`);
   }
-  if (population3km !== null || catering3km !== null || hotel3km !== null) {
+  if (
+    commercialVitalityScore3km !== null ||
+    nightConsumptionSupportScore3km !== null ||
+    transportAccessScore3km !== null ||
+    competitorPressureBand3km
+  ) {
+    const featureParts: string[] = [];
+    if (commercialVitalityScore3km !== null) {
+      featureParts.push(`商业活力${round(commercialVitalityScore3km, 1).toFixed(1)}分`);
+    }
+    if (nightConsumptionSupportScore3km !== null) {
+      featureParts.push(`夜间消费支撑${round(nightConsumptionSupportScore3km, 1).toFixed(1)}分`);
+    }
+    if (transportAccessScore3km !== null) {
+      featureParts.push(`交通便利${round(transportAccessScore3km, 1).toFixed(1)}分`);
+    }
+    if (competitorPressureBand3km) {
+      featureParts.push(`竞品压力${competitorPressureBand3km}`);
+    }
+    parts.push(`外部环境特征显示${featureParts.join("、")}`);
+  }
+  if (
+    population1km !== null ||
+    population3kmOpen !== null ||
+    population5km !== null ||
+    populationDensity3km !== null
+  ) {
+    const populationParts: string[] = [];
+    if (population1km !== null) {
+      populationParts.push(`1km人口约${round(population1km, 0).toFixed(0)}人`);
+    }
+    if (population3kmOpen !== null) {
+      populationParts.push(`3km人口约${formatChineseCountInWan(population3kmOpen)}`);
+    }
+    if (population5km !== null) {
+      populationParts.push(`5km人口约${formatChineseCountInWan(population5km)}`);
+    }
+    if (populationDensity3km !== null) {
+      populationParts.push(`3km密度${round(populationDensity3km, 0).toFixed(0)}人/km2`);
+    }
+    parts.push(`开放人口数据估算${populationParts.join("、")}`);
+  }
+  if (
+    population3km !== null ||
+    catering3km !== null ||
+    hotel3km !== null ||
+    competitor3km !== null ||
+    transport3km !== null ||
+    entertainment3km !== null ||
+    shopping3km !== null ||
+    office3km !== null ||
+    residential3km !== null
+  ) {
     const estimatedParts: string[] = [];
     if (population3km !== null) {
       estimatedParts.push(`周边3km约${formatChineseCountInWan(population3km)}人`);
@@ -1511,6 +1619,24 @@ function resolveStoreExternalContextExplanationHint(
     }
     if (hotel3km !== null) {
       estimatedParts.push(`酒店${round(hotel3km, 0).toFixed(0)}家`);
+    }
+    if (competitor3km !== null) {
+      estimatedParts.push(`竞品${round(competitor3km, 0).toFixed(0)}家`);
+    }
+    if (transport3km !== null) {
+      estimatedParts.push(`交通节点${round(transport3km, 0).toFixed(0)}个`);
+    }
+    if (entertainment3km !== null) {
+      estimatedParts.push(`休闲娱乐${round(entertainment3km, 0).toFixed(0)}个`);
+    }
+    if (shopping3km !== null) {
+      estimatedParts.push(`购物零售${round(shopping3km, 0).toFixed(0)}个`);
+    }
+    if (office3km !== null) {
+      estimatedParts.push(`办公商务${round(office3km, 0).toFixed(0)}个`);
+    }
+    if (residential3km !== null) {
+      estimatedParts.push(`住宅社区${round(residential3km, 0).toFixed(0)}个`);
     }
     if (estimatedParts.length > 0) {
       parts.push(`第三方估算显示${estimatedParts.join("、")}`);

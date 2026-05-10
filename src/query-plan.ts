@@ -87,12 +87,15 @@ function metricKey(intent: HetangQueryIntent): string {
 function resolveHqPortfolioPlanAction(intent: HetangQueryIntent): QueryPlan["action"] {
   const rawText = intent.rawText;
   const wantsOverview =
-    /(整体怎么样|整体表现|盘子稳不稳|哪家在拉升|总部重点关注哪家|哪个门店须重点关注)/u.test(
+    /(整体怎么样|整体表现|盘子稳不稳|哪家(?:店|门店)?(?:最近)?在拉升|哪个(?:店|门店)(?:最近)?在拉升|总部重点关注哪家|哪个门店须重点关注)/u.test(
       rawText,
     );
   const wantsRisk =
-    /(风险在哪|风险排序|风险雷达|风险最大)/u.test(rawText);
-  const wantsAdvice = /(先救哪家|哪里不对)/u.test(rawText);
+    /(风险在哪|风险排序|风险雷达|风险最大|风险最高|最危险)/u.test(rawText);
+  const wantsAdvice =
+    /(先救哪家|先补哪家|总部先抓|哪里不对|卡在哪|做个诊断|捋一下问题|怎么回事|哪家最扛不住|哪项最拖后腿)/u.test(
+      rawText,
+    );
   const wantsReview = /(经营复盘|复盘一下|盘一盘|盘一下)/u.test(rawText);
 
   if (wantsReview && !wantsOverview && !wantsRisk && !wantsAdvice) {

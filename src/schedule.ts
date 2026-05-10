@@ -191,11 +191,10 @@ const SCHEDULER_JOB_REGISTRY: SchedulerDefinition[] = [
   createSchedulerDefinition("send-five-store-daily-overview", {
     resolveRunKey: (context) => context.reportRunKey,
     isEnabled: (context) =>
-      context.reportingEnabled &&
-      context.sendReportEnabled &&
-      context.sendFiveStoreDailyOverviewEnabled,
+      context.reportingEnabled && context.sendFiveStoreDailyOverviewEnabled,
     isDue: (context) => isTimeReached(context.nowTime, context.fiveStoreDailyOverviewTime),
-    describeSchedule: (context) => `${context.fiveStoreDailyOverviewTime} after daily reports`,
+    describeSchedule: (context) =>
+      `${context.fiveStoreDailyOverviewTime} after daily report build/audit`,
   }),
   createSchedulerDefinition("send-weekly-report", {
     resolveRunKey: (context) => context.reportRunKey,

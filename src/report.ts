@@ -1,8 +1,13 @@
 import { evaluateStoreBusinessScore } from "./business-score.js";
+import {
+  evaluateBusinessPainSignals,
+  renderBusinessPainSignalSuggestion,
+} from "./business-pain-signal.js";
 import { rebuildCustomerIntelligenceForBizDate } from "./customer-intelligence.js";
 import { computeDailyStoreMetrics } from "./metrics.js";
 import { resolveDailyMetricWindowSignals } from "./report-window-signals.js";
 import { HetangOpsStore } from "./store.js";
+import { shiftBizDate } from "./time.js";
 import {
   buildStoreManagerDailyDetail,
   renderStoreManagerDailyReport,
@@ -11,6 +16,8 @@ import {
   type DailyStoreReport,
   type DailyStoreMetrics,
   type HetangOpsConfig,
+  type EnvironmentContextSnapshot,
+  type HetangStoreExternalContextEntry,
   type StoreReview7dRow,
   type StoreSummary30dRow,
 } from "./types.js";
@@ -193,6 +200,10 @@ function renderSuggestions(report: DailyStoreReport): string[] {
 function renderMarkdown(
   report: DailyStoreReport,
   detail: Awaited<ReturnType<typeof buildStoreManagerDailyDetail>>,
+  context?: {
+    environmentContext?: EnvironmentContextSnapshot;
+    externalContextEntries?: HetangStoreExternalContextEntry[];
+  },
 ): string {
   return renderStoreManagerDailyReport({
     storeName: report.storeName,
@@ -201,6 +212,8 @@ function renderMarkdown(
     detail,
     alerts: report.alerts,
     suggestions: report.suggestions,
+    environmentContext: context?.environmentContext,
+    externalContextEntries: context?.externalContextEntries,
   });
 }
 
@@ -232,6 +245,22 @@ async function enrichDailyMetricsWithWindowSignals(params: {
     review,
     summary,
   });
+}
+
+async function resolvePreviousWeekDailyReport(params: {
+  store: HetangOpsStore;
+  orgId: string;
+  bizDate: string;
+}): Promise<DailyStoreReport | null> {
+  const reader = (params.store as { getDailyReport?: unknown }).getDailyReport;
+  if (typeof reader !== "function") {
+    return null;
+  }
+  return await (
+    params.store as {
+      getDailyReport: (orgId: string, bizDate: string) => Promise<DailyStoreReport | null>;
+    }
+  ).getDailyReport(params.orgId, shiftBizDate(params.bizDate, -7));
 }
 
 function buildMiddayJudgment(params: {
@@ -680,7 +709,32 @@ export async function buildDailyStoreReport(params: {
     bizDate: params.bizDate,
     metrics: computed.metrics,
   });
-  const { alerts, suggestions } = computed;
+  const { alerts } = computed;
+  const detail = await buildStoreManagerDailyDetail({
+    store: params.store,
+    orgId: params.orgId,
+    bizDate: params.bizDate,
+    metrics,
+  });
+  const painSignals = evaluateBusinessPainSignals({
+    current: metrics,
+    baseline: (await resolvePreviousWeekDailyReport({
+      store: params.store,
+      orgId: params.orgId,
+      bizDate: params.bizDate,
+    }))?.metrics,
+    financial: {
+      originalAmount: detail.totalRevenue,
+      discountAmount: Math.max(0, detail.totalRevenue - detail.actualRevenue),
+    },
+    maxSignals: 3,
+  });
+  const suggestions = Array.from(
+    new Set([
+      ...computed.suggestions,
+      ...painSignals.map((signal) => renderBusinessPainSignalSuggestion(signal)),
+    ]),
+  );
   const report: DailyStoreReport = {
     orgId: params.orgId,
     storeName: metrics.storeName,
@@ -691,13 +745,28 @@ export async function buildDailyStoreReport(params: {
     markdown: "",
     complete: !metrics.incompleteSync,
   };
-  const detail = await buildStoreManagerDailyDetail({
-    store: params.store,
-    orgId: params.orgId,
-    bizDate: params.bizDate,
-    metrics,
+  const contextRuntime = params.store as {
+    getStoreEnvironmentDailySnapshot?: (
+      orgId: string,
+      bizDate: string,
+    ) => Promise<EnvironmentContextSnapshot | null>;
+    listStoreExternalContextEntries?: (params: {
+      orgId: string;
+      snapshotDate?: string;
+    }) => Promise<HetangStoreExternalContextEntry[]>;
+  };
+  const [environmentContext, externalContextEntries] = await Promise.all([
+    contextRuntime.getStoreEnvironmentDailySnapshot?.(params.orgId, params.bizDate) ??
+      Promise.resolve(null),
+    contextRuntime.listStoreExternalContextEntries?.({
+      orgId: params.orgId,
+      snapshotDate: params.bizDate,
+    }) ?? Promise.resolve([]),
+  ]);
+  report.markdown = renderMarkdown(report, detail, {
+    environmentContext: environmentContext ?? undefined,
+    externalContextEntries,
   });
-  report.markdown = renderMarkdown(report, detail);
 
   const generatedAt = new Date().toISOString();
   await Promise.all([

@@ -57,6 +57,10 @@ class HtopsRouterTest(unittest.TestCase):
         self.assertTrue(should_route_to_htops("昨天到店人数"))
         self.assertTrue(should_route_to_htops("今日点钟率多少"))
 
+    def test_routes_owner_and_crm_business_questions_without_store_name(self) -> None:
+        self.assertTrue(should_route_to_htops("今天进账多少？"))
+        self.assertTrue(should_route_to_htops("哪些会员快跑了？"))
+
     def test_keeps_general_chat_inside_hermes(self) -> None:
         self.assertFalse(should_route_to_htops("dvdfsvf"))
         self.assertFalse(should_route_to_htops("今天天气怎么样"))

@@ -49,6 +49,11 @@
       "rawAliases": [
         "门店A"
       ],
+      "notification": {
+        "channel": "wecom",
+        "target": "REPLACE_WITH_STORE_ALPHA_MANAGER_TARGET",
+        "enabled": true
+      },
       "isActive": true
     },
     {
@@ -57,6 +62,11 @@
       "rawAliases": [
         "门店B"
       ],
+      "notification": {
+        "channel": "wecom",
+        "target": "REPLACE_WITH_STORE_BETA_MANAGER_TARGET",
+        "enabled": true
+      },
       "isActive": true
     },
     {
@@ -65,6 +75,11 @@
       "rawAliases": [
         "门店C"
       ],
+      "notification": {
+        "channel": "wecom",
+        "target": "REPLACE_WITH_STORE_GAMMA_MANAGER_TARGET",
+        "enabled": true
+      },
       "isActive": true
     },
     {
@@ -73,6 +88,11 @@
       "rawAliases": [
         "门店D"
       ],
+      "notification": {
+        "channel": "wecom",
+        "target": "REPLACE_WITH_STORE_DELTA_MANAGER_TARGET",
+        "enabled": true
+      },
       "isActive": true
     },
     {
@@ -81,6 +101,11 @@
       "rawAliases": [
         "门店E"
       ],
+      "notification": {
+        "channel": "wecom",
+        "target": "REPLACE_WITH_STORE_EPSILON_MANAGER_TARGET",
+        "enabled": true
+      },
       "isActive": true
     }
   ],

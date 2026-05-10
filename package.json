@@ -24,11 +24,18 @@
     "brief:midday": "node --import tsx scripts/send-midday-briefs.ts",
     "push:reactivation": "node --import tsx scripts/send-reactivation-picks.ts",
     "import:legacy:yingbin": "node --import tsx scripts/import-legacy-yingbin.ts",
-    "import:industry-context": "node --import tsx scripts/import-industry-context.ts"
+    "import:industry-context": "node --import tsx scripts/import-industry-context.ts",
+    "import:baidu-surroundings": "node --import tsx scripts/import-baidu-store-surroundings.ts",
+    "geocode:baidu-stores": "node --import tsx scripts/geocode-store-master-profiles-baidu.ts",
+    "build:external-environment-features": "node --import tsx scripts/build-store-external-environment-features.ts",
+    "import:worldpop-population": "node --import tsx scripts/import-worldpop-store-population.ts",
+    "import:weather-calendar": "node --import tsx scripts/import-store-weather-calendar.ts",
+    "coverage:data": "node --import tsx scripts/check-project-data-coverage.ts"
   },
   "dependencies": {
     "@wecom/aibot-node-sdk": "^1.0.6",
     "commander": "^14.0.1",
+    "geotiff": "^3.0.5",
     "mysql2": "^3.21.1",
     "pg": "^8.20.0"
   },

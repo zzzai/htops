@@ -346,6 +346,111 @@ The intended split is:
 - outbound worker pushes continue to flow through `src/notify.ts`
 - `src/notify.ts` now targets the standalone `hermes-send message send ...` contract by default
 
+## Docker Compose Deployment
+
+The deployable baseline runs PostgreSQL, bridge, query API, scheduled worker, and analysis worker through Docker Compose.
+
+1. Prepare local runtime files:
+
+```bash
+cp .env.postgres.example .env.postgres
+cp .env.runtime.example .env.runtime
+cp htops.json.example htops.json
+```
+
+Replace placeholder passwords, bridge tokens, API credentials, and store notification targets in those local files. Do not commit the copied files.
+
+2. Validate and build the stack:
+
+```bash
+set -a
+source .env.runtime
+set +a
+
+docker compose \
+  --env-file .env.postgres \
+  -f docker-compose.postgres.yml \
+  -f docker-compose.app.yml \
+  config
+
+docker compose \
+  --env-file .env.postgres \
+  -f docker-compose.postgres.yml \
+  -f docker-compose.app.yml \
+  build
+```
+
+3. Start the stack:
+
+```bash
+docker compose \
+  --env-file .env.postgres \
+  -f docker-compose.postgres.yml \
+  -f docker-compose.app.yml \
+  up -d
+```
+
+4. Check health:
+
+```bash
+docker compose \
+  --env-file .env.postgres \
+  -f docker-compose.postgres.yml \
+  -f docker-compose.app.yml \
+  ps
+
+curl -fsS http://127.0.0.1:18890/health
+curl -fsS -H "x-htops-bridge-token: $HETANG_BRIDGE_TOKEN" http://127.0.0.1:18891/health
+```
+
+5. Optional host autostart:
+
+```bash
+mkdir -p /etc/systemd/system/docker.service.d
+cp ops/htops-compose.service /etc/systemd/system/htops-compose.service
+cp ops/systemd/htops-iptables-compat.service /etc/systemd/system/htops-iptables-compat.service
+cp ops/systemd/docker.service.d/10-htops-iptables-compat.conf /etc/systemd/system/docker.service.d/10-htops-iptables-compat.conf
+cp ops/htops-ensure-iptables.sh /usr/local/sbin/htops-ensure-iptables
+chmod +x /usr/local/sbin/htops-ensure-iptables
+systemctl daemon-reload
+systemctl enable --now htops-compose.service
+```
+
+## Data Coverage And Nightly Backfill
+
+The project keeps historical data completion observable instead of silently guessing.
+
+Check 5-store coverage:
+
+```bash
+npm run coverage:data -- --start 2025-10-01 --end 2026-05-09
+npm run coverage:data -- --start 2025-10-01 --end 2026-05-09 --json
+```
+
+Dry-run the nightly priority planner:
+
+```bash
+node --import tsx scripts/nightly-priority-backfill.ts \
+  --dry-run \
+  --start 2025-10-01 \
+  --end 2026-05-09 \
+  --max-tasks 12 \
+  --skip-lock
+```
+
+The priority planner intentionally runs conservatively during the upstream window. It prioritizes recent core facts, then critical `1.4` user-trade coverage, then historical core/member/snapshot gaps.
+
+Install the timer when the host should keep backfilling automatically:
+
+```bash
+cp ops/hetang-nightly-priority-backfill.sh /root/htops/ops/hetang-nightly-priority-backfill.sh
+cp ops/systemd/htops-nightly-priority-backfill.service /etc/systemd/system/htops-nightly-priority-backfill.service
+cp ops/systemd/htops-nightly-priority-backfill.timer /etc/systemd/system/htops-nightly-priority-backfill.timer
+systemctl daemon-reload
+systemctl enable --now htops-nightly-priority-backfill.timer
+systemctl list-timers htops-nightly-priority-backfill.timer
+```
+
 ## Local PostgreSQL
 
 The plugin now expects `database.url` instead of a local SQLite file. A Docker Compose deployment is included so the first rollout can run against one local PostgreSQL instance with a bind-mounted host directory.

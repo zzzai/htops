@@ -1,7 +1,9 @@
+import { evaluateBusinessPainSignals, type BusinessPainSignal } from "./business-pain-signal.js";
 import type {
   FiveStoreDailyOverviewCoreMetrics,
   FiveStoreDailyOverviewInput,
   FiveStoreDailyOverviewStoreSnapshot,
+  DailyStoreMetrics,
 } from "./types.js";
 
 type AggregateOverviewMetrics = {
@@ -1197,6 +1199,362 @@ function normalizeGroupAction(action: string): string {
   return action.replace(/^全店/u, "").trim();
 }
 
+type StorePainHit = {
+  store: FiveStoreDailyOverviewStoreSnapshot;
+  signal: BusinessPainSignal;
+};
+
+type GroupPainSignal = {
+  signal: BusinessPainSignal;
+  storeNames: string[];
+  topStoreName: string;
+  topSignal: BusinessPainSignal;
+  maxScore: number;
+  totalScore: number;
+};
+
+function toPainEvaluationMetrics(params: {
+  store: FiveStoreDailyOverviewStoreSnapshot;
+  metrics: FiveStoreDailyOverviewCoreMetrics;
+  bizDate: string;
+}): DailyStoreMetrics {
+  const pointClockRate = params.metrics.pointClockRate ?? 0;
+  const addClockRate = params.metrics.addClockRate ?? 0;
+  const activeTechCount = params.metrics.activeTechCount ?? 0;
+  const onDutyTechCount = params.metrics.onDutyTechCount ?? activeTechCount;
+  const groupbuyCohortCustomerCount = params.metrics.groupbuyCohortCustomerCount ?? 0;
+  const groupbuy7dRevisitCustomerCount = params.metrics.groupbuy7dRevisitCustomerCount ?? 0;
+  const groupbuy7dRevisitRate =
+    params.metrics.groupbuy7dRevisitRate ??
+    (groupbuyCohortCustomerCount > 0
+      ? groupbuy7dRevisitCustomerCount / groupbuyCohortCustomerCount
+      : null);
+
+  return {
+    orgId: params.store.orgId,
+    storeName: params.store.storeName,
+    bizDate: params.bizDate,
+    serviceRevenue: params.metrics.serviceRevenue,
+    rechargeCash: params.metrics.rechargeCash,
+    rechargeStoredValue: params.metrics.rechargeCash,
+    rechargeBonusValue: 0,
+    antiServiceRevenue: params.metrics.antiServiceRevenue ?? 0,
+    serviceOrderCount: params.metrics.serviceOrderCount,
+    customerCount: params.metrics.customerCount,
+    averageTicket:
+      params.metrics.averageTicket ??
+      (params.metrics.customerCount > 0
+        ? params.metrics.serviceRevenue / params.metrics.customerCount
+        : 0),
+    totalClockCount: params.metrics.totalClockCount,
+    upClockRecordCount: params.metrics.totalClockCount,
+    pointClockRecordCount: Math.round(params.metrics.totalClockCount * pointClockRate),
+    pointClockRate: params.metrics.pointClockRate,
+    addClockRecordCount: Math.round(params.metrics.totalClockCount * addClockRate),
+    addClockRate: params.metrics.addClockRate,
+    clockRevenue: params.metrics.serviceRevenue,
+    clockEffect: params.metrics.clockEffect,
+    activeTechCount,
+    onDutyTechCount,
+    techCommission: 0,
+    techCommissionRate: 0,
+    marketRevenue: params.metrics.marketRevenue ?? params.metrics.serviceRevenue * 0.04,
+    marketCommission: 0,
+    memberPaymentAmount: params.metrics.memberPaymentAmount,
+    memberPaymentShare:
+      params.metrics.serviceRevenue > 0
+        ? params.metrics.memberPaymentAmount / params.metrics.serviceRevenue
+        : null,
+    cashPaymentAmount: 0,
+    cashPaymentShare: null,
+    wechatPaymentAmount: 0,
+    wechatPaymentShare: null,
+    alipayPaymentAmount: 0,
+    alipayPaymentShare: null,
+    storedConsumeAmount: params.metrics.storedConsumeAmount,
+    storedConsumeRate:
+      params.metrics.serviceRevenue > 0
+        ? params.metrics.storedConsumeAmount / params.metrics.serviceRevenue
+        : null,
+    groupbuyOrderCount: 0,
+    groupbuyOrderShare: null,
+    groupbuyAmount: 0,
+    groupbuyAmountShare: null,
+    groupbuyPlatformBreakdown: [],
+    groupbuyCohortCustomerCount,
+    groupbuyRevisitCustomerCount: groupbuy7dRevisitCustomerCount,
+    groupbuyRevisitRate: groupbuy7dRevisitRate,
+    groupbuyMemberPayConvertedCustomerCount: 0,
+    groupbuyMemberPayConversionRate: null,
+    groupbuy7dRevisitCustomerCount,
+    groupbuy7dRevisitRate,
+    groupbuy7dCardOpenedCustomerCount: 0,
+    groupbuy7dCardOpenedRate: null,
+    groupbuy7dStoredValueConvertedCustomerCount: 0,
+    groupbuy7dStoredValueConversionRate: null,
+    groupbuy30dMemberPayConvertedCustomerCount: 0,
+    groupbuy30dMemberPayConversionRate: null,
+    groupbuyFirstOrderCustomerCount: 0,
+    groupbuyFirstOrderHighValueMemberCustomerCount: 0,
+    groupbuyFirstOrderHighValueMemberRate: null,
+    effectiveMembers: params.metrics.effectiveMembers ?? 0,
+    newMembers: params.metrics.newMembers ?? 0,
+    sleepingMembers: params.metrics.sleepingMembers ?? 0,
+    sleepingMemberRate: params.metrics.sleepingMemberRate ?? null,
+    currentStoredBalance: 0,
+    highBalanceSleepingMemberCount: params.metrics.highBalanceSleepingMemberCount ?? 0,
+    highBalanceSleepingMemberAmount: params.metrics.highBalanceSleepingMemberAmount ?? 0,
+    firstChargeUnconsumedMemberCount: params.metrics.firstChargeUnconsumedMemberCount ?? 0,
+    firstChargeUnconsumedMemberAmount: params.metrics.firstChargeUnconsumedMemberAmount ?? 0,
+    storedBalanceLifeMonths: null,
+    renewalPressureIndex30d: null,
+    memberRepurchaseBaseCustomerCount7d:
+      params.metrics.memberRepurchaseBaseCustomerCount7d ?? 0,
+    memberRepurchaseReturnedCustomerCount7d:
+      params.metrics.memberRepurchaseReturnedCustomerCount7d ?? 0,
+    memberRepurchaseRate7d: params.metrics.memberRepurchaseRate7d ?? null,
+    roomOccupancyRate: null,
+    roomTurnoverRate: null,
+    grossMarginRate: null,
+    netMarginRate: null,
+    breakEvenRevenue: null,
+    incompleteSync: params.metrics.incompleteSync ?? false,
+    staleSyncEndpoints: params.metrics.staleSyncEndpoints ?? [],
+    unavailableMetrics: params.metrics.unavailableMetrics ?? [],
+  };
+}
+
+function buildStorePainHits(params: {
+  stores: FiveStoreDailyOverviewStoreSnapshot[];
+  bizDate: string;
+  baselineBizDate?: string;
+}): StorePainHit[] {
+  return params.stores.flatMap((store) => {
+    const current = toPainEvaluationMetrics({
+      store,
+      metrics: store.current,
+      bizDate: params.bizDate,
+    });
+    const baseline = store.previousWeekSameDay
+      ? toPainEvaluationMetrics({
+          store,
+          metrics: store.previousWeekSameDay,
+          bizDate: params.baselineBizDate ?? params.bizDate,
+        })
+      : undefined;
+
+    return evaluateBusinessPainSignals({
+      current,
+      baseline,
+    }).map((signal) => ({
+      store,
+      signal,
+    }));
+  });
+}
+
+function groupPainSignals(hits: StorePainHit[]): GroupPainSignal[] {
+  const grouped = new Map<string, StorePainHit[]>();
+  for (const hit of hits) {
+    const list = grouped.get(hit.signal.id) ?? [];
+    list.push(hit);
+    grouped.set(hit.signal.id, list);
+  }
+
+  return [...grouped.values()]
+    .map((entries) => {
+      const sorted = [...entries].sort((left, right) => right.signal.score - left.signal.score);
+      const top = sorted[0]!;
+      const storeNames = [...new Set(sorted.map((entry) => entry.store.storeName))];
+      const totalScore = sorted.reduce((sum, entry) => sum + entry.signal.score, 0);
+      return {
+        signal: top.signal,
+        storeNames,
+        topStoreName: top.store.storeName,
+        topSignal: top.signal,
+        maxScore: top.signal.score,
+        totalScore,
+      };
+    })
+    .sort((left, right) => {
+      const leftRank = left.maxScore + left.storeNames.length * 4;
+      const rightRank = right.maxScore + right.storeNames.length * 4;
+      return (
+        rightRank - leftRank ||
+        right.totalScore - left.totalScore ||
+        left.signal.category.localeCompare(right.signal.category, "zh-Hans-CN")
+      );
+    });
+}
+
+function buildRadarSummaryLines(params: {
+  currentAggregate: AggregateOverviewMetrics;
+  baselineAggregate: AggregateOverviewMetrics | null;
+  commonGap: ReturnType<typeof resolveCommonGap>;
+}): string[] {
+  const revenueChange = params.baselineAggregate
+    ? percentChangeNumber(
+        params.currentAggregate.serviceRevenue,
+        params.baselineAggregate.serviceRevenue,
+      )
+    : null;
+  const customerDelta = params.baselineAggregate
+    ? params.currentAggregate.customerCount - params.baselineAggregate.customerCount
+    : null;
+  const rechargeChange = params.baselineAggregate
+    ? percentChangeNumber(params.currentAggregate.rechargeCash, params.baselineAggregate.rechargeCash)
+    : null;
+  const clockEffectChange = params.baselineAggregate
+    ? percentChangeNumber(params.currentAggregate.clockEffect, params.baselineAggregate.clockEffect)
+    : null;
+
+  return params.baselineAggregate
+    ? [
+        `- 判断：${buildSummaryJudgment(params)}`,
+        `- 营收：${formatCurrency(params.currentAggregate.serviceRevenue)}（较上周同期 ${formatSignedPercentValue(revenueChange) ?? "持平"}）`,
+        `- 客流：${formatCount(params.currentAggregate.customerCount)}人（较上周 ${formatSignedCountValue(customerDelta, "人") ?? "持平"}）`,
+        `- 充值现金：${formatCurrency(params.currentAggregate.rechargeCash)}（较上周 ${formatSignedPercentValue(rechargeChange) ?? "持平"}）`,
+        `- 单钟产出：${formatCurrencyPrecise(params.currentAggregate.clockEffect)}/钟（较上周 ${formatSignedPercentValue(clockEffectChange) ?? "持平"}）`,
+      ]
+    : [
+        `- 判断：${buildSummaryJudgment(params)}`,
+        `- 营收：${formatCurrency(params.currentAggregate.serviceRevenue)}`,
+        `- 客流：${formatCount(params.currentAggregate.customerCount)}人`,
+        `- 充值现金：${formatCurrency(params.currentAggregate.rechargeCash)}`,
+        `- 单钟产出：${formatCurrencyPrecise(params.currentAggregate.clockEffect)}/钟`,
+      ];
+}
+
+function buildDataRiskLines(hits: StorePainHit[]): string[] {
+  const dataRiskHits = hits.filter((hit) => hit.signal.id === "pain:data_risk");
+  if (dataRiskHits.length === 0) {
+    return [];
+  }
+
+  return [
+    "## 数据可信度",
+    ...dataRiskHits.map(
+      (hit) =>
+        `- ${hit.store.storeName}：数据风险。证据：${hit.signal.evidence}。处理：${hit.signal.recommendedAction}`,
+    ),
+    "",
+  ];
+}
+
+function buildEnvironmentContextLines(params: FiveStoreDailyOverviewInput): string[] {
+  const context = params.environmentContext;
+  if (!context && !params.backgroundHint) {
+    return [];
+  }
+
+  const lines = ["## 外部环境解释"];
+  if (context) {
+    lines.push(`- 判断：${context.headline}`);
+    lines.push(
+      ...context.explanationLines
+        .filter((line) => line.trim().length > 0)
+        .slice(0, 3)
+        .map((line) => `- ${line.trim()}`),
+    );
+    if (context.actionHint) {
+      lines.push(`- 动作：${context.actionHint}`);
+    }
+  } else if (params.backgroundHint) {
+    lines.push(`- 判断：${params.backgroundHint}`);
+  }
+  lines.push("");
+  return lines;
+}
+
+function buildTopPainLines(params: {
+  groups: GroupPainSignal[];
+  commonGap: ReturnType<typeof resolveCommonGap>;
+}): string[] {
+  const businessGroups = params.groups
+    .filter((group) => group.signal.id !== "pain:data_risk")
+    .slice(0, 3);
+
+  if (businessGroups.length === 0) {
+    return [
+      "- 暂无明确主动痛点命中，今天按稳定事实盯盘。",
+      `- 先抓：${params.commonGap.label}。`,
+      `- 动作：${normalizeGroupAction(params.commonGap.action)}`,
+    ];
+  }
+
+  return businessGroups.flatMap((group, index) => [
+    `${index + 1}. ${group.signal.category}`,
+    `- 命中门店：${group.storeNames.join("、")}`,
+    `- 证据：${group.topStoreName}：${group.topSignal.evidence}`,
+    `- 动作：${group.signal.recommendedAction}`,
+    "",
+  ]);
+}
+
+function buildStorePriorityLines(params: {
+  stores: FiveStoreDailyOverviewStoreSnapshot[];
+  hits: StorePainHit[];
+  commonGap: ReturnType<typeof resolveCommonGap>;
+}): string[] {
+  return params.stores.map((store) => {
+    const topSignal = params.hits
+      .filter((hit) => hit.store.orgId === store.orgId && hit.signal.id !== "pain:data_risk")
+      .sort((left, right) => right.signal.score - left.signal.score)[0]?.signal;
+
+    if (topSignal) {
+      return `- ${store.storeName}：${topSignal.category}；${topSignal.recommendedAction}`;
+    }
+
+    const dataRisk = params.hits.find(
+      (hit) => hit.store.orgId === store.orgId && hit.signal.id === "pain:data_risk",
+    )?.signal;
+    if (dataRisk) {
+      return `- ${store.storeName}：数据风险；${dataRisk.recommendedAction}`;
+    }
+
+    return `- ${store.storeName}：保持观察；今天继续盯${params.commonGap.label}。`;
+  });
+}
+
+function buildSingleRadarActionLines(params: {
+  topGroup: GroupPainSignal | null;
+  currentAggregate: AggregateOverviewMetrics;
+  commonGap: ReturnType<typeof resolveCommonGap>;
+}): string[] {
+  if (!params.topGroup) {
+    return [
+      `- 总部/区域今天统一盯：${params.commonGap.label}。`,
+      `- 要求：${normalizeGroupAction(params.commonGap.action)}`,
+    ];
+  }
+
+  if (params.topGroup.signal.id === "pain:stored_value_pressure") {
+    return [
+      "- 总部/区域今天统一盯：储值压力。",
+      "- 要求：每店拉出高余额沉默会员前20名，按余额和沉默天数排序。",
+      "- 今天完成触达并回填结果，优先看是否约到下一次到店。",
+    ];
+  }
+
+  if (
+    params.currentAggregate.firstChargeUnconsumedMemberCount !== null &&
+    params.currentAggregate.firstChargeUnconsumedMemberCount > 0 &&
+    params.topGroup.signal.id === "pain:recharge_weakening"
+  ) {
+    return [
+      "- 总部/区域今天统一盯：充值后的首耗激活。",
+      `- 当前首充未耗卡：${formatCount(params.currentAggregate.firstChargeUnconsumedMemberCount)}人 / ${formatCurrency(params.currentAggregate.firstChargeUnconsumedMemberAmount ?? 0)}。`,
+      "- 要求：各店当天分配责任人，48小时内完成首耗预约或回访闭环。",
+    ];
+  }
+
+  return [
+    `- 总部/区域今天统一盯：${params.topGroup.signal.category}。`,
+    `- 命中门店：${params.topGroup.storeNames.join("、")}`,
+    `- 要求：${params.topGroup.signal.recommendedAction}`,
+  ];
+}
+
 export function renderFiveStoreDailyOverview(params: FiveStoreDailyOverviewInput): string {
   const currentAggregate =
     aggregateOverviewMetrics(params.stores, (store) => store.current) ??
@@ -1207,46 +1565,46 @@ export function renderFiveStoreDailyOverview(params: FiveStoreDailyOverviewInput
   );
   const commonGap = resolveCommonGap(params.stores);
   const insights = buildStoreInsights(params.stores);
+  const painHits = buildStorePainHits({
+    stores: params.stores,
+    bizDate: params.bizDate,
+    baselineBizDate: params.baselineBizDate,
+  });
+  const groupedPainSignals = groupPainSignals(painHits);
+  const topBusinessPainGroup =
+    groupedPainSignals.find((group) => group.signal.id !== "pain:data_risk") ?? null;
 
   const sections = [
-    "# 荷塘悦色5店昨日经营总览",
+    "# 荷塘悦色5店经营雷达",
     `日期：${params.bizDate}`,
     ...(params.baselineBizDate ? [`对比：${params.baselineBizDate}`] : []),
     ...(params.backgroundHint ? [`背景提示：${params.backgroundHint}`] : []),
     "",
-    "## 一、总判断",
-    ...buildSummaryLines({
+    ...buildDataRiskLines(painHits),
+    ...buildEnvironmentContextLines(params),
+    "## 一、5店总判断",
+    ...buildRadarSummaryLines({
       currentAggregate,
       baselineAggregate,
       commonGap,
     }),
     "",
-    "## 二、证据链",
-    ...buildEvidenceLines({
-      currentAggregate,
-      baselineAggregate,
-    }),
-    "",
-    "## 三、真正的核心问题",
-    ...buildCoreProblemLines({
-      currentAggregate,
-      baselineAggregate,
+    "## 二、今日最该盯的3个痛点",
+    ...buildTopPainLines({
+      groups: groupedPainSignals,
       commonGap,
     }),
     "",
-    "## 四、最值得警惕的会员信号",
-    ...buildMemberSignalLines({
-      currentAggregate,
-      baselineAggregate,
-    }),
-    "",
-    "## 五、门店级判断",
-    ...buildStoreJudgmentLines({
+    "## 三、门店处理优先级",
+    ...buildStorePriorityLines({
       stores: params.stores,
-      insights,
+      hits: painHits,
+      commonGap,
     }),
-    "## 六、如果今天只做一件事",
-    ...buildSinglePriorityActionLines({
+    "",
+    "## 四、今天只做一件事",
+    ...buildSingleRadarActionLines({
+      topGroup: topBusinessPainGroup,
       currentAggregate,
       commonGap,
     }),

@@ -1,0 +1,1729 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>荷塘悦色门店世界模型</title>
+    <style>
+      :root {
+        --bg: #eef2f6;
+        --paper: #ffffff;
+        --paper-soft: #f8fafc;
+        --ink: #102033;
+        --muted: #5f6d80;
+        --line: #d7dfe8;
+        --line-strong: #b8c5d4;
+        --shadow: 0 10px 26px rgba(16, 32, 51, 0.07);
+        --radius: 8px;
+        --blue: #1f63d8;
+        --blue-soft: #eef4ff;
+        --green: #1f7a4c;
+        --green-soft: #edf8f2;
+        --teal: #0f7b7b;
+        --teal-soft: #e8f8f7;
+        --amber: #a76500;
+        --amber-soft: #fff5e4;
+        --red: #b33a2e;
+        --red-soft: #fff1ef;
+        --slate-soft: #f3f6fa;
+        --max: 1480px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        font-family: Inter, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          "Noto Sans SC", sans-serif;
+        color: var(--ink);
+        background:
+          linear-gradient(180deg, #f5f8fb 0%, #edf2f6 100%);
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(16, 32, 51, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(16, 32, 51, 0.04) 1px, transparent 1px);
+        background-size: 28px 28px;
+        opacity: 0.5;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .page {
+        position: relative;
+        z-index: 1;
+        max-width: var(--max);
+        margin: 0 auto;
+        padding: 18px 16px 36px;
+      }
+
+      .topnav {
+        position: sticky;
+        top: 0;
+        z-index: 8;
+        margin-bottom: 14px;
+        padding: 10px 0;
+      }
+
+      .topnav-inner {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(251, 253, 255, 0.95);
+        box-shadow: var(--shadow);
+      }
+
+      .nav-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--paper);
+        color: #425166;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .nav-chip span {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--blue);
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
+        gap: 18px;
+        padding: 28px 28px 24px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.95);
+        box-shadow: var(--shadow);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: #eaf5ef;
+        color: var(--green);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.03em;
+      }
+
+      .badge i {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: currentColor;
+      }
+
+      h1 {
+        margin: 14px 0 10px;
+        font-size: 42px;
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .hero-copy {
+        margin: 0;
+        max-width: 900px;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.75;
+      }
+
+      .model-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 18px;
+      }
+
+      .model-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--paper-soft);
+        color: #415063;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .model-pill b {
+        color: var(--ink);
+      }
+
+      .hero-panel {
+        display: grid;
+        gap: 12px;
+      }
+
+      .equation-card,
+      .hero-note {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--paper-soft);
+        padding: 18px;
+      }
+
+      .equation-title {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .equation {
+        display: grid;
+        gap: 8px;
+      }
+
+      .equation-step {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #fff;
+      }
+
+      .equation-step strong {
+        min-width: 88px;
+        color: var(--ink);
+        font-size: 13px;
+      }
+
+      .equation-step span {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .arrow {
+        display: flex;
+        justify-content: center;
+        color: var(--line-strong);
+        font-size: 16px;
+        line-height: 1;
+      }
+
+      .hero-note {
+        background: linear-gradient(180deg, #fbfdff 0%, #f4f8fc 100%);
+      }
+
+      .hero-note h3 {
+        margin: 0 0 10px;
+        font-size: 15px;
+      }
+
+      .hero-note p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      .section {
+        margin-top: 16px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.95);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .section-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 20px 22px 14px;
+        border-bottom: 1px solid var(--line);
+        background: #fbfcfe;
+      }
+
+      .section-head h2 {
+        margin: 0;
+        font-size: 24px;
+        line-height: 1.18;
+      }
+
+      .section-head p {
+        margin: 8px 0 0;
+        max-width: 980px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      .section-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        align-self: flex-start;
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--paper);
+        color: #415063;
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .section-body {
+        padding: 18px 20px 22px;
+      }
+
+      .world-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr);
+        gap: 12px;
+      }
+
+      .zone {
+        position: relative;
+        min-height: 220px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #fff;
+      }
+
+      .zone::before {
+        content: "";
+        position: absolute;
+        inset: 0 auto auto 0;
+        width: 100%;
+        height: 4px;
+        border-radius: 8px 8px 0 0;
+        background: var(--blue);
+      }
+
+      .zone.business::before {
+        background: var(--green);
+      }
+
+      .zone.data::before {
+        background: var(--blue);
+      }
+
+      .zone.core::before {
+        background: var(--teal);
+      }
+
+      .zone.core {
+        grid-column: 2;
+        grid-row: 1 / span 2;
+      }
+
+      .zone.ai::before {
+        background: var(--amber);
+      }
+
+      .zone.action::before {
+        background: var(--red);
+      }
+
+      .zone.flywheel {
+        grid-column: 1 / -1;
+        min-height: auto;
+        background: linear-gradient(180deg, #f8fbff 0%, #f3f7fb 100%);
+      }
+
+      .zone h3 {
+        margin: 0 0 10px;
+        font-size: 18px;
+        line-height: 1.22;
+      }
+
+      .zone p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      .tag-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 9px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--paper-soft);
+        color: #415063;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .core-equation {
+        display: grid;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .core-chip {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #fff;
+      }
+
+      .core-chip strong {
+        min-width: 82px;
+        color: var(--ink);
+        font-size: 13px;
+      }
+
+      .core-chip span {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .core-list {
+        margin: 14px 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 8px;
+      }
+
+      .core-list li {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      .core-list li::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        margin-top: 6px;
+        border-radius: 999px;
+        background: var(--teal);
+        flex: none;
+      }
+
+      .stack-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .environment-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .environment-grid .stack-card {
+        min-height: 238px;
+      }
+
+      .stack-card {
+        display: grid;
+        gap: 10px;
+        padding: 16px 16px 15px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #fff;
+      }
+
+      .stack-card header {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .stack-card h4 {
+        margin: 0;
+        font-size: 16px;
+        line-height: 1.2;
+      }
+
+      .stack-card small {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .stack-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.65;
+      }
+
+      .stack-card .tag-row {
+        margin-top: 4px;
+      }
+
+      .stack-card.blue {
+        border-top: 4px solid var(--blue);
+      }
+
+      .stack-card.green {
+        border-top: 4px solid var(--green);
+      }
+
+      .stack-card.teal {
+        border-top: 4px solid var(--teal);
+      }
+
+      .stack-card.amber {
+        border-top: 4px solid var(--amber);
+      }
+
+      .stack-card.red {
+        border-top: 4px solid var(--red);
+      }
+
+      .env-impact {
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--paper-soft);
+        color: #415063;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      .env-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 6px;
+      }
+
+      .env-list li {
+        display: flex;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .env-list li::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        margin-top: 6px;
+        border-radius: 999px;
+        background: var(--amber);
+        flex: none;
+      }
+
+      .matrix {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 14px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #fff;
+      }
+
+      .matrix th,
+      .matrix td {
+        padding: 12px 12px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      .matrix th {
+        background: #f7f9fc;
+        color: #415063;
+        font-size: 12px;
+        letter-spacing: 0.02em;
+        text-transform: none;
+      }
+
+      .matrix tr:last-child td {
+        border-bottom: none;
+      }
+
+      .matrix td b {
+        color: var(--ink);
+      }
+
+      .timeline {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .timeline-step {
+        min-height: 162px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #fff;
+      }
+
+      .timeline-step .num {
+        display: inline-flex;
+        width: 28px;
+        height: 28px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        background: var(--blue-soft);
+        color: var(--blue);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .timeline-step h4 {
+        margin: 10px 0 8px;
+        font-size: 15px;
+        line-height: 1.2;
+      }
+
+      .timeline-step p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.65;
+      }
+
+      .role-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .role-card {
+        min-height: 150px;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #fff;
+      }
+
+      .role-card h4 {
+        margin: 0 0 10px;
+        font-size: 15px;
+      }
+
+      .role-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.65;
+      }
+
+      .tech-stack {
+        display: grid;
+        gap: 10px;
+      }
+
+      .layer {
+        display: grid;
+        grid-template-columns: 160px minmax(0, 1fr);
+        gap: 12px;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #fff;
+      }
+
+      .layer-name {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100%;
+        padding: 12px;
+        border-radius: var(--radius);
+        color: #fff;
+        font-size: 14px;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+      }
+
+      .layer.blue .layer-name {
+        background: var(--blue);
+      }
+
+      .layer.green .layer-name {
+        background: var(--green);
+      }
+
+      .layer.teal .layer-name {
+        background: var(--teal);
+      }
+
+      .layer.amber .layer-name {
+        background: var(--amber);
+      }
+
+      .layer.red .layer-name {
+        background: var(--red);
+      }
+
+      .layer-body {
+        display: grid;
+        gap: 10px;
+      }
+
+      .layer-body h4 {
+        margin: 0;
+        font-size: 16px;
+      }
+
+      .layer-body p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.65;
+      }
+
+      .layer-body .tag-row {
+        margin-top: 2px;
+      }
+
+      .ai-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .ai-card {
+        min-height: 168px;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #fff;
+      }
+
+      .ai-card h4 {
+        margin: 0 0 8px;
+        font-size: 15px;
+      }
+
+      .ai-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+
+      .ai-card .tag-row {
+        margin-top: 12px;
+      }
+
+      .ai-card.blue {
+        border-top: 4px solid var(--blue);
+      }
+
+      .ai-card.green {
+        border-top: 4px solid var(--green);
+      }
+
+      .ai-card.teal {
+        border-top: 4px solid var(--teal);
+      }
+
+      .ai-card.amber {
+        border-top: 4px solid var(--amber);
+      }
+
+      .ai-card.red {
+        border-top: 4px solid var(--red);
+      }
+
+      .value-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+        gap: 12px;
+      }
+
+      .wheel {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .wheel-step {
+        min-height: 138px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #fff;
+      }
+
+      .wheel-step .num {
+        display: inline-flex;
+        width: 28px;
+        height: 28px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        background: var(--green-soft);
+        color: var(--green);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .wheel-step h4 {
+        margin: 10px 0 8px;
+        font-size: 15px;
+      }
+
+      .wheel-step p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.65;
+      }
+
+      .value-note {
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: linear-gradient(180deg, #fcfeff 0%, #f4f8fc 100%);
+      }
+
+      .value-note h3 {
+        margin: 0 0 10px;
+        font-size: 16px;
+      }
+
+      .value-note p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.75;
+      }
+
+      .value-note .tag-row {
+        margin-top: 14px;
+      }
+
+      .footer {
+        margin-top: 16px;
+        padding: 18px 20px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.95);
+        box-shadow: var(--shadow);
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.75;
+      }
+
+      @media (max-width: 1280px) {
+        .hero {
+          grid-template-columns: 1fr;
+        }
+
+        .world-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .zone.core {
+          grid-column: auto;
+          grid-row: auto;
+        }
+
+        .zone.flywheel {
+          grid-column: auto;
+        }
+
+        .stack-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .environment-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .timeline {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .role-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .ai-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .value-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .wheel {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 820px) {
+        h1 {
+          font-size: 30px;
+        }
+
+        .section-head {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .timeline,
+        .role-grid,
+        .ai-grid,
+        .stack-grid,
+        .environment-grid,
+        .wheel {
+          grid-template-columns: 1fr;
+        }
+
+        .layer {
+          grid-template-columns: 1fr;
+        }
+
+        .equation-step {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .equation-step strong {
+          min-width: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <nav class="topnav" aria-label="页面导航">
+        <div class="topnav-inner">
+          <a class="nav-chip" href="#overview"><span></span>总览</a>
+          <a class="nav-chip" href="#data"><span></span>数据层</a>
+          <a class="nav-chip" href="#business"><span></span>业务侧</a>
+          <a class="nav-chip" href="#external"><span></span>外部环境</a>
+          <a class="nav-chip" href="#tech"><span></span>技术架构</a>
+          <a class="nav-chip" href="#ai"><span></span>AI能力</a>
+          <a class="nav-chip" href="#loop"><span></span>闭环价值</a>
+        </div>
+      </nav>
+
+      <header class="hero">
+        <div>
+          <div class="badge"><i></i> 荷塘悦色 · 门店世界模型</div>
+          <h1>把门店经营、数据、语义、AI 和动作连成一个可学习的世界</h1>
+          <p class="hero-copy">
+            这不是纯技术交付图，也不是纯知识库页面。它描述的是一套能理解门店、解释问题、调用数据、生成动作、再把结果回流学习的经营系统。
+            目标很明确：让门店从“看数”走向“能问、能判、能做、能复盘”，并把天气、节假日、商圈、人流、竞品和舆情这些外部变量一起纳入解释框架。
+          </p>
+
+          <div class="model-strip" aria-label="模型关键词">
+            <div class="model-pill"><b>真实世界</b> 门店 / 顾客 / 技师 / 项目 / 排班</div>
+            <div class="model-pill"><b>数据层</b> 事实 / 事件 / 文档 / 多模态 / 外部信号</div>
+            <div class="model-pill"><b>外部环境</b> 天气 / 节假日 / 商圈 / 竞品 / 舆情 / 政策</div>
+            <div class="model-pill"><b>语义层</b> capability / contract / coverage / policy</div>
+            <div class="model-pill"><b>AI层</b> 问答 / 诊断 / 生成 / 预警 / 复盘</div>
+            <div class="model-pill"><b>闭环</b> 执行 / 反馈 / 进化</div>
+          </div>
+        </div>
+
+        <div class="hero-panel">
+          <div class="equation-card">
+            <div class="equation-title">核心工作公式</div>
+            <div class="equation">
+              <div class="equation-step">
+                <strong>问题</strong>
+                <span>自然语言提问、经营场景、主动发现信号</span>
+              </div>
+              <div class="arrow">↓</div>
+              <div class="equation-step">
+                <strong>能力</strong>
+                <span>识别 question family，命中 capability graph</span>
+              </div>
+              <div class="arrow">↓</div>
+              <div class="equation-step">
+                <strong>槽位</strong>
+                <span>时间、门店、角色、指标、对比维度是否完整</span>
+              </div>
+              <div class="arrow">↓</div>
+              <div class="equation-step">
+                <strong>覆盖</strong>
+                <span>数据是否齐全，口径是否明确，权限是否允许</span>
+              </div>
+              <div class="arrow">↓</div>
+              <div class="equation-step">
+                <strong>回答/动作</strong>
+                <span>输出结论、表格、预警、名单、话术、任务单</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="hero-note">
+            <h3>一句话定义</h3>
+            <p>
+              门店世界模型 = 经营现实的数字化镜像 + 统一语义层 + 可执行 AI + 反馈学习机制。
+              它的价值不是“会聊天”，而是“能让门店经营持续变得更准确、更快、更可控”。
+            </p>
+          </div>
+        </div>
+      </header>
+
+      <section id="overview" class="section">
+        <div class="section-head">
+          <div>
+            <h2>世界模型总览</h2>
+            <p>
+              这张图把门店世界拆成五个相互连接的域：真实经营世界、数据入口、语义中枢、AI能力层、经营动作层。
+              中间不是数据库，而是可解释、可约束、可审计的语义中枢。
+            </p>
+          </div>
+          <div class="section-tag">总览视图</div>
+        </div>
+        <div class="section-body">
+          <div class="world-grid">
+            <article class="zone business">
+              <h3>真实经营世界</h3>
+              <p>门店、顾客、技师、项目、房间、排班、订单、充值、优惠券、投诉、反结、巡店。</p>
+              <div class="tag-row">
+                <span class="tag">谁在门店</span>
+                <span class="tag">做了什么</span>
+                <span class="tag">产生什么结果</span>
+                <span class="tag">哪些风险出现</span>
+              </div>
+              <ul class="core-list">
+                <li>业务侧关心的是营收、复购、点钟、加钟、储值、流失和风控。</li>
+                <li>这些信号先发生在现实门店，再被系统采集和解释。</li>
+              </ul>
+            </article>
+
+            <article class="zone core">
+              <h3>语义中枢</h3>
+              <p>
+                这里不是“模型替代数据”，而是“模型约束数据”：question family、capability graph、metric contract、
+                answerability、data coverage、policy、safe execution 共同构成可控回答链路。
+              </p>
+              <div class="core-equation">
+                <div class="core-chip">
+                  <strong>question family</strong>
+                  <span>把人话归到稳定的问题族，而不是逐句做正则匹配。</span>
+                </div>
+                <div class="core-chip">
+                  <strong>capability graph</strong>
+                  <span>每个问题族映射到可用能力、可见指标和可执行动作。</span>
+                </div>
+                <div class="core-chip">
+                  <strong>answerability</strong>
+                  <span>先判断能不能答，再决定怎么答，不能答就明确拒答或追问。</span>
+                </div>
+                <div class="core-chip">
+                  <strong>coverage gate</strong>
+                  <span>数据缺口、口径缺口、权限缺口，都必须在回答前暴露出来。</span>
+                </div>
+              </div>
+              <ul class="core-list">
+                <li>语义中枢是可持续扩展的事实真源，不是另一个“黑盒知识库”。</li>
+                <li>所有输出都要落到审计和质量回流，形成可解释的学习闭环。</li>
+              </ul>
+            </article>
+
+            <article class="zone ai">
+              <h3>AI能力层</h3>
+              <p>让模型承担理解、诊断、生成、推荐、复盘，不承担未经约束的数据决定权。</p>
+              <div class="tag-row">
+                <span class="tag">自然语言问答</span>
+                <span class="tag">异常诊断</span>
+                <span class="tag">主动洞察</span>
+                <span class="tag">多模态理解</span>
+                <span class="tag">话术生成</span>
+                <span class="tag">审计复盘</span>
+              </div>
+              <ul class="core-list">
+                <li>AI 负责把复杂问题变成可执行任务，而不是直接替代业务判断。</li>
+                <li>多模态用于巡店图、票据、语音、视频理解，补足结构化数据盲区。</li>
+              </ul>
+            </article>
+
+            <article class="zone data">
+              <h3>多渠道数据入口</h3>
+              <p>POS、会员、排班、企微、小程序、团购平台、巡店素材、外部环境信号统一进来。</p>
+              <div class="tag-row">
+                <span class="tag">POS / 收银</span>
+                <span class="tag">会员 / 储值</span>
+                <span class="tag">技师 / 排班</span>
+                <span class="tag">企微 / 电话 / 短信</span>
+                <span class="tag">图片 / 音频 / 视频</span>
+              </div>
+            </article>
+
+            <article class="zone action">
+              <h3>经营动作层</h3>
+              <p>日报、周报、预警、名单、话术、任务单、唤回流程、排班建议，全部能直接推到执行端。</p>
+              <div class="tag-row">
+                <span class="tag">日报/周报</span>
+                <span class="tag">异常预警</span>
+                <span class="tag">沉睡唤回</span>
+                <span class="tag">门店督导</span>
+                <span class="tag">任务编排</span>
+              </div>
+              <ul class="core-list">
+                <li>答案必须能被执行，否则只是展示，不是经营能力。</li>
+              </ul>
+            </article>
+
+            <article class="zone flywheel">
+              <h3>反馈飞轮</h3>
+              <p>问题 -> 回答 -> 执行 -> 结果 -> 复盘 -> 更新 contract / template / capability。系统真正的进化发生在这里。</p>
+              <div class="tag-row">
+                <span class="tag">问题输入</span>
+                <span class="tag">回答输出</span>
+                <span class="tag">行动执行</span>
+                <span class="tag">结果回流</span>
+                <span class="tag">规则进化</span>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="data" class="section">
+        <div class="section-head">
+          <div>
+            <h2>数据层</h2>
+            <p>
+              数据层不是“把所有东西都塞进一个库”，而是按数据性质分层存放。结构化事实走交易库和分析库，规则与知识走文档和向量库，多模态信号走对象存储和索引，审计与反馈单独留痕。
+            </p>
+          </div>
+          <div class="section-tag">数据治理与存储</div>
+        </div>
+        <div class="section-body">
+          <div class="stack-grid">
+            <div class="stack-card blue">
+              <header>
+                <h4>结构化事实</h4>
+                <small>订单 / 会员 / 充值 / 支付 / 排班 / 技师</small>
+              </header>
+              <p>适合 PostgreSQL、MySQL 或主业务库；高频查询和应用读写要保留主键、权限和状态字段。</p>
+              <div class="tag-row">
+                <span class="tag">主实体</span>
+                <span class="tag">状态</span>
+                <span class="tag">权限</span>
+                <span class="tag">动作单</span>
+              </div>
+            </div>
+
+            <div class="stack-card green">
+              <header>
+                <h4>指标与快照</h4>
+                <small>日 / 周 / 月 / 门店 / 技师 / 会员分群</small>
+              </header>
+              <p>适合 ClickHouse、Doris、StarRocks 等分析型存储，承载趋势、排行、分层和历史快照。</p>
+              <div class="tag-row">
+                <span class="tag">日报</span>
+                <span class="tag">周报</span>
+                <span class="tag">排行</span>
+                <span class="tag">留存</span>
+              </div>
+            </div>
+
+            <div class="stack-card teal">
+              <header>
+                <h4>规则与知识</h4>
+                <small>SOP / 制度 / 话术 / 口径 / 培训资料</small>
+              </header>
+              <p>适合文档库 + 向量库 + 关键词索引。它回答“怎么做”“为什么这么算”“什么情况下不能做”。</p>
+              <div class="tag-row">
+                <span class="tag">SOP</span>
+                <span class="tag">口径解释</span>
+                <span class="tag">FAQ</span>
+                <span class="tag">案例</span>
+              </div>
+            </div>
+
+            <div class="stack-card amber">
+              <header>
+                <h4>多模态信号</h4>
+                <small>巡店图片 / 视频 / 音频 / 票据 / OCR</small>
+              </header>
+              <p>适合对象存储、媒体索引和检索索引。先落原件，再做解析，不要把图像和语音当成结构化流水处理。</p>
+              <div class="tag-row">
+                <span class="tag">原始文件</span>
+                <span class="tag">OCR</span>
+                <span class="tag">图像检索</span>
+                <span class="tag">语音转写</span>
+              </div>
+            </div>
+
+            <div class="stack-card red">
+              <header>
+                <h4>审计与反馈</h4>
+                <small>对话 / 决策 / 失败样本 / 执行结果</small>
+              </header>
+              <p>单独留存，用于质量回放、失败归因和规则更新。没有审计，就没有可控进化。</p>
+              <div class="tag-row">
+                <span class="tag">对话审计</span>
+                <span class="tag">失败样本</span>
+                <span class="tag">执行回执</span>
+                <span class="tag">质量复盘</span>
+              </div>
+            </div>
+          </div>
+
+          <table class="matrix" aria-label="数据到存储映射">
+            <thead>
+              <tr>
+                <th>数据类型</th>
+                <th>建议存储</th>
+                <th>主要用途</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>订单、支付、充值、退款</b></td>
+                <td>主业务库 + 分析库</td>
+                <td>实收、消费、优惠、反结、对账</td>
+                <td>口径必须统一到时间维度和门店维度</td>
+              </tr>
+              <tr>
+                <td><b>会员、标签、生命周期</b></td>
+                <td>主业务库 + 标签库</td>
+                <td>流失风险、沉睡唤回、新客复购</td>
+                <td>敏感字段要脱敏和权限隔离</td>
+              </tr>
+              <tr>
+                <td><b>制度、SOP、话术、口径</b></td>
+                <td>文档库 + 向量库</td>
+                <td>规则解释、流程问答、培训与复用</td>
+                <td>版本管理和审批很重要</td>
+              </tr>
+              <tr>
+                <td><b>图片、视频、音频、票据</b></td>
+                <td>对象存储 + 索引</td>
+                <td>巡店、质检、OCR、语音理解</td>
+                <td>先保留原件，再做结构化提取</td>
+              </tr>
+              <tr>
+                <td><b>对话、审计、失败样本、执行反馈</b></td>
+                <td>Audit DB</td>
+                <td>质量复盘、模型优化、规则更新</td>
+                <td>是系统进化的证据链</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="external" class="section">
+        <div class="section-head">
+          <div>
+            <h2>外部环境与外部数据</h2>
+            <p>
+              门店经营不是封闭系统。好经营往往是店内能力与外部环境共同作用的结果：天气影响出行，节假日改变消费节奏，商圈人流决定自然客源，竞品动作影响价格敏感度，平台口碑影响新客转化。
+              所以外部数据要作为“解释变量”进入世界模型，而不是只在分析失败后才人工猜测。
+            </p>
+          </div>
+          <div class="section-tag">经营环境变量</div>
+        </div>
+        <div class="section-body">
+          <div class="environment-grid">
+            <article class="stack-card blue">
+              <header>
+                <h4>天气与气候</h4>
+                <small>雨雪 / 温度 / 湿度 / 极端天气</small>
+              </header>
+              <p>天气直接影响顾客出行意愿、预约迟到率、爽约率和项目偏好。</p>
+              <div class="env-impact">解释重点：为什么同样排班下客流突然下降，或者某类项目占比突然变化。</div>
+              <ul class="env-list">
+                <li>雨雪、高温、低温会压低自然到店和临时客。</li>
+                <li>湿冷、换季可能提升养生、热疗、肩颈类项目需求。</li>
+              </ul>
+            </article>
+
+            <article class="stack-card green">
+              <header>
+                <h4>节假日与日历</h4>
+                <small>周末 / 法定假 / 发薪日 / 开学季 / 月末</small>
+              </header>
+              <p>时间环境决定消费窗口、活动节奏和门店高峰时段。</p>
+              <div class="env-impact">解释重点：为什么本周环比变化大，是否只是日历结构不同。</div>
+              <ul class="env-list">
+                <li>节假日提升家庭客、休闲客，但也可能带来员工排班压力。</li>
+                <li>发薪日、月初、月末会改变充值与大额消费意愿。</li>
+              </ul>
+            </article>
+
+            <article class="stack-card teal">
+              <header>
+                <h4>商圈与交通</h4>
+                <small>人流 / 停车 / 地铁 / 写字楼 / 社区 / 商场</small>
+              </header>
+              <p>门店不是独立点位，而是商圈流量、交通便利性和周边业态的结果。</p>
+              <div class="env-impact">解释重点：客流下降到底是门店服务问题，还是商圈流量本身变弱。</div>
+              <ul class="env-list">
+                <li>地铁施工、停车变化、商场活动会改变到店便利性。</li>
+                <li>社区型、办公型、商场型门店的高峰窗口完全不同。</li>
+              </ul>
+            </article>
+
+            <article class="stack-card amber">
+              <header>
+                <h4>竞品与价格</h4>
+                <small>新店开业 / 促销 / 团购 / 评价 / 套餐</small>
+              </header>
+              <p>竞品不是背景噪音，而是门店新客转化、复购稳定和价格敏感度的重要变量。</p>
+              <div class="env-impact">解释重点：为什么新客转化下降、团购客回头率下降或折扣压力变大。</div>
+              <ul class="env-list">
+                <li>附近竞品开业和低价团购会影响新客试单。</li>
+                <li>竞品评价上升可能转移点位附近的自然搜索流量。</li>
+              </ul>
+            </article>
+
+            <article class="stack-card red">
+              <header>
+                <h4>平台口碑与舆情</h4>
+                <small>美团 / 抖音 / 小红书 / 大众点评 / 企微反馈</small>
+              </header>
+              <p>门店在线口碑会影响新客信任、活动点击、团购转化和投诉风险。</p>
+              <div class="env-impact">解释重点：客流没降但新客少，是不是线上曝光或评分出了问题。</div>
+              <ul class="env-list">
+                <li>评分、评论关键词、差评主题要和投诉、技师、项目数据联动。</li>
+                <li>爆款内容和负面内容都会改变短期自然客流。</li>
+              </ul>
+            </article>
+
+            <article class="stack-card blue">
+              <header>
+                <h4>区域事件与监管</h4>
+                <small>演出 / 会展 / 考试 / 社区活动 / 检查 / 政策</small>
+              </header>
+              <p>区域事件会制造短期流量波峰，监管和政策会改变营业边界与经营成本。</p>
+              <div class="env-impact">解释重点：临时高峰是否应加排人手，临时低谷是否应避免误判为经营下滑。</div>
+              <ul class="env-list">
+                <li>会展、演出、赛事会影响小时级客流和排班。</li>
+                <li>检查、施工、政策变化会影响营业时间、宣传和合规风险。</li>
+              </ul>
+            </article>
+          </div>
+
+          <table class="matrix" aria-label="外部数据到经营解释映射">
+            <thead>
+              <tr>
+                <th>外部因素</th>
+                <th>常见数据源</th>
+                <th>主要解释什么</th>
+                <th>联动内部指标</th>
+                <th>系统动作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>天气</b></td>
+                <td>天气 API、气象预警、历史温度降雨</td>
+                <td>自然客流波动、爽约、项目偏好变化</td>
+                <td>到店人数、预约履约率、项目结构、小时客流</td>
+                <td>日报归因、排班提醒、项目推荐</td>
+              </tr>
+              <tr>
+                <td><b>节假日与日历</b></td>
+                <td>法定节假日、周末、发薪日、开学季、本地节庆</td>
+                <td>周期波动是否正常，环比是否可比</td>
+                <td>营收、充值、客单价、复购、活动核销</td>
+                <td>对比口径修正、活动节奏建议</td>
+              </tr>
+              <tr>
+                <td><b>商圈与交通</b></td>
+                <td>地图 POI、停车信息、商场客流、地铁公交、施工公告</td>
+                <td>门店自然流量与到店便利性</td>
+                <td>新客数、自然客占比、预约到店率、晚高峰利用率</td>
+                <td>门店分型、客流异常解释、排班窗口调整</td>
+              </tr>
+              <tr>
+                <td><b>竞品</b></td>
+                <td>本地生活平台、价格套餐、竞品评分、竞品开业信息</td>
+                <td>价格压力、新客转化、回头率变化</td>
+                <td>新客转化率、团购二访、折扣率、复购率</td>
+                <td>竞品预警、套餐调整建议、团购策略复盘</td>
+              </tr>
+              <tr>
+                <td><b>平台口碑</b></td>
+                <td>美团、抖音、小红书、大众点评、搜索热度</td>
+                <td>线上信任、曝光、差评主题和转化障碍</td>
+                <td>新客数、投诉率、评分、项目转化、技师评价</td>
+                <td>舆情诊断、差评归因、内容和话术建议</td>
+              </tr>
+              <tr>
+                <td><b>区域事件与监管</b></td>
+                <td>会展日历、演出赛事、社区公告、监管检查、施工政策</td>
+                <td>短期波峰波谷、合规和经营边界</td>
+                <td>小时客流、出勤率、房间利用率、反结投诉</td>
+                <td>临时加排、风险提醒、日报备注</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="business" class="section">
+        <div class="section-head">
+          <div>
+            <h2>业务侧</h2>
+            <p>
+              门店的业务不是单点指标，而是一条连续链路：获客、到店、服务、加钟、副项、充值、复购、唤回、转介绍、风控。
+              AI 的价值是把每一段链路上的信号识别出来，并给出能执行的动作。
+            </p>
+          </div>
+          <div class="section-tag">经营闭环</div>
+        </div>
+        <div class="section-body">
+          <div class="timeline" aria-label="门店经营链路">
+            <div class="timeline-step">
+              <span class="num">1</span>
+              <h4>获客</h4>
+              <p>团购、自然流量、私域、转介绍、活动触达。</p>
+            </div>
+            <div class="timeline-step">
+              <span class="num">2</span>
+              <h4>到店</h4>
+              <p>预约、进店、分流、等位、接待、首单体验。</p>
+            </div>
+            <div class="timeline-step">
+              <span class="num">3</span>
+              <h4>服务</h4>
+              <p>项目执行、技师安排、房间占用、满意度、时长。</p>
+            </div>
+            <div class="timeline-step">
+              <span class="num">4</span>
+              <h4>加钟 / 副项</h4>
+              <p>服务转化、商品带动、二次消费、客单提升。</p>
+            </div>
+            <div class="timeline-step">
+              <span class="num">5</span>
+              <h4>充值 / 续费</h4>
+              <p>储值、套餐、会员等级、折扣、赠送、续卡。</p>
+            </div>
+            <div class="timeline-step">
+              <span class="num">6</span>
+              <h4>唤回 / 复购</h4>
+              <p>沉睡会员、高余额客户、团购一次性客户的回访。</p>
+            </div>
+            <div class="timeline-step">
+              <span class="num">7</span>
+              <h4>转介绍 / 风控</h4>
+              <p>口碑传播、投诉处理、反结异常、折扣失控、人员风险。</p>
+            </div>
+          </div>
+
+          <div class="role-grid">
+            <article class="role-card">
+              <h4>老板</h4>
+              <p>看营收、充值、复购、流失、门店排名和异常风险。希望系统直接告诉他“哪家店出了什么问题”。</p>
+            </article>
+            <article class="role-card">
+              <h4>店长</h4>
+              <p>看排班、空闲、点钟、加钟、投诉、交接和现场效率。希望系统告诉他“今天该先做什么”。</p>
+            </article>
+            <article class="role-card">
+              <h4>运营</h4>
+              <p>看新客、券核销、唤回名单、话术和活动效果。希望系统告诉他“这批人该怎么触达”。</p>
+            </article>
+            <article class="role-card">
+              <h4>技师</h4>
+              <p>看点钟率、评价、提成、复购贡献和成长路径。希望系统帮他理解“怎样提升自己的产能”。</p>
+            </article>
+            <article class="role-card">
+              <h4>财务</h4>
+              <p>看实收、退款、反结、对账和口径一致性。希望系统能把“钱是怎么来的”讲清楚。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="tech" class="section">
+        <div class="section-head">
+          <div>
+            <h2>技术架构</h2>
+            <p>
+              技术层的任务是把业务世界变成可计算、可查询、可控制的服务面。架构中心不是某一个数据库，而是“语义层 + 安全执行 + 审计质量循环”。
+            </p>
+          </div>
+          <div class="section-tag">可控执行面</div>
+        </div>
+        <div class="section-body">
+          <div class="tech-stack">
+            <article class="layer blue">
+              <div class="layer-name">接入层</div>
+              <div class="layer-body">
+                <h4>多源数据采集</h4>
+                <p>POS、会员、排班、技师、企微、小程序、团购、巡店素材、外部环境统一进入系统。</p>
+                <div class="tag-row">
+                  <span class="tag">API</span>
+                  <span class="tag">Webhook</span>
+                  <span class="tag">批处理</span>
+                  <span class="tag">文件</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="layer green">
+              <div class="layer-name">加工层</div>
+              <div class="layer-body">
+                <h4>清洗、去重、标准化、调度</h4>
+                <p>把原始数据整理成可用事实，解决时间、门店、人员、项目、金额等基础口径问题。</p>
+                <div class="tag-row">
+                  <span class="tag">ETL</span>
+                  <span class="tag">ELT</span>
+                  <span class="tag">标准化</span>
+                  <span class="tag">任务编排</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="layer teal">
+              <div class="layer-name">存储层</div>
+              <div class="layer-body">
+                <h4>交易库、分析库、文档库、向量库、审计库</h4>
+                <p>不同类型的数据放在最适合的地方，避免把所有东西都堆进一个库里。</p>
+                <div class="tag-row">
+                  <span class="tag">PostgreSQL</span>
+                  <span class="tag">ClickHouse / Doris</span>
+                  <span class="tag">Vector DB</span>
+                  <span class="tag">Audit DB</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="layer amber">
+              <div class="layer-name">语义层</div>
+              <div class="layer-body">
+                <h4>metric contract + capability graph + answerability gate</h4>
+                <p>把问题族、指标口径、槽位、权限和数据覆盖统一到一个可控的语义中枢里。</p>
+                <div class="tag-row">
+                  <span class="tag">contract</span>
+                  <span class="tag">coverage</span>
+                  <span class="tag">policy</span>
+                  <span class="tag">safe execution</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="layer red">
+              <div class="layer-name">服务层</div>
+              <div class="layer-body">
+                <h4>查询、报告、诊断、预警、任务执行</h4>
+                <p>把语义结果变成对外服务：问答接口、日报接口、唤回接口、预警接口、审计接口。</p>
+                <div class="tag-row">
+                  <span class="tag">query-api</span>
+                  <span class="tag">report</span>
+                  <span class="tag">diagnosis</span>
+                  <span class="tag">worker</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="layer blue">
+              <div class="layer-name">触达层</div>
+              <div class="layer-body">
+                <h4>企微、看板、小程序、短信、日报群、店长助手</h4>
+                <p>所有结果都要回到业务现场，而不是只停留在后台和报表页面里。</p>
+                <div class="tag-row">
+                  <span class="tag">企微</span>
+                  <span class="tag">Dashboard</span>
+                  <span class="tag">消息触达</span>
+                  <span class="tag">执行回执</span>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="ai" class="section">
+        <div class="section-head">
+          <div>
+            <h2>AI能力</h2>
+            <p>
+              AI 的定位不是“替代业务系统”，而是“把业务问题翻译成数据、把数据翻译成动作、把动作翻译成下一轮学习”。多模态补的是盲区，语义能力补的是确定性。
+            </p>
+          </div>
+          <div class="section-tag">理解 · 诊断 · 生成 · 复盘</div>
+        </div>
+        <div class="section-body">
+          <div class="ai-grid">
+            <article class="ai-card blue">
+              <h4>自然语言理解</h4>
+              <p>把“今天营收怎么样”“世界模型怎么定义”这类问题识别成稳定的问题族，而不是逐句正则匹配。</p>
+              <div class="tag-row">
+                <span class="tag">问题族识别</span>
+                <span class="tag">槽位抽取</span>
+              </div>
+            </article>
+            <article class="ai-card green">
+              <h4>经营问答</h4>
+              <p>查询指标、对比周期、解释变化，并给出老板、店长、运营能直接理解的结果。</p>
+              <div class="tag-row">
+                <span class="tag">指标查询</span>
+                <span class="tag">口径解释</span>
+              </div>
+            </article>
+            <article class="ai-card teal">
+              <h4>异常诊断</h4>
+              <p>识别营收下滑、客流异常、充值变弱、反结增多、折扣失控、出勤异常等信号。</p>
+              <div class="tag-row">
+                <span class="tag">异常归因</span>
+                <span class="tag">风险提示</span>
+              </div>
+            </article>
+            <article class="ai-card amber">
+              <h4>主动洞察</h4>
+              <p>不等用户问，系统自己发现“谁在沉睡”“哪家店在下滑”“哪条口径有缺口”。</p>
+              <div class="tag-row">
+                <span class="tag">定时诊断</span>
+                <span class="tag">自动发现</span>
+              </div>
+            </article>
+            <article class="ai-card blue">
+              <h4>报告生成</h4>
+              <p>日报、周报、专项分析、门店汇总、技师排行、会员唤回清单自动生成并可再问。</p>
+              <div class="tag-row">
+                <span class="tag">日报</span>
+                <span class="tag">周报</span>
+              </div>
+            </article>
+            <article class="ai-card green">
+              <h4>话术生成</h4>
+              <p>生成唤回话术、店长提示、运营跟进语、投诉安抚语和活动触达文本。</p>
+              <div class="tag-row">
+                <span class="tag">唤回</span>
+                <span class="tag">触达</span>
+              </div>
+            </article>
+            <article class="ai-card teal">
+              <h4>多模态理解</h4>
+              <p>理解巡店图、海报、票据、语音、视频、截图，补足结构化数据之外的信息。</p>
+              <div class="tag-row">
+                <span class="tag">图像</span>
+                <span class="tag">语音</span>
+                <span class="tag">OCR</span>
+              </div>
+            </article>
+            <article class="ai-card red">
+              <h4>审计复盘</h4>
+              <p>把错误回答、数据缺口、口径冲突、执行结果和人工纠偏保留下来，形成可迭代样本。</p>
+              <div class="tag-row">
+                <span class="tag">失败样本</span>
+                <span class="tag">质量闭环</span>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="loop" class="section">
+        <div class="section-head">
+          <div>
+            <h2>价值飞轮</h2>
+            <p>
+              真正可持续付费的不是“一个会问答的模型”，而是一个不断提升门店经营结果的系统。
+              它能持续影响营收、复购、储值、点钟、排班和风控，才会被继续使用。
+            </p>
+          </div>
+          <div class="section-tag">可持续付费逻辑</div>
+        </div>
+        <div class="section-body">
+          <div class="value-grid">
+            <div class="wheel">
+              <article class="wheel-step">
+                <span class="num">1</span>
+                <h4>看见问题</h4>
+                <p>把问题、异常和主动洞察统一到一个入口。</p>
+              </article>
+              <article class="wheel-step">
+                <span class="num">2</span>
+                <h4>解释原因</h4>
+                <p>用数据、口径和业务逻辑解释变化。</p>
+              </article>
+              <article class="wheel-step">
+                <span class="num">3</span>
+                <h4>提出动作</h4>
+                <p>把洞察变成名单、话术、任务和提醒。</p>
+              </article>
+              <article class="wheel-step">
+                <span class="num">4</span>
+                <h4>执行反馈</h4>
+                <p>记录执行结果，确认是否真的改善。</p>
+              </article>
+              <article class="wheel-step">
+                <span class="num">5</span>
+                <h4>学习进化</h4>
+                <p>更新 contract、模板、能力图谱和阈值。</p>
+              </article>
+            </div>
+
+            <div class="value-note">
+              <h3>系统真正卖的是什么</h3>
+              <p>
+                不是单次回答，也不是单次报表，而是“持续让门店变得更好”的能力。只要它持续帮助门店提升营业额、复购、储值、点钟率、加钟率、客流质量和风控能力，它就有持续付费价值。
+              </p>
+              <div class="tag-row">
+                <span class="tag">营收提升</span>
+                <span class="tag">复购提升</span>
+                <span class="tag">流失下降</span>
+                <span class="tag">人效提升</span>
+                <span class="tag">风险下降</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="footer">
+        门店世界模型的核心，不是把经营数据“做成知识库”，而是把现实门店抽象成一个可观测、可解释、可执行、可学习的系统。
+        数据层负责事实，语义层负责口径，AI 层负责理解和生成，业务侧负责动作，审计和反馈负责进化。
+      </div>
+    </div>
+  </body>
+</html>

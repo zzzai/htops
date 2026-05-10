@@ -12,6 +12,7 @@ mdshuju/
 node_modules/
 coverage/
 dist/
+logs/
 .vscode/
 
 .hermes/

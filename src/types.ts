@@ -2582,6 +2582,7 @@ export type DailyStoreReport = {
 
 export type FiveStoreDailyOverviewCoreMetrics = {
   serviceRevenue: number;
+  antiServiceRevenue?: number;
   customerCount: number;
   serviceOrderCount: number;
   averageTicket: number | null;
@@ -2592,6 +2593,12 @@ export type FiveStoreDailyOverviewCoreMetrics = {
   rechargeCash: number;
   storedConsumeAmount: number;
   memberPaymentAmount: number;
+  activeTechCount?: number;
+  onDutyTechCount?: number;
+  marketRevenue?: number;
+  groupbuyCohortCustomerCount?: number;
+  groupbuy7dRevisitCustomerCount?: number;
+  groupbuy7dRevisitRate?: number | null;
   effectiveMembers?: number;
   newMembers?: number;
   sleepingMembers?: number;
@@ -2603,6 +2610,9 @@ export type FiveStoreDailyOverviewCoreMetrics = {
   memberRepurchaseBaseCustomerCount7d?: number;
   memberRepurchaseReturnedCustomerCount7d?: number;
   memberRepurchaseRate7d?: number | null;
+  incompleteSync?: boolean;
+  staleSyncEndpoints?: string[];
+  unavailableMetrics?: string[];
 };
 
 export type FiveStoreDailyOverviewStoreSnapshot = {
@@ -2612,10 +2622,17 @@ export type FiveStoreDailyOverviewStoreSnapshot = {
   previousWeekSameDay?: FiveStoreDailyOverviewCoreMetrics | null;
 };
 
+export type FiveStoreDailyOverviewEnvironmentContext = {
+  headline: string;
+  explanationLines: string[];
+  actionHint?: string;
+};
+
 export type FiveStoreDailyOverviewInput = {
   bizDate: string;
   baselineBizDate?: string;
   backgroundHint?: string;
+  environmentContext?: FiveStoreDailyOverviewEnvironmentContext;
   stores: FiveStoreDailyOverviewStoreSnapshot[];
 };
 

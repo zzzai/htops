@@ -136,6 +136,11 @@ function resolveSemanticGuidanceClarification(params: {
   }
 }
 
+const NATURAL_LANGUAGE_FALLBACK_KEYWORDS =
+  /(帮我|帮忙|看下|看看|看看下|分析|判断|解释|定义|为什么|为啥|怎么|如何|啥|哪些|哪个|多少|几|能不能|可不可以|要不要|是不是|有没有|行不行|稳不稳|对不对|感觉|想看|想知道|请问|麻烦)/u;
+const NON_QUERY_CHAT_KEYWORDS =
+  /^(你好|您好|hi|hello|谢谢|收到|好的|好|嗯|ok|OK|在吗|在不在|辛苦了)$/u;
+
 function looksLikeBusinessQuery(text: string, config: HetangOpsConfig): boolean {
   const context = resolveHetangQuerySemanticContext({
     config,
@@ -161,6 +166,67 @@ function looksLikeBusinessQuery(text: string, config: HetangOpsConfig): boolean 
     context.mentionsHqPortfolioKeyword ||
     context.mentionsReportKeyword
   );
+}
+
+function shouldAttemptSemanticFallback(text: string, config: HetangOpsConfig): boolean {
+  const normalized = text.replace(/\s+/gu, "").trim();
+  if (!normalized || NON_QUERY_CHAT_KEYWORDS.test(normalized)) {
+    return false;
+  }
+  const context = resolveHetangQuerySemanticContext({
+    config,
+    text,
+  });
+  if (resolveUnsupportedPreRouteIntent({ text, semanticContext: context })) {
+    return false;
+  }
+  if (looksLikeBusinessQuery(text, config)) {
+    return true;
+  }
+  return (
+    normalized.length >= 4 &&
+    (NATURAL_LANGUAGE_FALLBACK_KEYWORDS.test(normalized) || /[\u4e00-\u9fff]/u.test(normalized))
+  );
+}
+
+async function resolveAnswerabilityForIntent(params: {
+  config: HetangOpsConfig;
+  binding: HetangEmployeeBinding;
+  text: string;
+  now: Date;
+  intent: HetangQueryIntent;
+  assessDataCoverage?: HetangDataCoverageAssessor;
+}): Promise<
+  | { kind: "answerable" }
+  | {
+      kind: "clarify";
+      text: string;
+      reason: string;
+      failureClass?: string;
+    }
+> {
+  const answerability = await resolveSemanticAnswerability({
+    config: params.config,
+    binding: params.binding,
+    text: params.text,
+    now: params.now,
+    intent: params.intent,
+    assessDataCoverage: params.assessDataCoverage,
+  });
+  const answerabilityText = renderSemanticAnswerabilityText(answerability);
+  if (answerabilityText) {
+    const reasonToken =
+      answerability.decision === "clarify"
+        ? answerability.reason.replace(/_/gu, "-")
+        : answerability.decision.replace("_", "-");
+    return {
+      kind: "clarify",
+      text: answerabilityText,
+      reason: `answerability-${reasonToken}`,
+      failureClass: answerability.reason,
+    };
+  }
+  return { kind: "answerable" };
 }
 
 export async function resolveHetangQueryEntry(params: {
@@ -251,10 +317,7 @@ export async function resolveHetangQueryEntry(params: {
       reason: "high-confidence-rule-intent",
     };
   }
-  if (
-    !params.runtime.resolveSemanticFallbackIntent ||
-    !looksLikeBusinessQuery(params.text, params.config)
-  ) {
+  if (!params.runtime.resolveSemanticFallbackIntent || !shouldAttemptSemanticFallback(params.text, params.config)) {
     if (ruleIntent) {
       return {
         kind: "intent",
@@ -286,6 +349,23 @@ export async function resolveHetangQueryEntry(params: {
     };
   }
   if (fallback?.intent) {
+    const answerability = await resolveAnswerabilityForIntent({
+      config: params.config,
+      binding: params.binding,
+      text: params.text,
+      now: params.now,
+      intent: fallback.intent,
+      assessDataCoverage: params.runtime.assessDataCoverage,
+    });
+    if (answerability.kind === "clarify") {
+      return {
+        kind: "clarify",
+        text: answerability.text,
+        source: "ai_fallback",
+        reason: answerability.reason,
+        failureClass: answerability.failureClass,
+      };
+    }
     return {
       kind: "intent",
       intent: fallback.intent,

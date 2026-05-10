@@ -1,0 +1,17 @@
+[Unit]
+Description=htops nightly priority data backfill
+Wants=htops-compose.service
+After=docker.service htops-compose.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/htops
+Environment=HETANG_ROOT_DIR=/root/htops
+Environment=HETANG_RUNTIME_ENV_FILE=/root/htops/.env.runtime
+Environment=HETANG_PRIORITY_BACKFILL_SKIP_LOCK=1
+Environment=HETANG_PRIORITY_BACKFILL_DEADLINE_LOCAL_TIME=03:58
+Environment=HOME=/root
+ExecStart=/root/htops/ops/hetang-nightly-priority-backfill.sh
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6

@@ -8,12 +8,13 @@ export type HqPortfolioUtteranceSample = {
   label: string;
   primary: string;
   similars: string[];
+  expectedAction?: "advice" | "ranking" | "risk";
   expectedCapabilityId: string;
   expectedTimeFrameLabel: string;
 };
 
 export type HqPortfolioRouteEvalFixtureDraft = RouteEvalFixtureDraft & {
-  expectedAction: "ranking";
+  expectedAction: "advice" | "ranking" | "risk";
 };
 
 export function buildHqPortfolioRouteEvalFixtures(params: {
@@ -22,6 +23,7 @@ export function buildHqPortfolioRouteEvalFixtures(params: {
   samples: HqPortfolioUtteranceSample[];
 }): HqPortfolioRouteEvalFixtureDraft[] {
   return params.samples.map((sample) => {
+    const expectedAction = sample.expectedAction ?? "ranking";
     const intent = resolveSemanticIntent({
       config: params.config,
       text: sample.primary,
@@ -32,10 +34,10 @@ export function buildHqPortfolioRouteEvalFixtures(params: {
       intent.lane !== "query" ||
       intent.kind !== "query" ||
       intent.object !== "hq" ||
-      intent.action !== "ranking"
+      intent.action !== expectedAction
     ) {
       throw new Error(
-        `HQ portfolio primary utterance must resolve to query:ranking:hq: ${sample.id} -> ${sample.primary} -> ${intent.lane}:${intent.kind}:${intent.action}:${intent.object}`,
+        `HQ portfolio primary utterance must resolve to query:${expectedAction}:hq: ${sample.id} -> ${sample.primary} -> ${intent.lane}:${intent.kind}:${intent.action}:${intent.object}`,
       );
     }
 
@@ -50,7 +52,7 @@ export function buildHqPortfolioRouteEvalFixtures(params: {
       rawText: sample.primary,
       expectedLane: "query",
       expectedIntentKind: "query",
-      expectedAction: "ranking",
+      expectedAction,
       expectedCapabilityId: intent.capabilityId,
       notes: `${sample.category} / ${sample.label}`,
     };

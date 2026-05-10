@@ -58,6 +58,25 @@ export type OperatingAnalysisRecipe = {
   decomposition_logic: string[];
 };
 
+export type OperatingAnswerTemplateMode =
+  | "metric_snapshot"
+  | "comparison"
+  | "ranked_list"
+  | "segment_list"
+  | "analysis_brief"
+  | "boundary_reply"
+  | "action_loop";
+
+export type OperatingAnswerTemplate = {
+  id: string;
+  family_id: string;
+  answer_mode: OperatingAnswerTemplateMode;
+  required_refs: string[];
+  template: string;
+  unavailable_template: string;
+  notes?: string[];
+};
+
 export type OperatingDependencyContract = {
   id: string;
   label: string;
@@ -110,6 +129,7 @@ type SemanticOperatingContract = {
     metrics: OperatingMetricContract[];
     segments: OperatingSegmentContract[];
     analysis_recipes: OperatingAnalysisRecipe[];
+    answer_templates: OperatingAnswerTemplate[];
   };
   dependency_contracts: OperatingDependencyContract[];
   proactive_diagnoses: ProactiveDiagnosisContract[];
@@ -216,6 +236,23 @@ export function listOperatingSegmentContracts(): OperatingSegmentContract[] {
 
 export function listOperatingAnalysisRecipes(): OperatingAnalysisRecipe[] {
   return clone(semanticOperatingContract.operating_contracts.analysis_recipes);
+}
+
+export function listOperatingAnswerTemplates(): OperatingAnswerTemplate[] {
+  return clone(semanticOperatingContract.operating_contracts.answer_templates);
+}
+
+export function findOperatingAnswerTemplateByFamilyId(
+  familyId: string,
+): OperatingAnswerTemplate | null {
+  const normalizedFamilyId = familyId.trim();
+  if (!normalizedFamilyId) {
+    return null;
+  }
+  const template = semanticOperatingContract.operating_contracts.answer_templates.find(
+    (entry) => entry.family_id === normalizedFamilyId,
+  );
+  return template ? clone(template) : null;
 }
 
 export function listOperatingDependencyContracts(): OperatingDependencyContract[] {

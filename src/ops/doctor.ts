@@ -9,6 +9,7 @@ import type {
   HetangFiveStoreDailyOverviewSummary,
   HetangAnalysisDeadLetterSummary,
   HetangRecentCommandAuditSummary,
+  HetangConversationReviewOverview,
   HetangQueueStatusSummary,
   HetangReportDeliveryUpgradeSummary,
   HetangSchedulerJobSummary,
@@ -159,6 +160,50 @@ export function formatAnalysisDeliveryHealthSummary(
 
 export function formatDoctorWarningLine(message: string): string {
   return `Scheduler warning: ${message}`;
+}
+
+function resolveConversationReviewInputTotal(
+  overview: HetangConversationReviewOverview | null | undefined,
+): number {
+  const summary = overview?.summary;
+  if (!summary) {
+    return 0;
+  }
+  return (
+    summary.inputConversationCount +
+    summary.inputShadowSampleCount +
+    summary.inputAnalysisJobCount
+  );
+}
+
+export function formatConversationReviewInputLine(
+  overview: HetangConversationReviewOverview | null | undefined,
+): string {
+  if (!overview?.latestRun || !overview.summary) {
+    return "Conversation review latest: no runs recorded";
+  }
+  const summary = overview.summary;
+  return [
+    `Conversation review latest: reviewDate=${summary.reviewDate}`,
+    `status=${overview.latestRun.status}`,
+    `input=${summary.inputConversationCount} conversations / ${summary.inputShadowSampleCount} shadow / ${summary.inputAnalysisJobCount} analysis`,
+    `findings=${summary.findingCount}`,
+  ].join(" | ");
+}
+
+export function formatConversationReviewInputWarning(
+  overview: HetangConversationReviewOverview | null | undefined,
+): string | null {
+  if (!overview?.latestRun || !overview.summary) {
+    return null;
+  }
+  if (overview.latestRun.status !== "completed") {
+    return null;
+  }
+  if (resolveConversationReviewInputTotal(overview) > 0) {
+    return null;
+  }
+  return `nightly-conversation-review input=0; audit sample flow is empty for ${overview.summary.sourceWindowStart} to ${overview.summary.sourceWindowEnd}`;
 }
 
 export function formatReportDeliveryUpgradeSummary(

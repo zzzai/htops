@@ -9,6 +9,8 @@ import {
   formatAnalysisDeliveryHealthSummary,
   formatAnalysisDeadLetterSummary,
   formatAnalysisQueueLine,
+  formatConversationReviewInputLine,
+  formatConversationReviewInputWarning,
   formatDailyReportAuditSummary,
   formatDailyReportReadinessSummary,
   formatEnvironmentMemoryDisturbanceSummary,
@@ -290,6 +292,8 @@ export class HetangOpsRuntime {
             windowHours: 24,
             now: this.resolveNow(),
           });
+          const conversationReviewSummary =
+            await this.getAdminReadService().getConversationReviewSummary();
           const analysisDeliverySummary =
             typeof (store as { getAnalysisDeliveryHealthSummary?: unknown })
               .getAnalysisDeliveryHealthSummary === "function"
@@ -309,6 +313,11 @@ export class HetangOpsRuntime {
           const warningLines = (schedulerStatus.warnings ?? []).map((entry) =>
             formatDoctorWarningLine(entry),
           );
+          const conversationReviewWarning =
+            formatConversationReviewInputWarning(conversationReviewSummary);
+          if (conversationReviewWarning) {
+            warningLines.push(formatDoctorWarningLine(conversationReviewWarning));
+          }
           const telemetryLines = [
             ...(schedulerStatus.reportDeliveryUpgradeSummary
               ? [formatReportDeliveryUpgradeSummary(schedulerStatus.reportDeliveryUpgradeSummary)]
@@ -334,6 +343,7 @@ export class HetangOpsRuntime {
               ? [formatFiveStoreDailyOverviewSummary(schedulerStatus.fiveStoreDailyOverviewSummary)]
               : []),
             ...formatAiLaneObservabilityLines(schedulerStatus.aiLanes ?? []),
+            formatConversationReviewInputLine(conversationReviewSummary),
           ];
           const commandAuditSummary =
             typeof (store as { getRecentCommandAuditSummary?: unknown })

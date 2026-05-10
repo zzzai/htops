@@ -1,13 +1,20 @@
 import { evaluateStoreBusinessScore } from "./business-score.js";
+import {
+  evaluateBusinessPainSignals,
+  type BusinessPainSignal,
+} from "./business-pain-signal.js";
 import { HetangOpsStore } from "./store.js";
 import type {
   ConsumeBillRecord,
   DailyStoreAlert,
   DailyGroupbuyPlatformMetric,
   DailyStoreMetrics,
+  EnvironmentContextSnapshot,
+  HetangStoreExternalContextEntry,
   TechCurrentRecord,
   TechUpClockRecord,
 } from "./types.js";
+import { renderStoreAdviceWorldModelSupplement } from "./world-model/rendering.js";
 
 type ClockBucket = "queue" | "selected" | "point" | "add";
 type AttendanceBucket = "strength" | "star" | "spa" | "ear" | "small";
@@ -661,6 +668,32 @@ function buildAnalysisLines(params: {
   ];
 }
 
+function buildPainRadarLines(params: {
+  metrics: DailyStoreMetrics;
+  detail: StoreManagerDailyDetail;
+  suggestions: string[];
+}): string[] {
+  const explicitPainSuggestions = params.suggestions
+    .filter((entry) => entry.startsWith("痛点雷达"))
+    .slice(0, 3);
+  if (explicitPainSuggestions.length > 0) {
+    return explicitPainSuggestions.map((entry, index) => `${index + 1}. ${entry}`);
+  }
+  const signals = evaluateBusinessPainSignals({
+    current: params.metrics,
+    financial: {
+      originalAmount: params.detail.totalRevenue,
+      discountAmount: Math.max(0, params.detail.totalRevenue - params.detail.actualRevenue),
+    },
+    maxSignals: 3,
+  });
+  return signals.map((signal, index) => formatPainRadarLine(signal, index + 1));
+}
+
+function formatPainRadarLine(signal: BusinessPainSignal, index: number): string {
+  return `${index}. ${signal.category}：${signal.businessMeaning}。证据：${signal.evidence}。建议：${signal.recommendedAction}`;
+}
+
 function buildPriorityActions(params: { metrics: DailyStoreMetrics }): ActionCandidate[] {
   const candidates: ActionCandidate[] = [];
   const pointClockRate = normalizeRate(params.metrics.pointClockRate) ?? 0;
@@ -1043,16 +1076,37 @@ export function renderStoreManagerDailyReport(params: {
   detail: StoreManagerDailyDetail;
   alerts: DailyStoreAlert[];
   suggestions: string[];
+  environmentContext?: EnvironmentContextSnapshot;
+  externalContextEntries?: HetangStoreExternalContextEntry[];
 }): string {
   const title = `${formatChineseBizDate(params.bizDate)} ${stripStorePrefix(params.storeName)}经营数据报告`;
   const analysisLines = buildAnalysisLines({
     metrics: params.metrics,
+  });
+  const painRadarLines = buildPainRadarLines({
+    metrics: params.metrics,
+    detail: params.detail,
+    suggestions: params.suggestions,
   });
   const actionLines = buildActionLines({
     metrics: params.metrics,
   });
   const supplementLines = buildSupplementConversionLines(params.metrics);
   const otherPaymentLine = renderOtherPaymentBreakdown(params.detail.otherPaymentBreakdown);
+  const worldModelSupplement = renderStoreAdviceWorldModelSupplement({
+    orgId: params.metrics.orgId,
+    bizDate: params.bizDate,
+    storeFactContext: {
+      serviceRevenue: params.metrics.serviceRevenue,
+      customerCount: params.metrics.customerCount,
+      rechargeCash: params.metrics.rechargeCash,
+      addClockRate: params.metrics.addClockRate,
+      pointClockRate: params.metrics.pointClockRate,
+      highBalanceSleepingMemberCount: params.metrics.highBalanceSleepingMemberCount ?? 0,
+    },
+    environmentContext: params.environmentContext,
+    externalContextEntries: params.externalContextEntries,
+  })?.replace(/仍待补齐/gu, "仍待完善");
 
   return renderMarkdownHardBreaks([
     title,
@@ -1096,6 +1150,8 @@ export function renderStoreManagerDailyReport(params: {
     "",
     "【经营分析】",
     ...analysisLines,
+    ...(painRadarLines.length > 0 ? ["", "【痛点雷达】", ...painRadarLines] : []),
+    ...(worldModelSupplement ? ["", "【世界模型补充】", worldModelSupplement] : []),
     "",
     "【今日动作】",
     ...actionLines,

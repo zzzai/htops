@@ -1,5 +1,6 @@
 import type { HetangQueryIntent } from "../query-intent.js";
 import { resolveHetangQuerySemanticContext } from "../query-semantics.js";
+import { HETANG_CONCEPT_EXPLAIN_KEYWORDS } from "../semantic-question-patterns.js";
 import type { HetangEmployeeBinding, HetangOpsConfig } from "../types.js";
 
 const EXPLICIT_TIME_SCOPE_KEYWORDS =
@@ -58,10 +59,14 @@ function looksBusinessLike(params: {
   semanticContext: ReturnType<typeof resolveHetangQuerySemanticContext>;
 }): boolean {
   const context = params.semanticContext;
-  if (BUSINESS_DOMAIN_KEYWORDS.test(context.semanticText)) {
-    return true;
+  if (HETANG_CONCEPT_EXPLAIN_KEYWORDS.test(context.semanticText)) {
+    return false;
   }
   return (
+    context.routeSignals.hqStoreMixedScope ||
+    (context.allStoresRequested &&
+      context.explicitOrgIds.length > 0 &&
+      /(先看|再看|一起看|同时看)/u.test(context.semanticText)) ||
     context.hasDataKeyword ||
     context.metrics.supported.length > 0 ||
     context.metrics.unsupported.length > 0 ||
