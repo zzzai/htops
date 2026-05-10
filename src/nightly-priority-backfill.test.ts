@@ -68,6 +68,13 @@ describe("nightly priority backfill planner", () => {
     ).toBe(true);
     expect(tasks[0]).toMatchObject({
       orgId: "1001",
+      endpoint: "1.4",
+      priority: "P0_USER_TRADE_CRITICAL",
+      startBizDate: "2026-01-01",
+      selectedCardIds: ["card-1", "card-2", "card-3"],
+    });
+    expect(tasks.find((task) => task.priority === "P0_RECENT_CORE")).toMatchObject({
+      orgId: "1001",
       endpoint: "1.2",
       startBizDate: "2026-01-25",
       endBizDate: "2026-01-27",
@@ -134,6 +141,47 @@ describe("nightly priority backfill planner", () => {
       selectedCardIds: ["card-1", "card-2", "card-3"],
     });
     expect(firstHistoricalCoreIndex).toBeGreaterThan(firstUserTradeIndex);
+  });
+
+  it("does not starve 1.4 user-trade recovery when maxTasks is tight", () => {
+    const tasks = buildNightlyPriorityBackfillTasks({
+      stores: [store("1001", "义乌店")],
+      startBizDate: "2026-01-01",
+      endBizDate: "2026-01-31",
+      nowBizDate: "2026-02-01",
+      recentCoreLookbackDays: 7,
+      coreSliceDays: 3,
+      userTradeSliceDays: 7,
+      coverageByOrgId: new Map([
+        [
+          "1001",
+          coverage(
+            "1001",
+            {
+              "1.2": new Set(),
+              "1.3": new Set(),
+              "1.6": new Set(),
+              "1.7": new Set(),
+            },
+            {
+              "1.4": new Set(["2026-01-01", "2026-01-02"]),
+            },
+          ),
+        ],
+      ]),
+      candidateCardIdsByOrgId: new Map([["1001", ["card-1"]]]),
+      snapshotAttemptedByOrgId: new Map([["1001", new Set(["1.5", "1.8"])]]),
+      maxTasks: 1,
+    });
+
+    expect(tasks).toEqual([
+      expect.objectContaining({
+        priority: "P0_USER_TRADE_CRITICAL",
+        endpoint: "1.4",
+        startBizDate: "2026-01-03",
+        selectedCardIds: ["card-1"],
+      }),
+    ]);
   });
 
   it("does not schedule historical tasks for current-only endpoints once today's snapshot was attempted", () => {

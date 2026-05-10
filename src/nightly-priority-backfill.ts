@@ -205,22 +205,6 @@ export function buildNightlyPriorityBackfillTasks(
 
   for (const store of activeStores) {
     const coverage = params.coverageByOrgId.get(store.orgId);
-    for (const endpoint of CORE_FACT_ENDPOINTS) {
-      addEndpointGapTasks({
-        tasks,
-        priority: "P0_RECENT_CORE",
-        store,
-        endpoint,
-        startBizDate: recentStartBizDate,
-        endBizDate: params.endBizDate,
-        presentDays: coverage?.rawFacts[endpoint],
-        sliceDays: coreSliceDays,
-      });
-    }
-  }
-
-  for (const store of activeStores) {
-    const coverage = params.coverageByOrgId.get(store.orgId);
     const selectedCardIds = Array.from(
       new Set(
         (params.candidateCardIdsByOrgId?.get(store.orgId) ?? [])
@@ -247,6 +231,22 @@ export function buildNightlyPriorityBackfillTasks(
       sliceDays: userTradeSliceDays,
       selectedCardIds,
     });
+  }
+
+  for (const store of activeStores) {
+    const coverage = params.coverageByOrgId.get(store.orgId);
+    for (const endpoint of CORE_FACT_ENDPOINTS) {
+      addEndpointGapTasks({
+        tasks,
+        priority: "P0_RECENT_CORE",
+        store,
+        endpoint,
+        startBizDate: recentStartBizDate,
+        endBizDate: params.endBizDate,
+        presentDays: coverage?.rawFacts[endpoint],
+        sliceDays: coreSliceDays,
+      });
+    }
   }
 
   for (const store of activeStores) {
