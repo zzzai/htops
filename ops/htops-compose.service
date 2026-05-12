@@ -17,4 +17,4 @@ ExecReload=/usr/bin/docker compose --env-file /root/htops/.env.postgres -f /root
 TimeoutStartSec=0
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.target docker.service

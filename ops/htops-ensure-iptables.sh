@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
 ensure_entrypoint() {
   master="$1"
   alternative="$2"
@@ -34,4 +36,8 @@ for binary in /usr/sbin/iptables /usr/sbin/ip6tables; do
     echo "$binary is missing or not executable" >&2
     exit 1
   fi
+  "$binary" --version >/dev/null 2>&1 || {
+    echo "$binary exists but cannot execute correctly" >&2
+    exit 1
+  }
 done
