@@ -17,6 +17,7 @@
 | 正式品牌全案 | `projects/hxy/deliverables/hxy-brand-plan-v1.md` | 已生成，面向业务汇报 |
 | 样板店执行包 | `projects/hxy/deliverables/hxy-pilot-execution-pack-v1.md` | 已生成，面向门店落地 |
 | 终端物料包 | `projects/hxy/deliverables/hxy-terminal-material-pack-v1.md` | 已生成，面向门头、菜单、话术、私域 |
+| 可打印执行卡 | `projects/hxy/deliverables/hxy-pilot-printable-cards-v1.md` | 已生成，面向店长、前台、技师、私域客服 |
 | 资产清单 | `projects/hxy/assets/01-current-asset-register.md` | 已生成，区分事实源、生成资产和待验证假设 |
 | 华与华理论 | `knowledge/brand/index.json` | 已可联合检索 |
 | 项目底稿 | `docs/plans/2026-05-14-hxy-project-knowledge-brief.md` | 已生成 |
@@ -36,7 +37,7 @@
 - 第一版终端执行手册已生成，覆盖门头、菜单、技师话术、私域复购
 - 第一版小店模型和样板验证矩阵已生成，能把方案假设转成经营测算和验收指标
 - 第一版正式品牌全案和样板店执行包已生成，可用于业务评审和样板店试跑
-- 第一版终端物料包已生成，可用于门头、海报、菜单、技师话术和私域跟进
+- 第一版终端物料包和可打印执行卡已生成，可用于门头、海报、菜单、技师话术、私域跟进和店长日检
 - 第一版资产清单已生成，明确事实源、生成资产、假设和验证边界
 - 原始资料和索引不进入 Git / Docker 镜像
 
@@ -65,14 +66,15 @@
 | `deliverables/hxy-brand-plan-v1.md` | 荷小悦品牌策划全案 v1 |
 | `deliverables/hxy-pilot-execution-pack-v1.md` | 荷小悦样板店执行包 v1 |
 | `deliverables/hxy-terminal-material-pack-v1.md` | 荷小悦终端物料包 v1 |
+| `deliverables/hxy-pilot-printable-cards-v1.md` | 荷小悦样板店可打印执行卡 v1 |
 | `samples/store-model-input.sample.json` | 小店模型输入样例 |
 | `samples/pilot-real-parameter-intake.md` | 样板店真实参数采集表 |
 | `decisions/ADR-001-project-boundary.md` | 项目边界架构决策 |
 
 ## 下一步执行清单
 
-1. 人工确认《荷小悦品牌策划全案》v1、《样板店执行包》v1 和《终端物料包》v1。
-2. 把终端物料包转成可打印门头/海报/菜单/技师卡/私域话术卡。
+1. 人工确认《荷小悦品牌策划全案》v1、《样板店执行包》v1、《终端物料包》v1 和《可打印执行卡》v1。
+2. 把可打印执行卡交给样板店试跑，收集店长、前台、技师、私域客服反馈。
 3. 用 `samples/pilot-real-parameter-intake.md` 采集真实选址、面积、房租、技师人数，替换小店模型样例输入。
 4. 把套餐成交、复购和健康档案字段接入真实数据表。
 5. 把执行反馈回流到 HXY 知识治理报告。

@@ -30,6 +30,7 @@
 | 品牌策划全案 v1 | `projects/hxy/deliverables/hxy-brand-plan-v1.md` | 内部评审、融资叙事、品牌方向统一 | 人工确认定位、购买理由、风险边界 |
 | 样板店执行包 v1 | `projects/hxy/deliverables/hxy-pilot-execution-pack-v1.md` | 店长、前台、技师执行 | 转成店长检查表和岗位 SOP |
 | 终端物料包 v1 | `projects/hxy/deliverables/hxy-terminal-material-pack-v1.md` | 门头、海报、菜单、话术、私域模板 | 转成可打印版和门店巡检表 |
+| 可打印执行卡 v1 | `projects/hxy/deliverables/hxy-pilot-printable-cards-v1.md` | 店长日检、前台推荐、技师话术、私域跟进 | 样板店试跑并回收执行反馈 |
 
 ## 事实与假设边界
 

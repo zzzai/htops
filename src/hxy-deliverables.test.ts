@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   buildHxyFormalBrandPlanMarkdown,
+  buildHxyPilotPrintablePackMarkdown,
   buildHxyTerminalMaterialPackMarkdown,
   buildHxyPilotExecutionPackMarkdown,
   type HxyDeliverableInputs,
@@ -165,5 +166,25 @@ describe("hxy deliverables", () => {
     expect(markdown).toContain("## 5. 样板店验收指标");
     expect(markdown).toContain("品牌资产一致率");
     expect(markdown.match(/套餐选择率/gu)).toHaveLength(1);
+  });
+
+  test("builds printable pilot cards for store manager, front desk, technician and private domain", () => {
+    const markdown = buildHxyPilotPrintablePackMarkdown(inputs());
+
+    expect(markdown).toContain("# 荷小悦样板店可打印执行卡 v1");
+    expect(markdown).toContain("## 1. 店长日检表");
+    expect(markdown).toContain("[ ] 门头、菜单、话术、私域是否统一出现同一购买理由");
+    expect(markdown).toContain("## 2. 前台推荐卡");
+    expect(markdown).toContain("优先推荐招牌款");
+    expect(markdown).toContain("基础款");
+    expect(markdown).toContain("招牌款");
+    expect(markdown).toContain("尊享款");
+    expect(markdown).toContain("## 3. 技师话术卡");
+    expect(markdown).toContain("今天先帮你把这里放松开。");
+    expect(markdown).toContain("## 4. 私域跟进卡");
+    expect(markdown).toContain("今天护理建议已记录。");
+    expect(markdown).toContain("## 5. 每日记录字段");
+    expect(markdown).toContain("套餐选择");
+    expect(markdown).toContain("复购标签");
   });
 });

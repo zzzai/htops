@@ -143,6 +143,71 @@ export function buildHxyTerminalMaterialPackMarkdown(inputs: HxyDeliverableInput
   );
 }
 
+export function buildHxyPilotPrintablePackMarkdown(inputs: HxyDeliverableInputs): string {
+  const menu = findSurface(inputs.playbook, "menu");
+  const technicianScript = findSurface(inputs.playbook, "technician_script");
+  const privateDomain = findSurface(inputs.playbook, "private_domain");
+  const menuItems = menu?.copy_blocks ?? ["基础款", "招牌款", "尊享款"];
+  const technicianLines = technicianScript?.copy_blocks ?? ["今天先帮你把这里放松开。"];
+  const privateDomainLines = privateDomain?.copy_blocks ?? ["今天护理建议已记录。"];
+
+  return lines(
+    "# 荷小悦样板店可打印执行卡 v1",
+    "",
+    "## 使用方式",
+    "- 打印后分别放在店长台账、前台收银、技师休息区和私域客服工作台。",
+    "- 每天闭店前由店长检查一次，不通过的项第二天班前会纠偏。",
+    "",
+    "## 1. 店长日检表",
+    "- [ ] 门头、菜单、话术、私域是否统一出现同一购买理由",
+    "- [ ] 今日是否优先推荐招牌款，并记录套餐选择",
+    "- [ ] 技师是否完成服务前说明、服务中解释、服务后护理建议",
+    "- [ ] 服务结束当天是否发送护理建议，而不是只发优惠",
+    "- [ ] 今日是否记录复购标签和健康档案字段",
+    "",
+    "## 2. 前台推荐卡",
+    "一句话原则：优先推荐招牌款，用清楚选择降低顾客决策成本。",
+    "",
+    "套餐结构：",
+    bulletList(menuItems),
+    "",
+    "推荐动作：",
+    bulletList(menu?.action_steps ?? ["菜单按基础款、招牌款、尊享款三层呈现。"]),
+    "",
+    "## 3. 技师话术卡",
+    "服务前：先说今天解决什么体感问题。",
+    "",
+    "可直接说：",
+    bulletList(technicianLines),
+    "",
+    "服务后：给出下次护理建议，不做医疗诊断。",
+    "",
+    "禁用表达：",
+    bulletList(technicianScript?.do_not_say ?? ["这是医疗诊断。"]),
+    "",
+    "## 4. 私域跟进卡",
+    "当天跟进：先发护理建议，不先推销。",
+    "",
+    "可直接发：",
+    bulletList(privateDomainLines),
+    "",
+    "跟进动作：",
+    bulletList(privateDomain?.action_steps ?? ["第 7 天用体感问题提醒复购。"]),
+    "",
+    "## 5. 每日记录字段",
+    "- 日期",
+    "- 到店来源",
+    "- 套餐选择",
+    "- 是否选择招牌款",
+    "- 主要体感问题",
+    "- 服务技师",
+    "- 护理建议是否发送",
+    "- 复购标签",
+    "- 7 天跟进结果",
+    "- 30 天复购结果",
+  );
+}
+
 export async function readHxyDeliverableInputs(structuredDir: string): Promise<HxyDeliverableInputs> {
   const readJson = async <T>(fileName: string): Promise<T> =>
     JSON.parse(await fs.readFile(path.join(structuredDir, fileName), "utf8")) as T;
@@ -172,6 +237,11 @@ export async function writeHxyDeliverables(params: {
   await fs.writeFile(
     path.join(params.outputDir, "hxy-terminal-material-pack-v1.md"),
     `${buildHxyTerminalMaterialPackMarkdown(params.inputs)}\n`,
+    "utf8",
+  );
+  await fs.writeFile(
+    path.join(params.outputDir, "hxy-pilot-printable-cards-v1.md"),
+    `${buildHxyPilotPrintablePackMarkdown(params.inputs)}\n`,
     "utf8",
   );
 }
