@@ -17,6 +17,8 @@ projects/hxy/
   semantic/       轻量本体、实体关系、指标语义、问题语义
   data/           数据智能体、数据模型、指标、数据源
   agents/         品牌、产品、选址、运营、加盟、融资等业务智能体
+  assets/         当前资产清单、事实源、生成资产、假设边界
+  deliverables/   品牌全案、样板店执行包、终端物料包
   roadmap/        从筹备期到万店规模的阶段路线
   governance/     安全、权限、质量、审计、模型治理
   schemas/        可落地的数据结构与 JSON schema
@@ -36,6 +38,8 @@ projects/hxy/
 - HXY 检索索引已生成：`knowledge/hxy/index.json`
 - HXY + brand 联合问答已可用
 - `/root/.claude` 模型配置已接入个人知识助手
+- HXY 品牌全案、样板店执行包、终端物料包已生成
+- HXY 资产清单已建立，用于区分事实源、生成资产和待验证假设
 
 ## 终局目标
 
@@ -47,4 +51,3 @@ projects/hxy/
 - 加盟复制风控系统
 - 组织 SOP 进化系统
 - 万店规模经营操作系统
-
