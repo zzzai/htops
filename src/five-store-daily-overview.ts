@@ -1426,19 +1426,8 @@ function buildRadarSummaryLines(params: {
 }
 
 function buildDataRiskLines(hits: StorePainHit[]): string[] {
-  const dataRiskHits = hits.filter((hit) => hit.signal.id === "pain:data_risk");
-  if (dataRiskHits.length === 0) {
-    return [];
-  }
-
-  return [
-    "## 数据可信度提示",
-    ...dataRiskHits.map(
-      (hit) =>
-        `- ${hit.store.storeName}：数据风险。证据：${hit.signal.evidence}。处理：${hit.signal.recommendedAction}`,
-    ),
-    "",
-  ];
+  void hits;
+  return [];
 }
 
 function buildEnvironmentContextLines(params: FiveStoreDailyOverviewInput): string[] {
@@ -1503,13 +1492,6 @@ function buildStorePriorityLines(params: {
 
     if (topSignal) {
       return `- ${store.storeName}：${topSignal.category}；${topSignal.recommendedAction}`;
-    }
-
-    const dataRisk = params.hits.find(
-      (hit) => hit.store.orgId === store.orgId && hit.signal.id === "pain:data_risk",
-    )?.signal;
-    if (dataRisk) {
-      return `- ${store.storeName}：数据风险；${dataRisk.recommendedAction}`;
     }
 
     return `- ${store.storeName}：保持观察；今天继续盯${params.commonGap.label}。`;

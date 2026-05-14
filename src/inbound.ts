@@ -559,6 +559,16 @@ function resolveGenericUnmatchedReply(params: {
 
 function resolveConceptExplainReply(text: string): string {
   const normalized = normalizeHetangSemanticText(text);
+  if (/(OSI|osi|语义资产|语义包|字段分域|分域管理|字段定义|基础字段|拓展指标|扩展指标|关联关系|业务术语|标签体系|客户标签|会员标签|顾客标签|画像标签|标签模型|标签分层|标签草案|草案|schema|Schema|wiki|Wiki)/u.test(normalized)) {
+    return [
+      "客户标签 OSI 草案可以按「基础字段 + 拓展指标 + 关联关系」三段来定义。",
+      "一、基础字段：客户ID、门店、会员等级、手机号脱敏、注册时间、最近到店、最近消费、储值余额、累计消费、累计到店、主服务技师、常来时段。",
+      "二、拓展指标：RFM分层、活跃/沉睡状态、高余额沉睡、团购新客、30天未二访、复购周期、充值意愿、项目偏好、价格敏感度、流失风险、生日窗口、技师绑定强度。",
+      "三、关联关系：客户标签 -> 触达动作 -> 话术/优惠 -> 负责人 -> 执行状态 -> 到店/消费/充值结果。",
+      "落库时建议把标签定义做成机器可读 contract：tag_id、口径公式、依赖字段、刷新频率、适用动作、不可用边界和审计样本。",
+      "这样 AI 不是只解释“客户标签”，而是能按标签生成名单、推荐动作，并追踪结果闭环。",
+    ].join("\n");
+  }
   if (/(世界模型|如何搭建|怎么搭建|搭建|构建|建模|架构|体系|结构|机制|框架|方法论|飞轮|业务模型|商业模型|设计)/u.test(normalized)) {
     return [
       "门店的世界模型，就是把真实经营世界抽成一套可被 AI 理解、查询和推演的对象关系。",
@@ -608,6 +618,22 @@ function resolveConceptExplainReply(text: string): string {
   return [
     "这是一个经营概念题。",
     "我建议先把概念落到具体门店、时间和指标上，我再按经营口径直接解释，不空讲定义。",
+  ].join("\n");
+}
+
+function resolveBookKnowledgeReply(): string {
+  return [
+    "这是书籍知识应用问题，不是门店数据查询。",
+    "正确路径是：先从个人知识库检索相关书籍段落，再抽取方法论、适用场景、限制条件，最后转成品牌、营销或管理动作。",
+    "如果问题要落到荷塘业务，我会按「书籍观点 -> 荷塘场景 -> 可执行动作 -> 验收指标」来回答。",
+  ].join("\n");
+}
+
+function resolveBrandMarketingPlanReply(): string {
+  return [
+    "这是品牌 / 营销策划问题，不是单店经营数据查询。",
+    "正确路径是：品牌对象、目标客群、竞争场景、核心承诺、超级符号、传播内容、门店转化动作和结果追踪。",
+    "如果要做完整全案，应把书籍知识库、外部竞品研究和门店经营数据一起纳入，但不会先追问“看哪家店”。",
   ].join("\n");
 }
 
@@ -668,6 +694,12 @@ export function resolveSemanticMetaReply(params: {
       );
     case "concept_explain":
       return resolveConceptExplainReply(params.text);
+    case "semantic_asset_design":
+      return resolveConceptExplainReply(params.text);
+    case "book_knowledge_qa":
+      return resolveBookKnowledgeReply();
+    case "brand_marketing_plan":
+      return resolveBrandMarketingPlanReply();
     case "clarify":
     case "clarify_missing_store":
     case "clarify_missing_time":

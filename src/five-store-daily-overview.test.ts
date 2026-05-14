@@ -303,7 +303,7 @@ describe("renderFiveStoreDailyOverview", () => {
     expect(text).toContain("总部/区域今天统一盯：");
   });
 
-  it("surfaces data risk before business judgment when a store has incomplete data", () => {
+  it("suppresses data-risk warnings and keeps unavailable metrics out of the shared brief", () => {
     const input = buildInput();
     Object.assign(input.stores[0]!.current as Record<string, unknown>, {
       incompleteSync: true,
@@ -313,10 +313,11 @@ describe("renderFiveStoreDailyOverview", () => {
 
     const text = renderFiveStoreDailyOverview(input);
 
-    expect(text).toContain("## 数据可信度提示");
-    expect(text).toContain("数据风险");
-    expect(text).toContain("迎宾店");
-    expect(text).toContain("不可用指标 1.1,1.7");
+    expect(text).not.toContain("## 数据可信度提示");
+    expect(text).not.toContain("数据风险");
+    expect(text).not.toContain("不可用指标");
+    expect(text).not.toContain("先补齐缺口接口");
+    expect(text).toContain("## 一、核心指标与总判断");
   });
 
   it("keeps per-store detail compressed into one task label per store", () => {

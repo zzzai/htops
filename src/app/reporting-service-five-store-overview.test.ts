@@ -337,7 +337,7 @@ describe("HetangReportingService five-store daily overview", () => {
     });
   });
 
-  it("threads daily report data-risk fields into the five-store trust section", async () => {
+  it("does not include data-risk fields in the shared five-store brief", async () => {
     const reportMap = seedCompleteReportMap();
     const yiwuReport = reportMap.get("1004:2026-04-22");
     if (!yiwuReport) {
@@ -358,10 +358,11 @@ describe("HetangReportingService five-store daily overview", () => {
       bizDate: "2026-04-22",
     });
 
-    expect(markdown).toContain("## 数据可信度提示");
-    expect(markdown).toContain("义乌店：数据风险");
-    expect(markdown).toContain("1.4");
-    expect(markdown).toContain("消费流水覆盖缺口");
+    expect(markdown).not.toContain("## 数据可信度提示");
+    expect(markdown).not.toContain("义乌店：数据风险");
+    expect(markdown).not.toContain("不可用指标");
+    expect(markdown).not.toContain("消费流水覆盖缺口");
+    expect(markdown).toContain("## 一、核心指标与总判断");
   });
 
   it("keeps preview mode available for manual operator review", async () => {
