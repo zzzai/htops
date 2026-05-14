@@ -81,6 +81,68 @@ export function buildHxyPilotExecutionPackMarkdown(inputs: HxyDeliverableInputs)
   );
 }
 
+export function buildHxyTerminalMaterialPackMarkdown(inputs: HxyDeliverableInputs): string {
+  const storefront = findSurface(inputs.playbook, "storefront");
+  const menu = findSurface(inputs.playbook, "menu");
+  const technicianScript = findSurface(inputs.playbook, "technician_script");
+  const privateDomain = findSurface(inputs.playbook, "private_domain");
+  const brandAssetItems = normalizeBrandAssetItems(findSection(inputs.masterPlan, "brand_asset_system")?.content ?? []);
+  const validationMetrics = mergeValidationMetrics(inputs);
+
+  return lines(
+    "# 荷小悦终端物料包 v1",
+    "",
+    "## 使用原则",
+    "- 所有物料只讲当前能被顾客感知和验证的承诺。",
+    "- 门头、菜单、话术、私域必须使用同一套购买理由，不各说各话。",
+    "- 不把远期平台愿景当成当前门店宣传承诺。",
+    "",
+    "## 1. 门头与海报",
+    "",
+    "主信息：",
+    bulletList(brandAssetItems),
+    "",
+    "门店可直接使用：",
+    bulletList(storefront?.copy_blocks ?? ["荷小悦", "草本真现煮，按出真功夫", "社区泡脚按摩小店"]),
+    "",
+    "落地动作：",
+    bulletList(storefront?.action_steps ?? ["门头只保留品牌名、品类和一句购买理由。"]),
+    "",
+    "## 2. 价格菜单",
+    "",
+    "菜单结构：",
+    bulletList(menu?.copy_blocks ?? ["基础款", "招牌款", "尊享款"]),
+    "",
+    "推荐规则：",
+    bulletList(menu?.action_steps ?? ["菜单按基础款、招牌款、尊享款三层呈现。"]),
+    "",
+    "## 3. 技师服务话术卡",
+    "",
+    "服务中可说：",
+    bulletList(technicianScript?.copy_blocks ?? ["今天先帮你把这里放松开。"]),
+    "",
+    "服务动作：",
+    bulletList(technicianScript?.action_steps ?? ["服务后给出下次护理建议。"]),
+    "",
+    "不能说：",
+    bulletList(technicianScript?.do_not_say ?? ["这是医疗诊断。"]),
+    "",
+    "## 4. 私域跟进模板",
+    "",
+    "可直接发送：",
+    bulletList(privateDomain?.copy_blocks ?? ["今天护理建议已记录。"]),
+    "",
+    "跟进节奏：",
+    bulletList(privateDomain?.action_steps ?? ["第 7 天用体感问题提醒复购。"]),
+    "",
+    "不能做：",
+    bulletList(privateDomain?.do_not_say ?? ["群发优惠券即可。"]),
+    "",
+    "## 5. 样板店验收指标",
+    bulletList(validationMetrics),
+  );
+}
+
 export async function readHxyDeliverableInputs(structuredDir: string): Promise<HxyDeliverableInputs> {
   const readJson = async <T>(fileName: string): Promise<T> =>
     JSON.parse(await fs.readFile(path.join(structuredDir, fileName), "utf8")) as T;
@@ -107,6 +169,11 @@ export async function writeHxyDeliverables(params: {
     `${buildHxyPilotExecutionPackMarkdown(params.inputs)}\n`,
     "utf8",
   );
+  await fs.writeFile(
+    path.join(params.outputDir, "hxy-terminal-material-pack-v1.md"),
+    `${buildHxyTerminalMaterialPackMarkdown(params.inputs)}\n`,
+    "utf8",
+  );
 }
 
 function renderSurface(surface: HxyExecutionSurface): string {
@@ -130,6 +197,10 @@ function findSection(plan: HxyBrandMasterPlan, key: HxyBrandMasterPlan["sections
   return plan.sections.find((section) => section.key === key);
 }
 
+function findSurface(playbook: HxyExecutionPlaybook, key: HxyExecutionSurface["key"]) {
+  return playbook.surfaces.find((surface) => surface.key === key);
+}
+
 function normalizeBrandAssetItems(items: string[]): string[] {
   const brandName = items.find((item) => item.startsWith("品牌名：")) ?? "品牌名：荷小悦";
   const slogan = items.find((item) => item.startsWith("口号候选：")) ?? "口号候选：草本真现煮，按出真功夫";
@@ -139,6 +210,30 @@ function normalizeBrandAssetItems(items: string[]): string[] {
     "核心表达：真实有效、社区信任、草本现煮、按出真功夫。",
     "终端主文案：草本真现煮，按出真功夫。",
   ];
+}
+
+function dedupeLines(items: string[]): string[] {
+  return Array.from(new Set(items.filter((item) => item.trim().length > 0)));
+}
+
+function mergeValidationMetrics(inputs: HxyDeliverableInputs): string[] {
+  const merged = new Map<string, { why?: string; evidence?: string }>();
+  for (const item of inputs.masterPlan.validation_plan) {
+    const current = merged.get(item.label) ?? {};
+    current.why = item.why;
+    merged.set(item.label, current);
+  }
+  for (const item of inputs.validationMatrix.items) {
+    const current = merged.get(item.label) ?? {};
+    current.evidence = item.evidence_source;
+    merged.set(item.label, current);
+  }
+  return Array.from(merged.entries()).map(([label, item]) => {
+    if (item.why && item.evidence) {
+      return `${label}：${item.why} 验收证据：${item.evidence}`;
+    }
+    return `${label}：${item.why ?? item.evidence ?? "待补充验收口径"}`;
+  });
 }
 
 function bulletList(items: string[]): string {

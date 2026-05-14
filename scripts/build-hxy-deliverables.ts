@@ -59,6 +59,7 @@ async function main(): Promise<void> {
     [
       `[hxy-deliverables] wrote ${path.join(args.outputDir, "hxy-brand-plan-v1.md")}`,
       `[hxy-deliverables] wrote ${path.join(args.outputDir, "hxy-pilot-execution-pack-v1.md")}`,
+      `[hxy-deliverables] wrote ${path.join(args.outputDir, "hxy-terminal-material-pack-v1.md")}`,
     ].join("\n"),
   );
 }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   buildHxyFormalBrandPlanMarkdown,
+  buildHxyTerminalMaterialPackMarkdown,
   buildHxyPilotExecutionPackMarkdown,
   type HxyDeliverableInputs,
 } from "./hxy-deliverables.js";
@@ -145,5 +146,24 @@ describe("hxy deliverables", () => {
     expect(markdown).toContain("禁用表达");
     expect(markdown).toContain("这是医疗诊断。");
     expect(markdown).toContain("每日检查表");
+  });
+
+  test("builds a terminal material pack for storefront, menu, technician and private-domain execution", () => {
+    const markdown = buildHxyTerminalMaterialPackMarkdown(inputs());
+
+    expect(markdown).toContain("# 荷小悦终端物料包 v1");
+    expect(markdown).toContain("## 1. 门头与海报");
+    expect(markdown).toContain("草本真现煮，按出真功夫");
+    expect(markdown).toContain("## 2. 价格菜单");
+    expect(markdown).toContain("基础款");
+    expect(markdown).toContain("招牌款");
+    expect(markdown).toContain("尊享款");
+    expect(markdown).toContain("## 3. 技师服务话术卡");
+    expect(markdown).toContain("今天先帮你把这里放松开。");
+    expect(markdown).toContain("## 4. 私域跟进模板");
+    expect(markdown).toContain("今天护理建议已记录。");
+    expect(markdown).toContain("## 5. 样板店验收指标");
+    expect(markdown).toContain("品牌资产一致率");
+    expect(markdown.match(/套餐选择率/gu)).toHaveLength(1);
   });
 });
