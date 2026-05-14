@@ -69,6 +69,7 @@
 | `deliverables/hxy-pilot-printable-cards-v1.md` | 荷小悦样板店可打印执行卡 v1 |
 | `samples/store-model-input.sample.json` | 小店模型输入样例 |
 | `samples/pilot-real-parameter-intake.md` | 样板店真实参数采集表 |
+| `samples/pilot-feedback-intake.md` | 样板店试跑反馈采集表 |
 | `decisions/ADR-001-project-boundary.md` | 项目边界架构决策 |
 
 ## 下一步执行清单
@@ -76,6 +77,7 @@
 1. 人工确认《荷小悦品牌策划全案》v1、《样板店执行包》v1、《终端物料包》v1 和《可打印执行卡》v1。
 2. 把可打印执行卡交给样板店试跑，收集店长、前台、技师、私域客服反馈。
 3. 用 `samples/pilot-real-parameter-intake.md` 采集真实选址、面积、房租、技师人数，替换小店模型样例输入。
-4. 把套餐成交、复购和健康档案字段接入真实数据表。
-5. 把执行反馈回流到 HXY 知识治理报告。
-6. 接入更多营销/管理书籍后，拆出营销动作和管理动作 Agent。
+4. 用 `samples/pilot-feedback-intake.md` 每日回收试跑反馈，判断哪些物料和话术要调整。
+5. 把套餐成交、复购和健康档案字段接入真实数据表。
+6. 把执行反馈回流到 HXY 知识治理报告。
+7. 接入更多营销/管理书籍后，拆出营销动作和管理动作 Agent。
