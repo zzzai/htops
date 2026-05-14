@@ -1,5 +1,5 @@
 [Unit]
-Description=htops nightly priority data backfill
+Description=htops non-1.4 data backfill
 Wants=htops-compose.service
 After=docker.service htops-compose.service
 
@@ -9,8 +9,12 @@ WorkingDirectory=/root/htops
 Environment=HETANG_ROOT_DIR=/root/htops
 Environment=HETANG_RUNTIME_ENV_FILE=/root/htops/.env.runtime
 Environment=HETANG_PRIORITY_BACKFILL_SKIP_LOCK=1
-Environment=HETANG_PRIORITY_BACKFILL_DEADLINE_LOCAL_TIME=03:58
-Environment=HETANG_PRIORITY_BACKFILL_POST_WINDOW_CONTINUATION_MINUTES=60
+Environment=HETANG_PRIORITY_BACKFILL_EXCLUDE_ENDPOINTS=1.4
+Environment=HETANG_PRIORITY_BACKFILL_DEADLINE_LOCAL_TIME=18:00
+Environment=HETANG_PRIORITY_BACKFILL_MAX_TASKS=16
+Environment=HETANG_PRIORITY_BACKFILL_TASK_GAP_MS=12000
+Environment=HETANG_PRIORITY_BACKFILL_STORE_GAP_MS=30000
+Environment=HETANG_PRIORITY_BACKFILL_LOG=/root/htops/logs/non-usertrade-backfill.log
 Environment=HOME=/root
 ExecStart=/root/htops/ops/hetang-nightly-priority-backfill.sh
 Nice=5

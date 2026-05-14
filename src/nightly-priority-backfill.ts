@@ -32,6 +32,19 @@ export type NightlyPriorityBackfillSummary = {
   byEndpoint: Partial<Record<EndpointCode, number>>;
 };
 
+export type NightlyPriorityProbeSpec = {
+  endpoint: EndpointCode;
+  orgId: string;
+  storeName: string;
+  request: Record<string, unknown>;
+};
+
+export type PostWindowBackfillDeadlineDecision = {
+  shouldContinue: boolean;
+  deadline: Date;
+  reason: "within_window" | "post_window_probe_confirmed" | "post_window_probe_failed";
+};
+
 export type BuildNightlyPriorityBackfillTasksParams = {
   stores: HetangStoreConfig[];
   startBizDate: string;
@@ -48,6 +61,7 @@ export type BuildNightlyPriorityBackfillTasksParams = {
   snapshotBizDate?: string;
   maxUserTradeCardsPerTask?: number;
   maxTasks?: number;
+  excludedEndpoints?: EndpointCode[];
 };
 
 const CORE_FACT_ENDPOINTS: EndpointCode[] = ["1.2", "1.3", "1.6", "1.7"];
@@ -68,6 +82,33 @@ const DEFAULT_CORE_SLICE_DAYS = 7;
 const DEFAULT_MEMBER_SLICE_DAYS = 7;
 const DEFAULT_USER_TRADE_SLICE_DAYS = 7;
 const DEFAULT_MAX_USER_TRADE_CARDS_PER_TASK = 6;
+
+export function resolvePostWindowBackfillDeadline(params: {
+  now: Date;
+  deadline: Date;
+  probeOk: boolean;
+  continuationMinutes: number;
+}): PostWindowBackfillDeadlineDecision {
+  if (params.now.getTime() < params.deadline.getTime()) {
+    return {
+      shouldContinue: true,
+      deadline: params.deadline,
+      reason: "within_window",
+    };
+  }
+  if (!params.probeOk) {
+    return {
+      shouldContinue: false,
+      deadline: params.deadline,
+      reason: "post_window_probe_failed",
+    };
+  }
+  return {
+    shouldContinue: true,
+    deadline: new Date(params.now.getTime() + Math.max(1, params.continuationMinutes) * 60_000),
+    reason: "post_window_probe_confirmed",
+  };
+}
 
 function maxBizDate(left: string, right: string): string {
   return left >= right ? left : right;
@@ -201,41 +242,42 @@ export function buildNightlyPriorityBackfillTasks(
   );
   const historicalEndBizDate = shiftBizDate(recentStartBizDate, -1);
   const activeStores = params.stores.filter((store) => store.isActive);
+  const excludedEndpoints = new Set(params.excludedEndpoints ?? []);
   const tasks: NightlyPriorityBackfillTask[] = [];
 
-  for (const store of activeStores) {
-    const coverage = params.coverageByOrgId.get(store.orgId);
-    const selectedCardIds = Array.from(
-      new Set(
-        (params.candidateCardIdsByOrgId?.get(store.orgId) ?? [])
-          .map((cardId) => String(cardId ?? "").trim())
-          .filter((cardId) => cardId.length > 0),
-      ),
-    ).slice(0, maxUserTradeCardsPerTask);
-    if (selectedCardIds.length === 0) {
-      continue;
-    }
-    addEndpointGapTasks({
-      tasks,
-      priority: "P0_USER_TRADE_CRITICAL",
-      store,
-      endpoint: "1.4",
-      startBizDate: params.startBizDate,
-      endBizDate: params.endBizDate,
-      presentDays: resolveRawAttemptDays({
-        coverage,
-        rawAttemptCoverageByOrgId: params.rawAttemptCoverageByOrgId,
-        orgId: store.orgId,
+  if (!excludedEndpoints.has("1.4")) {
+    for (const store of activeStores) {
+      const coverage = params.coverageByOrgId.get(store.orgId);
+      const selectedCardIds = Array.from(
+        new Set(
+          (params.candidateCardIdsByOrgId?.get(store.orgId) ?? [])
+            .map((cardId) => String(cardId ?? "").trim())
+            .filter((cardId) => cardId.length > 0),
+        ),
+      ).slice(0, maxUserTradeCardsPerTask);
+      if (selectedCardIds.length === 0) {
+        continue;
+      }
+      addEndpointGapTasks({
+        tasks,
+        priority: "P0_USER_TRADE_CRITICAL",
+        store,
         endpoint: "1.4",
-      }),
-      sliceDays: userTradeSliceDays,
-      selectedCardIds,
-    });
+        startBizDate: params.startBizDate,
+        endBizDate: params.endBizDate,
+        presentDays: coverage?.rawFacts["1.4"],
+        sliceDays: userTradeSliceDays,
+        selectedCardIds,
+      });
+    }
   }
 
   for (const store of activeStores) {
     const coverage = params.coverageByOrgId.get(store.orgId);
     for (const endpoint of CORE_FACT_ENDPOINTS) {
+      if (excludedEndpoints.has(endpoint)) {
+        continue;
+      }
       addEndpointGapTasks({
         tasks,
         priority: "P0_RECENT_CORE",
@@ -252,6 +294,9 @@ export function buildNightlyPriorityBackfillTasks(
   for (const store of activeStores) {
     const coverage = params.coverageByOrgId.get(store.orgId);
     for (const endpoint of CORE_FACT_ENDPOINTS) {
+      if (excludedEndpoints.has(endpoint)) {
+        continue;
+      }
       addEndpointGapTasks({
         tasks,
         priority: "P1_HISTORICAL_CORE",
@@ -266,6 +311,9 @@ export function buildNightlyPriorityBackfillTasks(
   }
 
   for (const store of activeStores) {
+    if (excludedEndpoints.has("1.1")) {
+      continue;
+    }
     const coverage = params.coverageByOrgId.get(store.orgId);
     addEndpointGapTasks({
       tasks,
@@ -287,7 +335,7 @@ export function buildNightlyPriorityBackfillTasks(
   for (const store of activeStores) {
     const attempted = params.snapshotAttemptedByOrgId?.get(store.orgId) ?? new Set<EndpointCode>();
     for (const endpoint of CURRENT_ONLY_ENDPOINTS) {
-      if (attempted.has(endpoint)) {
+      if (attempted.has(endpoint) || excludedEndpoints.has(endpoint)) {
         continue;
       }
       tasks.push({
@@ -328,6 +376,54 @@ export function resolveNightlyPriorityTaskSyncPlan(
     skipEndpoints,
     selectedCardIds: task.selectedCardIds,
   };
+}
+
+export function resolveNightlyPriorityProbeSpec(
+  task: NightlyPriorityBackfillTask,
+  cutoffLocalTime: string,
+): NightlyPriorityProbeSpec {
+  const window =
+    task.endpoint === "1.5" || task.endpoint === "1.8"
+      ? undefined
+      : resolveOperationalBizDateRangeWindow({
+          startBizDate: task.startBizDate,
+          endBizDate: task.startBizDate,
+          cutoffLocalTime,
+        });
+  const baseRequest: Record<string, unknown> = {
+    OrgId: task.orgId,
+  };
+  if (window) {
+    baseRequest.Stime = window.startTime;
+    baseRequest.Etime = window.endTime;
+  }
+  if (task.endpoint === "1.4") {
+    baseRequest.Id = task.selectedCardIds?.[0] ?? "";
+    baseRequest.Type = 1;
+  } else if (task.endpoint === "1.6" || task.endpoint === "1.7") {
+    baseRequest.Code = "";
+  }
+  return {
+    endpoint: task.endpoint,
+    orgId: task.orgId,
+    storeName: task.storeName,
+    request: baseRequest,
+  };
+}
+
+export function filterNightlyPriorityTasksByAvailableEndpoints<
+  T extends Pick<NightlyPriorityBackfillTask, "endpoint">,
+>(tasks: readonly T[], availableEndpoints: ReadonlySet<EndpointCode>): T[] {
+  return tasks.filter((task) => availableEndpoints.has(task.endpoint));
+}
+
+export function filterNightlyPriorityTasksByExcludedEndpoints<
+  T extends Pick<NightlyPriorityBackfillTask, "endpoint">,
+>(tasks: readonly T[], excludedEndpoints: ReadonlySet<EndpointCode>): T[] {
+  if (excludedEndpoints.size <= 0) {
+    return [...tasks];
+  }
+  return tasks.filter((task) => !excludedEndpoints.has(task.endpoint));
 }
 
 export function summarizeNightlyPriorityBackfillPlan(

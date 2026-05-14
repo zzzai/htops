@@ -1435,6 +1435,18 @@ export class HetangOpsStore {
         details_json TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS sync_run_endpoints (
+        sync_run_id TEXT NOT NULL,
+        endpoint TEXT NOT NULL,
+        org_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        status TEXT NOT NULL,
+        row_count INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
+        PRIMARY KEY (sync_run_id, endpoint)
+      );
+
       CREATE TABLE IF NOT EXISTS endpoint_watermarks (
         org_id TEXT NOT NULL,
         endpoint TEXT NOT NULL,
@@ -4085,6 +4097,105 @@ export class HetangOpsStore {
         WHERE sync_run_id = $4
       `,
       [params.status, params.finishedAt, JSON.stringify(params.details ?? {}), params.syncRunId],
+    );
+  }
+
+  async getLatestSyncRun(params: {
+    orgId: string;
+    mode: string;
+    startedAtOrAfter?: string;
+  }): Promise<{
+    syncRunId: string;
+    orgId: string | null;
+    mode: string;
+    startedAt: string;
+    finishedAt?: string;
+    status: string;
+    detailsJson?: string;
+  } | null> {
+    const result = await this.params.pool.query(
+      `
+        SELECT sync_run_id, org_id, mode, started_at, finished_at, status, details_json
+        FROM sync_runs
+        WHERE org_id = $1
+          AND mode = $2
+          AND ($3::text IS NULL OR started_at >= $3)
+        ORDER BY started_at DESC, finished_at DESC NULLS LAST
+        LIMIT 1
+      `,
+      [params.orgId, params.mode, params.startedAtOrAfter ?? null],
+    );
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    if (!row) {
+      return null;
+    }
+    return {
+      syncRunId: String(row.sync_run_id),
+      orgId: row.org_id === null || row.org_id === undefined ? null : String(row.org_id),
+      mode: String(row.mode),
+      startedAt: String(row.started_at),
+      finishedAt: row.finished_at === null || row.finished_at === undefined ? undefined : String(row.finished_at),
+      status: String(row.status),
+      detailsJson:
+        row.details_json === null || row.details_json === undefined
+          ? undefined
+          : String(row.details_json),
+    };
+  }
+
+  async beginSyncRunEndpoint(params: {
+    syncRunId: string;
+    endpoint: string;
+    orgId: string;
+    startedAt: string;
+  }): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO sync_run_endpoints (
+          sync_run_id, endpoint, org_id, started_at, status, row_count
+        ) VALUES ($1, $2, $3, $4, 'running', 0)
+        ON CONFLICT (sync_run_id, endpoint) DO UPDATE SET
+          org_id = EXCLUDED.org_id,
+          started_at = EXCLUDED.started_at,
+          finished_at = NULL,
+          status = 'running',
+          row_count = 0,
+          error_message = NULL
+      `,
+      [params.syncRunId, params.endpoint, params.orgId, params.startedAt],
+    );
+  }
+
+  async finishSyncRunEndpoint(params: {
+    syncRunId: string;
+    endpoint: string;
+    orgId: string;
+    finishedAt: string;
+    status: string;
+    rowCount: number;
+    errorMessage?: string;
+  }): Promise<void> {
+    await this.params.pool.query(
+      `
+        INSERT INTO sync_run_endpoints (
+          sync_run_id, endpoint, org_id, started_at, finished_at, status, row_count, error_message
+        ) VALUES ($1, $2, $3, $4, $4, $5, $6, $7)
+        ON CONFLICT (sync_run_id, endpoint) DO UPDATE SET
+          org_id = EXCLUDED.org_id,
+          finished_at = EXCLUDED.finished_at,
+          status = EXCLUDED.status,
+          row_count = EXCLUDED.row_count,
+          error_message = EXCLUDED.error_message
+      `,
+      [
+        params.syncRunId,
+        params.endpoint,
+        params.orgId,
+        params.finishedAt,
+        params.status,
+        params.rowCount,
+        params.errorMessage ?? null,
+      ],
     );
   }
 

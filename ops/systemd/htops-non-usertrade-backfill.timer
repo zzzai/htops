@@ -1,0 +1,11 @@
+[Unit]
+Description=Run htops non-1.4 data backfill during daytime API window
+
+[Timer]
+OnCalendar=*-*-* 04..17:00/5:00
+RandomizedDelaySec=20
+Persistent=true
+Unit=htops-non-usertrade-backfill.service
+
+[Install]
+WantedBy=timers.target

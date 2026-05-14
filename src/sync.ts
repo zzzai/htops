@@ -30,6 +30,16 @@ const TECH_CODE_BATCH_SIZE = 5;
 const RETRY_ATTEMPTS = 5;
 const RETRY_BASE_DELAY_MS = 3_000;
 const RETRY_MAX_DELAY_MS = 20_000;
+const ALL_SYNC_ENDPOINTS: EndpointCode[] = [
+  "1.1",
+  "1.2",
+  "1.3",
+  "1.4",
+  "1.5",
+  "1.6",
+  "1.7",
+  "1.8",
+];
 
 type DelayFn = (ms: number) => Promise<void>;
 type ExplicitSyncWindow = Pick<SyncWindow, "startTime" | "endTime">;
@@ -180,7 +190,7 @@ async function syncPagedEndpoint(params: {
   now: Date;
   sleepImpl: DelayFn;
   syncPlan?: HetangSyncPlan;
-}) {
+}): Promise<number> {
   const operationalBizDate = resolveOperationalBizDate({
     now: params.now,
     timeZone: params.config.timeZone,
@@ -263,6 +273,7 @@ async function syncPagedEndpoint(params: {
     endpoint: params.endpoint,
     lastSuccessAt: params.now.toISOString(),
   });
+  return rows.length;
 }
 
 async function syncUserTrades(params: {
@@ -274,7 +285,7 @@ async function syncUserTrades(params: {
   now: Date;
   sleepImpl: DelayFn;
   syncPlan?: HetangSyncPlan;
-}) {
+}): Promise<number> {
   const endpoint: EndpointCode = "1.4";
   const window = await resolveSyncWindow({
     orgId: params.orgId,
@@ -337,7 +348,7 @@ async function syncUserTrades(params: {
       endpoint,
       lastSuccessAt: params.now.toISOString(),
     });
-    return;
+    return rows.length;
   }
 
   for (let type = 1; type <= 11; type += 1) {
@@ -468,6 +479,7 @@ async function syncUserTrades(params: {
     endpoint,
     lastSuccessAt: params.now.toISOString(),
   });
+  return rows.length;
 }
 
 async function syncTechSnapshot(params: {
@@ -536,7 +548,7 @@ async function syncTechUpClock(params: {
   techCodes: string[];
   sleepImpl: DelayFn;
   syncPlan?: HetangSyncPlan;
-}) {
+}): Promise<number> {
   const endpoint: EndpointCode = "1.6";
   const window = await resolveSyncWindow({
     orgId: params.orgId,
@@ -645,6 +657,7 @@ async function syncTechUpClock(params: {
     endpoint,
     lastSuccessAt: params.now.toISOString(),
   });
+  return rows.length;
 }
 
 async function syncTechMarket(params: {
@@ -657,7 +670,7 @@ async function syncTechMarket(params: {
   techCodes: string[];
   sleepImpl: DelayFn;
   syncPlan?: HetangSyncPlan;
-}) {
+}): Promise<number> {
   const endpoint: EndpointCode = "1.7";
   const window = await resolveSyncWindow({
     orgId: params.orgId,
@@ -762,6 +775,7 @@ async function syncTechMarket(params: {
     endpoint,
     lastSuccessAt: params.now.toISOString(),
   });
+  return rows.length;
 }
 
 async function syncTechCommissionSnapshot(params: {
@@ -772,7 +786,7 @@ async function syncTechCommissionSnapshot(params: {
   syncRunId: string;
   now: Date;
   sleepImpl: DelayFn;
-}) {
+}): Promise<number> {
   const endpoint: EndpointCode = "1.8";
   const bizDate = resolveOperationalBizDate({
     now: params.now,
@@ -817,6 +831,7 @@ async function syncTechCommissionSnapshot(params: {
     endpoint,
     lastSuccessAt: params.now.toISOString(),
   });
+  return rows.length;
 }
 
 export async function syncHetangStore(params: {
@@ -873,17 +888,47 @@ export async function syncHetangStore(params: {
     };
     let fatalError: string | undefined;
 
-    const runStep = async (endpoint: string, task: () => Promise<void>) => {
+    const runStep = async (endpoint: EndpointCode, task: () => Promise<number>) => {
       if (skippedEndpoints.has(endpoint as EndpointCode)) {
         params.logger?.info?.(`hetang-ops: skipped ${params.orgId} endpoint ${endpoint}`);
         return;
       }
+      const startedAt = new Date().toISOString();
+      if (typeof params.store.beginSyncRunEndpoint === "function") {
+        await params.store.beginSyncRunEndpoint({
+          syncRunId,
+          endpoint,
+          orgId: params.orgId,
+          startedAt,
+        });
+      }
       try {
-        await task();
+        const rowCount = await task();
+        if (typeof params.store.finishSyncRunEndpoint === "function") {
+          await params.store.finishSyncRunEndpoint({
+            syncRunId,
+            endpoint,
+            orgId: params.orgId,
+            finishedAt: new Date().toISOString(),
+            status: "success",
+            rowCount,
+          });
+        }
         params.logger?.info?.(`hetang-ops: synced ${params.orgId} endpoint ${endpoint}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         errors.push({ endpoint, error: message });
+        if (typeof params.store.finishSyncRunEndpoint === "function") {
+          await params.store.finishSyncRunEndpoint({
+            syncRunId,
+            endpoint,
+            orgId: params.orgId,
+            finishedAt: new Date().toISOString(),
+            status: "failed",
+            rowCount: 0,
+            errorMessage: message,
+          });
+        }
         await params.store.recordSyncError({
           syncRunId,
           orgId: params.orgId,
@@ -894,6 +939,14 @@ export async function syncHetangStore(params: {
         params.logger?.warn?.(
           `hetang-ops: sync failed ${params.orgId} endpoint ${endpoint}: ${message}`,
         );
+      }
+    };
+
+    const runRequiredStep = async (endpoint: EndpointCode, task: () => Promise<number>) => {
+      const previousErrorCount = errors.length;
+      await runStep(endpoint, task);
+      if (errors.length > previousErrorCount) {
+        throw new Error(errors[errors.length - 1]?.error ?? `endpoint ${endpoint} failed`);
       }
     };
 
@@ -943,7 +996,10 @@ export async function syncHetangStore(params: {
             syncPlan: params.syncPlan,
           }),
       );
-      await runStep(
+      const hasExclusiveEndpointPlan =
+        (params.syncPlan?.skipEndpoints?.length ?? 0) >= ALL_SYNC_ENDPOINTS.length - 1;
+      const runUserTradeStep = hasExclusiveEndpointPlan ? runRequiredStep : runStep;
+      await runUserTradeStep(
         "1.4",
         async () =>
           await syncUserTrades({
@@ -969,6 +1025,7 @@ export async function syncHetangStore(params: {
           now,
           sleepImpl,
         });
+        return techCodes.length;
       });
       if (shouldPaceAfterTechEndpoint("1.5")) {
         await paceTechEndpoint({ sleepImpl, isLast: false });

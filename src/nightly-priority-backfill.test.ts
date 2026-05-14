@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildNightlyPriorityBackfillTasks,
+  filterNightlyPriorityTasksByExcludedEndpoints,
+  filterNightlyPriorityTasksByAvailableEndpoints,
+  resolveNightlyPriorityProbeSpec,
+  resolvePostWindowBackfillDeadline,
   resolveNightlyPriorityTaskSyncPlan,
   summarizeNightlyPriorityBackfillPlan,
   type NightlyPriorityBackfillCoverage,
@@ -118,7 +122,6 @@ describe("nightly priority backfill planner", () => {
             },
             {
               "1.1": allDays,
-              "1.4": new Set(["2026-01-01", "2026-01-02"]),
             },
           ),
         ],
@@ -137,7 +140,7 @@ describe("nightly priority backfill planner", () => {
     expect(tasks[firstUserTradeIndex]).toMatchObject({
       priority: "P0_USER_TRADE_CRITICAL",
       endpoint: "1.4",
-      startBizDate: "2026-01-03",
+      startBizDate: "2026-01-01",
       selectedCardIds: ["card-1", "card-2", "card-3"],
     });
     expect(firstHistoricalCoreIndex).toBeGreaterThan(firstUserTradeIndex);
@@ -164,7 +167,6 @@ describe("nightly priority backfill planner", () => {
               "1.7": new Set(),
             },
             {
-              "1.4": new Set(["2026-01-01", "2026-01-02"]),
             },
           ),
         ],
@@ -178,7 +180,7 @@ describe("nightly priority backfill planner", () => {
       expect.objectContaining({
         priority: "P0_USER_TRADE_CRITICAL",
         endpoint: "1.4",
-        startBizDate: "2026-01-03",
+        startBizDate: "2026-01-01",
         selectedCardIds: ["card-1"],
       }),
     ]);
@@ -292,6 +294,187 @@ describe("nightly priority backfill planner", () => {
         "1.2": 1,
         "1.4": 1,
       },
+    });
+  });
+
+  it("continues after the configured window only when the upstream probe succeeds", () => {
+    const now = new Date("2026-05-13T04:00:30+08:00");
+    const deadline = new Date("2026-05-13T04:00:00+08:00");
+
+    expect(
+      resolvePostWindowBackfillDeadline({
+        now,
+        deadline,
+        probeOk: false,
+        continuationMinutes: 60,
+      }),
+    ).toEqual({
+      shouldContinue: false,
+      deadline,
+      reason: "post_window_probe_failed",
+    });
+
+    const decision = resolvePostWindowBackfillDeadline({
+      now,
+      deadline,
+      probeOk: true,
+      continuationMinutes: 60,
+    });
+
+    expect(decision).toEqual({
+      shouldContinue: true,
+      deadline: new Date("2026-05-13T05:00:30+08:00"),
+      reason: "post_window_probe_confirmed",
+    });
+  });
+
+  it("builds a task-aware post-window probe for the first pending endpoint", () => {
+    expect(
+      resolveNightlyPriorityProbeSpec(
+        {
+          priority: "P0_USER_TRADE_CRITICAL",
+          endpoint: "1.4",
+          orgId: "1001",
+          storeName: "迎宾店",
+          startBizDate: "2025-10-01",
+          endBizDate: "2025-10-02",
+          selectedCardIds: ["card-001", "card-002"],
+        },
+        "03:00",
+      ),
+    ).toEqual({
+      endpoint: "1.4",
+      orgId: "1001",
+      storeName: "迎宾店",
+      request: {
+        OrgId: "1001",
+        Stime: "2025-10-01 03:00:00",
+        Etime: "2025-10-02 02:59:59",
+        Id: "card-001",
+        Type: 1,
+      },
+    });
+
+    expect(
+      resolveNightlyPriorityProbeSpec(
+        {
+          priority: "P3_SNAPSHOT",
+          endpoint: "1.5",
+          orgId: "1001",
+          storeName: "迎宾店",
+          startBizDate: "2026-05-13",
+          endBizDate: "2026-05-13",
+        },
+        "03:00",
+      ),
+    ).toEqual({
+      endpoint: "1.5",
+      orgId: "1001",
+      storeName: "迎宾店",
+      request: {
+        OrgId: "1001",
+      },
+    });
+  });
+
+  it("keeps non-1.4 tasks available after the window when 1.4 is closed but other endpoints are open", () => {
+    const tasks = [
+      {
+        priority: "P0_USER_TRADE_CRITICAL",
+        endpoint: "1.4",
+        orgId: "1001",
+        storeName: "迎宾店",
+        startBizDate: "2025-10-01",
+        endBizDate: "2025-10-02",
+      },
+      {
+        priority: "P0_RECENT_CORE",
+        endpoint: "1.2",
+        orgId: "1001",
+        storeName: "迎宾店",
+        startBizDate: "2026-05-01",
+        endBizDate: "2026-05-01",
+      },
+      {
+        priority: "P1_HISTORICAL_CORE",
+        endpoint: "1.6",
+        orgId: "1001",
+        storeName: "迎宾店",
+        startBizDate: "2026-01-01",
+        endBizDate: "2026-01-01",
+      },
+    ] as const;
+
+    expect(
+      filterNightlyPriorityTasksByAvailableEndpoints(tasks, new Set(["1.2", "1.6"])),
+    ).toEqual([tasks[1], tasks[2]]);
+  });
+
+  it("can exclude 1.4 so daytime backfill uses the remaining open endpoints", () => {
+    const tasks = [
+      {
+        priority: "P0_USER_TRADE_CRITICAL",
+        endpoint: "1.4",
+        orgId: "1001",
+        storeName: "迎宾店",
+        startBizDate: "2025-10-01",
+        endBizDate: "2025-10-02",
+      },
+      {
+        priority: "P0_RECENT_CORE",
+        endpoint: "1.2",
+        orgId: "1001",
+        storeName: "迎宾店",
+        startBizDate: "2026-05-01",
+        endBizDate: "2026-05-01",
+      },
+      {
+        priority: "P1_HISTORICAL_CORE",
+        endpoint: "1.6",
+        orgId: "1001",
+        storeName: "迎宾店",
+        startBizDate: "2026-01-01",
+        endBizDate: "2026-01-01",
+      },
+    ] as const;
+
+    expect(filterNightlyPriorityTasksByExcludedEndpoints(tasks, new Set(["1.4"]))).toEqual([
+      tasks[1],
+      tasks[2],
+    ]);
+  });
+
+  it("applies excluded endpoints before maxTasks so 1.4 does not starve daytime backfill", () => {
+    const tasks = buildNightlyPriorityBackfillTasks({
+      stores: [store("1001", "义乌店")],
+      startBizDate: "2026-01-01",
+      endBizDate: "2026-01-31",
+      nowBizDate: "2026-02-01",
+      recentCoreLookbackDays: 7,
+      coreSliceDays: 3,
+      userTradeSliceDays: 7,
+      coverageByOrgId: new Map([
+        [
+          "1001",
+          coverage("1001", {
+            "1.2": new Set(),
+            "1.3": new Set(),
+            "1.6": new Set(),
+            "1.7": new Set(),
+          }),
+        ],
+      ]),
+      candidateCardIdsByOrgId: new Map([["1001", ["card-1"]]]),
+      snapshotAttemptedByOrgId: new Map([["1001", new Set(["1.5", "1.8"])]]),
+      excludedEndpoints: ["1.4"],
+      maxTasks: 2,
+    });
+
+    expect(tasks).toHaveLength(2);
+    expect(tasks.map((task) => task.endpoint)).not.toContain("1.4");
+    expect(tasks[0]).toMatchObject({
+      priority: "P0_RECENT_CORE",
+      endpoint: "1.2",
     });
   });
 });

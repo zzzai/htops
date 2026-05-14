@@ -438,7 +438,7 @@ node --import tsx scripts/nightly-priority-backfill.ts \
   --skip-lock
 ```
 
-The priority planner intentionally runs conservatively during the upstream window. It prioritizes recent core facts, then critical `1.4` user-trade coverage, then historical core/member/snapshot gaps.
+The priority planner intentionally runs conservatively during the upstream window. It prioritizes critical `1.4` user-trade coverage, then recent core facts, then historical core/member/snapshot gaps. If the run starts after the configured deadline, it first probes the upstream API with a lightweight request for the first pending task; when the probe fails it stops and waits for the next night, and when the probe succeeds it extends the run by `HETANG_PRIORITY_BACKFILL_POST_WINDOW_CONTINUATION_MINUTES` minutes.
 
 Install the timer when the host should keep backfilling automatically:
 

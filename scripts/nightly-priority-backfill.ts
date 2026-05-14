@@ -1,12 +1,18 @@
 import { Pool } from "pg";
+import { HetangApiClient } from "../src/client.js";
 import { loadStandaloneHetangConfig, loadStandaloneRuntimeEnv } from "../src/standalone-env.js";
 import { HetangOpsStore } from "../src/store.js";
 import { syncHetangStore } from "../src/sync.js";
 import {
   buildNightlyPriorityBackfillTasks,
+  filterNightlyPriorityTasksByExcludedEndpoints,
+  filterNightlyPriorityTasksByAvailableEndpoints,
+  resolvePostWindowBackfillDeadline,
+  resolveNightlyPriorityProbeSpec,
   resolveNightlyPriorityTaskSyncPlan,
   summarizeNightlyPriorityBackfillPlan,
   type NightlyPriorityBackfillCoverage,
+  type NightlyPriorityProbeSpec,
   type NightlyPriorityBackfillTask,
 } from "../src/nightly-priority-backfill.js";
 import {
@@ -30,6 +36,7 @@ const DEFAULT_MAX_TASKS = 24;
 const DEFAULT_TASK_GAP_MS = 12_000;
 const DEFAULT_STORE_GAP_MS = 30_000;
 const DEFAULT_LOCK_WAIT_MS = 10_000;
+const DEFAULT_POST_WINDOW_CONTINUATION_MINUTES = 60;
 const DEFAULT_RECENT_CORE_LOOKBACK_DAYS = 30;
 const DEFAULT_CORE_SLICE_DAYS = 7;
 const DEFAULT_MEMBER_SLICE_DAYS = 7;
@@ -38,11 +45,13 @@ const DEFAULT_MAX_USER_TRADE_CARDS_PER_TASK = 6;
 const FACT_TABLE_BY_ENDPOINT: Partial<Record<EndpointCode, string>> = {
   "1.2": "fact_consume_bills",
   "1.3": "fact_recharge_bills",
+  "1.4": "fact_user_trades",
   "1.6": "fact_tech_up_clock",
   "1.7": "fact_tech_market",
 };
 const RAW_ATTEMPT_ENDPOINTS: EndpointCode[] = ["1.1", "1.4"];
 const SNAPSHOT_ENDPOINTS: EndpointCode[] = ["1.5", "1.8"];
+const POST_WINDOW_PROBE_ENDPOINTS: EndpointCode[] = ["1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8"];
 
 type Params = {
   startBizDate: string;
@@ -54,12 +63,14 @@ type Params = {
   taskGapMs: number;
   storeGapMs: number;
   lockWaitMs: number;
+  postWindowContinuationMinutes: number;
   recentCoreLookbackDays: number;
   coreSliceDays: number;
   memberSliceDays: number;
   userTradeSliceDays: number;
   maxUserTradeCardsPerTask: number;
   skipLock: boolean;
+  excludedEndpoints: EndpointCode[];
 };
 
 function parseArgs(argv: string[]): Params {
@@ -74,6 +85,10 @@ function parseArgs(argv: string[]): Params {
     taskGapMs: parsePositiveIntEnv("HETANG_PRIORITY_BACKFILL_TASK_GAP_MS", DEFAULT_TASK_GAP_MS),
     storeGapMs: parsePositiveIntEnv("HETANG_PRIORITY_BACKFILL_STORE_GAP_MS", DEFAULT_STORE_GAP_MS),
     lockWaitMs: parsePositiveIntEnv("HETANG_PRIORITY_BACKFILL_LOCK_WAIT_MS", DEFAULT_LOCK_WAIT_MS),
+    postWindowContinuationMinutes: parsePositiveIntEnv(
+      "HETANG_PRIORITY_BACKFILL_POST_WINDOW_CONTINUATION_MINUTES",
+      DEFAULT_POST_WINDOW_CONTINUATION_MINUTES,
+    ),
     recentCoreLookbackDays: parsePositiveIntEnv(
       "HETANG_PRIORITY_BACKFILL_RECENT_CORE_LOOKBACK_DAYS",
       DEFAULT_RECENT_CORE_LOOKBACK_DAYS,
@@ -95,6 +110,7 @@ function parseArgs(argv: string[]): Params {
       DEFAULT_MAX_USER_TRADE_CARDS_PER_TASK,
     ),
     skipLock: process.env.HETANG_PRIORITY_BACKFILL_SKIP_LOCK === "1",
+    excludedEndpoints: parseEndpointListEnv("HETANG_PRIORITY_BACKFILL_EXCLUDE_ENDPOINTS"),
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -123,6 +139,8 @@ function parseArgs(argv: string[]): Params {
       params.storeGapMs = parsePositiveInt(next(), token);
     } else if (token === "--lock-wait-ms") {
       params.lockWaitMs = parsePositiveInt(next(), token);
+    } else if (token === "--post-window-continuation-minutes") {
+      params.postWindowContinuationMinutes = parsePositiveInt(next(), token);
     } else if (token === "--recent-core-lookback-days") {
       params.recentCoreLookbackDays = parsePositiveInt(next(), token);
     } else if (token === "--core-slice-days") {
@@ -133,6 +151,8 @@ function parseArgs(argv: string[]): Params {
       params.userTradeSliceDays = parsePositiveInt(next(), token);
     } else if (token === "--max-user-trade-cards-per-task") {
       params.maxUserTradeCardsPerTask = parsePositiveInt(next(), token);
+    } else if (token === "--exclude-endpoint") {
+      params.excludedEndpoints = [...params.excludedEndpoints, parseEndpointCode(next(), token)];
     } else if (token === "--dry-run") {
       params.dryRun = true;
     } else if (token === "--skip-lock") {
@@ -178,6 +198,34 @@ function parsePositiveInt(value: string, label: string): number {
   return parsed;
 }
 
+function parseEndpointCode(value: string, label: string): EndpointCode {
+  if (
+    value !== "1.1" &&
+    value !== "1.2" &&
+    value !== "1.3" &&
+    value !== "1.4" &&
+    value !== "1.5" &&
+    value !== "1.6" &&
+    value !== "1.7" &&
+    value !== "1.8"
+  ) {
+    throw new Error(`${label} must be one of: 1.1,1.2,1.3,1.4,1.5,1.6,1.7,1.8`);
+  }
+  return value;
+}
+
+function parseEndpointListEnv(name: string): EndpointCode[] {
+  const value = process.env[name];
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => parseEndpointCode(entry, name));
+}
+
 function logJson(event: string, payload: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ event, at: new Date().toISOString(), ...payload }));
 }
@@ -194,6 +242,104 @@ function resolveDeadline(params: {
   const localDate = resolveLocalDate(params.now, params.timeZone);
   const offset = params.timeZone === "Asia/Shanghai" ? "+08:00" : "";
   return new Date(`${localDate}T${params.localTime}:00${offset}`);
+}
+
+async function probeUpstreamAvailability(params: {
+  config: HetangOpsConfig;
+  spec: NightlyPriorityProbeSpec | null;
+}): Promise<{ ok: boolean; endpoint: EndpointCode; rowCount?: number; elapsedMs: number; error?: string }> {
+  const startedAt = Date.now();
+  if (!params.spec) {
+    return {
+      ok: false,
+      endpoint: "1.1",
+      elapsedMs: Date.now() - startedAt,
+      error: "no pending task for probe",
+    };
+  }
+  const client = new HetangApiClient(params.config.api);
+  try {
+    const rows = await fetchProbeRows(client, params.spec);
+    return {
+      ok: true,
+      endpoint: params.spec.endpoint,
+      rowCount: rows.length,
+      elapsedMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      endpoint: params.spec.endpoint,
+      elapsedMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function probeAvailableEndpoints(params: {
+  config: HetangOpsConfig;
+  tasks: NightlyPriorityBackfillTask[];
+  cutoffLocalTime: string;
+}): Promise<{
+  availableEndpoints: Set<EndpointCode>;
+  probes: Array<{
+    ok: boolean;
+    endpoint: EndpointCode;
+    orgId?: string;
+    storeName?: string;
+    rowCount?: number;
+    elapsedMs: number;
+    error?: string;
+  }>;
+}> {
+  const sampleTaskByEndpoint = new Map<EndpointCode, NightlyPriorityBackfillTask>();
+  for (const task of params.tasks) {
+    if (!sampleTaskByEndpoint.has(task.endpoint)) {
+      sampleTaskByEndpoint.set(task.endpoint, task);
+    }
+  }
+
+  const availableEndpoints = new Set<EndpointCode>();
+  const probes = [];
+  for (const endpoint of POST_WINDOW_PROBE_ENDPOINTS) {
+    const task = sampleTaskByEndpoint.get(endpoint);
+    if (!task) {
+      continue;
+    }
+    const spec = resolveNightlyPriorityProbeSpec(task, params.cutoffLocalTime);
+    const probe = await probeUpstreamAvailability({ config: params.config, spec });
+    probes.push({
+      ...probe,
+      orgId: spec.orgId,
+      storeName: spec.storeName,
+    });
+    if (probe.ok) {
+      availableEndpoints.add(endpoint);
+    }
+  }
+  return { availableEndpoints, probes };
+}
+
+async function fetchProbeRows(
+  client: HetangApiClient,
+  spec: NightlyPriorityProbeSpec,
+): Promise<unknown[]> {
+  if (spec.endpoint === "1.1" || spec.endpoint === "1.2" || spec.endpoint === "1.3") {
+    return await client.fetchPaged(spec.endpoint, spec.request);
+  }
+  if (spec.endpoint === "1.4") {
+    return await client.fetchUserTrades(spec.request);
+  }
+  if (spec.endpoint === "1.5") {
+    return await client.fetchTechList(spec.request);
+  }
+  if (spec.endpoint === "1.6") {
+    return await client.fetchTechUpClockList(spec.request);
+  }
+  if (spec.endpoint === "1.7") {
+    return await client.fetchTechMarketList(spec.request);
+  }
+  return await client.fetchTechCommissionSetList(spec.request);
 }
 
 function addBizDateRange(target: Set<string>, startBizDate: string, endBizDate: string): void {
@@ -365,7 +511,7 @@ async function buildCoverageInputs(params: {
   const snapshotAttemptedByOrgId = new Map<string, Set<EndpointCode>>();
   const candidateCardIdsByOrgId = new Map<string, string[]>();
   for (const storeConfig of params.stores) {
-    const [rawFacts, rawAttempts, snapshotAttempts, candidateCardIds] = await Promise.all([
+    const [rawFacts, rawAttempts, snapshotAttempts, candidateCardIds, allCardIds] = await Promise.all([
       loadCoreFactCoverage({
         pool: params.pool,
         orgId: storeConfig.orgId,
@@ -391,6 +537,7 @@ async function buildCoverageInputs(params: {
         startBizDate: params.startBizDate,
         endBizDate: params.endBizDate,
       }),
+      params.store.listMemberCardIds(storeConfig.orgId),
     ]);
     coverageByOrgId.set(storeConfig.orgId, {
       orgId: storeConfig.orgId,
@@ -398,9 +545,10 @@ async function buildCoverageInputs(params: {
       rawAttempts,
     });
     snapshotAttemptedByOrgId.set(storeConfig.orgId, snapshotAttempts);
+    const userTradeCardCandidates = candidateCardIds.length > 0 ? candidateCardIds : allCardIds;
     candidateCardIdsByOrgId.set(
       storeConfig.orgId,
-      candidateCardIds.slice(0, params.maxUserTradeCardsPerTask),
+      userTradeCardCandidates.slice(0, params.maxUserTradeCardsPerTask),
     );
   }
   return {
@@ -458,6 +606,7 @@ async function executeTask(params: {
   if (params.dryRun) {
     return;
   }
+  const startedAt = new Date().toISOString();
   await syncHetangStore({
     config: params.config,
     store: params.store,
@@ -473,6 +622,15 @@ async function executeTask(params: {
     syncPlan,
     publishAnalytics: false,
   });
+  const latestRun = await params.store.getLatestSyncRun({
+    orgId: params.task.orgId,
+    mode: syncPlan.mode ?? "daily",
+    startedAtOrAfter: startedAt,
+  });
+  if (latestRun && latestRun.status !== "success") {
+    const details = latestRun.detailsJson ? ` ${latestRun.detailsJson}` : "";
+    throw new Error(`sync task ended with ${latestRun.status}${details}`);
+  }
 }
 
 async function persistProjectDataCoverageProgress(params: {
@@ -548,19 +706,12 @@ async function main(): Promise<void> {
     timeZone: config.timeZone,
     localTime: options.deadlineLocalTime,
   });
-  if (!options.dryRun && now.getTime() >= deadline.getTime()) {
-    await recordExpiredRun({
-      config,
-      now,
-      options,
-      deadline,
-    });
-    return;
-  }
   const selectedOrgIds = options.orgIds ? new Set(options.orgIds) : null;
   const stores = config.stores.filter(
-    (storeConfig) => storeConfig.isActive && (!selectedOrgIds || selectedOrgIds.has(storeConfig.orgId)),
+    (storeConfig) =>
+      storeConfig.isActive && (!selectedOrgIds || selectedOrgIds.has(storeConfig.orgId)),
   );
+  let effectiveDeadline = deadline;
   const pool = new Pool({
     connectionString: config.database.syncUrl ?? config.database.url,
     allowExitOnIdle: true,
@@ -593,7 +744,7 @@ async function main(): Promise<void> {
       snapshotBizDate,
       maxUserTradeCardsPerTask: options.maxUserTradeCardsPerTask,
     });
-    const tasks = buildNightlyPriorityBackfillTasks({
+    let tasks = buildNightlyPriorityBackfillTasks({
       stores,
       startBizDate: options.startBizDate,
       endBizDate,
@@ -605,8 +756,47 @@ async function main(): Promise<void> {
       snapshotBizDate,
       maxUserTradeCardsPerTask: options.maxUserTradeCardsPerTask,
       maxTasks: options.maxTasks,
+      excludedEndpoints: options.excludedEndpoints,
       ...coverageInputs,
     });
+    tasks = filterNightlyPriorityTasksByExcludedEndpoints(
+      tasks,
+      new Set(options.excludedEndpoints),
+    );
+    if (!options.dryRun && now.getTime() >= deadline.getTime()) {
+      const probeResult = await probeAvailableEndpoints({
+        config,
+        tasks,
+        cutoffLocalTime: config.sync.businessDayCutoffLocalTime,
+      });
+      const decision = resolvePostWindowBackfillDeadline({
+        now,
+        deadline,
+        probeOk: probeResult.availableEndpoints.size > 0,
+        continuationMinutes: options.postWindowContinuationMinutes,
+      });
+      tasks = filterNightlyPriorityTasksByAvailableEndpoints(tasks, probeResult.availableEndpoints);
+      effectiveDeadline = decision.deadline;
+      logJson("nightly-priority-backfill-post-window-probe", {
+        ok: probeResult.availableEndpoints.size > 0,
+        availableEndpoints: Array.from(probeResult.availableEndpoints),
+        probes: probeResult.probes,
+        decision: decision.reason,
+        effectiveDeadline: effectiveDeadline.toISOString(),
+      });
+      if (!decision.shouldContinue) {
+        await recordExpiredRun({
+          config,
+          store,
+          pool,
+          now,
+          options,
+          deadline,
+          reason: decision.reason,
+        });
+        return;
+      }
+    }
     const summary = summarizeNightlyPriorityBackfillPlan(tasks);
     if (!options.dryRun) {
       await store.setScheduledJobState(
@@ -617,6 +807,8 @@ async function main(): Promise<void> {
           startBizDate: options.startBizDate,
           endBizDate,
           deadlineLocalTime: options.deadlineLocalTime,
+          effectiveDeadline: effectiveDeadline.toISOString(),
+          excludedEndpoints: options.excludedEndpoints,
           dryRun: options.dryRun,
           ...summary,
         },
@@ -627,13 +819,15 @@ async function main(): Promise<void> {
       startBizDate: options.startBizDate,
       endBizDate,
       deadlineLocalTime: options.deadlineLocalTime,
+      effectiveDeadline: effectiveDeadline.toISOString(),
+      excludedEndpoints: options.excludedEndpoints,
       dryRun: options.dryRun,
       ...summary,
     });
 
     lockAcquired = await acquireScheduledSyncLock({
       store,
-      deadline,
+      deadline: effectiveDeadline,
       waitMs: options.lockWaitMs,
       dryRun: options.dryRun,
       skipLock: options.skipLock,
@@ -643,7 +837,7 @@ async function main(): Promise<void> {
     let skippedByDeadlineCount = 0;
     const errors: Array<Record<string, unknown>> = [];
     for (const [index, task] of tasks.entries()) {
-      if (!options.dryRun && new Date().getTime() >= deadline.getTime()) {
+      if (!options.dryRun && new Date().getTime() >= effectiveDeadline.getTime()) {
         skippedByDeadlineCount = tasks.length - index;
         break;
       }
@@ -705,6 +899,8 @@ async function main(): Promise<void> {
           finishedAt,
           startBizDate: options.startBizDate,
           endBizDate,
+          deadlineLocalTime: options.deadlineLocalTime,
+          effectiveDeadline: effectiveDeadline.toISOString(),
           totalTasks: tasks.length,
           executedCount,
           skippedByDeadlineCount,
@@ -735,26 +931,36 @@ async function main(): Promise<void> {
 
 async function recordExpiredRun(params: {
   config: HetangOpsConfig;
+  store?: HetangOpsStore;
+  pool?: Pool;
   now: Date;
   options: Params;
   deadline: Date;
+  reason?: string;
 }): Promise<void> {
-  const pool = new Pool({
-    connectionString: params.config.database.syncUrl ?? params.config.database.url,
-    allowExitOnIdle: true,
-    max: 1,
-  });
-  const store = new HetangOpsStore({
-    pool,
-    stores: params.config.stores.map((entry) => ({
-      orgId: entry.orgId,
-      storeName: entry.storeName,
-      rawAliases: entry.rawAliases,
-    })),
-    deadLetterEnabled: params.config.queue.deadLetterEnabled,
-  });
+  const ownsStore = !params.store;
+  const pool =
+    params.pool ??
+    new Pool({
+      connectionString: params.config.database.syncUrl ?? params.config.database.url,
+      allowExitOnIdle: true,
+      max: 1,
+    });
+  const store =
+    params.store ??
+    new HetangOpsStore({
+      pool,
+      stores: params.config.stores.map((entry) => ({
+        orgId: entry.orgId,
+        storeName: entry.storeName,
+        rawAliases: entry.rawAliases,
+      })),
+      deadLetterEnabled: params.config.queue.deadLetterEnabled,
+    });
   try {
-    await store.initialize();
+    if (ownsStore) {
+      await store.initialize();
+    }
     const finishedAt = new Date().toISOString();
     await store.setScheduledJobState(
       "nightly-priority-backfill",
@@ -766,8 +972,9 @@ async function recordExpiredRun(params: {
         endBizDate: params.options.endBizDate,
         deadlineLocalTime: params.options.deadlineLocalTime,
         deadlineAt: params.deadline.toISOString(),
+        excludedEndpoints: params.options.excludedEndpoints,
         dryRun: params.options.dryRun,
-        reason: "deadline_already_passed",
+        reason: params.reason ?? "deadline_already_passed",
       },
       finishedAt,
     );
@@ -776,11 +983,15 @@ async function recordExpiredRun(params: {
       endBizDate: params.options.endBizDate,
       deadlineLocalTime: params.options.deadlineLocalTime,
       deadlineAt: params.deadline.toISOString(),
+      excludedEndpoints: params.options.excludedEndpoints,
       dryRun: params.options.dryRun,
+      reason: params.reason ?? "deadline_already_passed",
     });
   } finally {
-    await store.close();
-    await pool.end();
+    if (ownsStore) {
+      await store.close();
+      await pool.end();
+    }
   }
 }
 

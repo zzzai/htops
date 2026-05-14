@@ -20,6 +20,21 @@ type RawIngestionLegacyStore = {
     finishedAt: string;
     details?: unknown;
   }) => Promise<void>;
+  beginSyncRunEndpoint?: (params: {
+    syncRunId: string;
+    endpoint: string;
+    orgId: string;
+    startedAt: string;
+  }) => Promise<void>;
+  finishSyncRunEndpoint?: (params: {
+    syncRunId: string;
+    endpoint: string;
+    orgId: string;
+    finishedAt: string;
+    status: string;
+    rowCount: number;
+    errorMessage?: string;
+  }) => Promise<void>;
   recordSyncError: (params: {
     syncRunId: string;
     orgId: string;
@@ -112,6 +127,27 @@ export class HetangRawIngestionStore {
     details?: unknown;
   }) {
     return this.legacy.finishSyncRun(params);
+  }
+
+  beginSyncRunEndpoint(params: {
+    syncRunId: string;
+    endpoint: string;
+    orgId: string;
+    startedAt: string;
+  }) {
+    return this.legacy.beginSyncRunEndpoint?.(params) ?? Promise.resolve();
+  }
+
+  finishSyncRunEndpoint(params: {
+    syncRunId: string;
+    endpoint: string;
+    orgId: string;
+    finishedAt: string;
+    status: string;
+    rowCount: number;
+    errorMessage?: string;
+  }) {
+    return this.legacy.finishSyncRunEndpoint?.(params) ?? Promise.resolve();
   }
 
   recordSyncError(params: {
