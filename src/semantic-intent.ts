@@ -14,7 +14,11 @@ import {
   type HetangQuerySemanticContext,
   type HetangSemanticObject as HetangQuerySemanticObject,
 } from "./query-semantics.js";
-import { HETANG_CONCEPT_EXPLAIN_KEYWORDS } from "./semantic-question-patterns.js";
+import {
+  HETANG_CONCEPT_EXPLAIN_KEYWORDS,
+  HETANG_SEMANTIC_ASSET_METHOD_KEYWORDS,
+} from "./semantic-question-patterns.js";
+import { resolveSemanticFrontdoorClassification } from "./semantic-frontdoor-classifier.js";
 import type {
   HetangAnalysisJobType,
   HetangConversationSemanticStateSnapshot,
@@ -62,6 +66,9 @@ export type HetangSemanticIntentKind =
   | "structured_report_draft"
   | "negative_constraint"
   | "concept_explain"
+  | "semantic_asset_design"
+  | "book_knowledge_qa"
+  | "brand_marketing_plan"
   | "clarify"
   | "clarify_missing_store"
   | "clarify_missing_time"
@@ -588,6 +595,10 @@ export function resolveSemanticIntent(params: {
     config: params.config,
     text: rawText,
   });
+  const frontdoor = resolveSemanticFrontdoorClassification({
+    config: params.config,
+    text: rawText,
+  });
 
   if (IDENTITY_ASK_KEYWORDS.test(normalized)) {
     return buildMetaIntent("identity", {
@@ -610,6 +621,40 @@ export function resolveSemanticIntent(params: {
       object: "assistant",
       action: "control",
       reason: "business-correction-keyword",
+    });
+  }
+
+  if (frontdoor.lane === "semantic_asset_design") {
+    return buildMetaIntent("semantic_asset_design", {
+      object: "concept",
+      action: "explain",
+      reason: frontdoor.reason,
+    });
+  }
+
+  if (frontdoor.lane === "methodology_concept") {
+    return buildMetaIntent("concept_explain", {
+      object: "concept",
+      action: "explain",
+      reason: frontdoor.reason,
+    });
+  }
+
+  if (frontdoor.lane === "book_knowledge_qa") {
+    return buildMetaIntent("book_knowledge_qa", {
+      object: "concept",
+      action: "explain",
+      confidence: frontdoor.confidence,
+      reason: frontdoor.reason,
+    });
+  }
+
+  if (frontdoor.lane === "brand_marketing_plan") {
+    return buildMetaIntent("brand_marketing_plan", {
+      object: "concept",
+      action: "analysis",
+      confidence: frontdoor.confidence,
+      reason: frontdoor.reason,
     });
   }
 
@@ -646,8 +691,10 @@ export function resolveSemanticIntent(params: {
 
   const semanticText = normalizeHetangSemanticText(rawText);
   const looksConceptExplain =
-    HETANG_CONCEPT_EXPLAIN_KEYWORDS.test(semanticText) &&
-    BUSINESS_DOMAIN_KEYWORDS.test(semanticText) &&
+    (HETANG_CONCEPT_EXPLAIN_KEYWORDS.test(semanticText) ||
+      HETANG_SEMANTIC_ASSET_METHOD_KEYWORDS.test(semanticText)) &&
+    (BUSINESS_DOMAIN_KEYWORDS.test(semanticText) ||
+      HETANG_SEMANTIC_ASSET_METHOD_KEYWORDS.test(semanticText)) &&
     !semanticContext.hasStoreContext &&
     !TIME_SCOPE_HINT_KEYWORDS.test(rawText);
   if (looksConceptExplain) {

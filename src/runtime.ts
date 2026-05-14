@@ -63,6 +63,7 @@ import { HetangQueryReadService } from "./app/query-read-service.js";
 import { HetangReportingService } from "./app/reporting-service.js";
 import { HetangSyncService } from "./app/sync-service.js";
 import { HetangRuntimeContext } from "./runtime/runtime-context.js";
+import { formatSemanticLayerStatusLines } from "./semantic-layer-status.js";
 import { HetangSemanticExecutionAuditStore } from "./store/semantic-execution-audit-store.js";
 import { HetangOpsStore } from "./store.js";
 import { HetangSyncOrchestrator } from "./sync-orchestrator.js";
@@ -416,6 +417,7 @@ export class HetangOpsRuntime {
               ...(semanticQualitySummary.totalCount > 0
                 ? [formatSemanticQualityLine(semanticQualitySummary)]
                 : []),
+              ...formatSemanticLayerStatusLines(),
               ...(commandAuditSummary ? [formatHermesCommandAuditLine(commandAuditSummary)] : []),
               ...routeCompareLines,
               ...gatewayHealthLines,

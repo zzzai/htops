@@ -112,6 +112,48 @@ describe("resolveSemanticIntent", () => {
     });
   });
 
+  it("routes customer tag OSI draft asks into the meta lane instead of missing-store clarification", () => {
+    const intent = resolveSemanticIntent({
+      config,
+      text: "客户标签 osi草案",
+      now,
+    });
+
+    expect(intent).toMatchObject({
+      lane: "meta",
+      kind: "semantic_asset_design",
+      object: "concept",
+      action: "explain",
+      clarificationNeeded: false,
+    });
+  });
+
+  it("routes book knowledge and brand planning asks into explicit non-data meta lanes", () => {
+    const bookIntent = resolveSemanticIntent({
+      config,
+      text: "这本营销书如何用于店长管理",
+      now,
+    });
+    const brandIntent = resolveSemanticIntent({
+      config,
+      text: "用华与华理论做品牌策划全案",
+      now,
+    });
+
+    expect(bookIntent).toMatchObject({
+      lane: "meta",
+      kind: "book_knowledge_qa",
+      object: "concept",
+      clarificationNeeded: false,
+    });
+    expect(brandIntent).toMatchObject({
+      lane: "meta",
+      kind: "brand_marketing_plan",
+      object: "concept",
+      clarificationNeeded: false,
+    });
+  });
+
   it("routes brand and competitor research asks into an explicit unsupported external-research boundary", () => {
     const intent = resolveSemanticIntent({
       config,

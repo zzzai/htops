@@ -1,6 +1,6 @@
 import type { HetangQueryIntent } from "../query-intent.js";
 import { resolveHetangQuerySemanticContext } from "../query-semantics.js";
-import { HETANG_CONCEPT_EXPLAIN_KEYWORDS } from "../semantic-question-patterns.js";
+import { resolveSemanticFrontdoorClassification } from "../semantic-frontdoor-classifier.js";
 import type { HetangEmployeeBinding, HetangOpsConfig } from "../types.js";
 
 const EXPLICIT_TIME_SCOPE_KEYWORDS =
@@ -59,9 +59,6 @@ function looksBusinessLike(params: {
   semanticContext: ReturnType<typeof resolveHetangQuerySemanticContext>;
 }): boolean {
   const context = params.semanticContext;
-  if (HETANG_CONCEPT_EXPLAIN_KEYWORDS.test(context.semanticText)) {
-    return false;
-  }
   return (
     context.routeSignals.hqStoreMixedScope ||
     (context.allStoresRequested &&
@@ -124,6 +121,13 @@ export function resolveIntentClarifierDecision(params: {
     config: params.config,
     text: params.text,
   });
+  const frontdoor = resolveSemanticFrontdoorClassification({
+    config: params.config,
+    text: params.text,
+  });
+  if (frontdoor.lane !== "store_data_query") {
+    return { kind: "continue" };
+  }
   if (!looksBusinessLike({ ruleIntent: params.ruleIntent, semanticContext })) {
     return { kind: "continue" };
   }

@@ -11,6 +11,10 @@ import {
   listOperatingAnalysisRecipes,
   searchOperatingKnowledgeCatalog,
 } from "./semantic-operating-contract.js";
+import {
+  buildSemanticLayerStatusSnapshot,
+  formatSemanticLayerStatusLines,
+} from "./semantic-layer-status.js";
 
 describe("semantic operating metric contracts", () => {
   it("resolves registered monthly operating metric contracts by metric key", () => {
@@ -197,5 +201,37 @@ describe("semantic operating metric contracts", () => {
       },
       objective: expect.stringContaining("客单价"),
     });
+  });
+
+  it("summarizes the five semantic layers without overclaiming full maturity", () => {
+    const snapshot = buildSemanticLayerStatusSnapshot({
+      now: new Date("2026-05-14T00:00:00.000Z"),
+    });
+
+    expect(snapshot.layers.map((layer) => layer.id)).toEqual([
+      "data",
+      "metric",
+      "question",
+      "action",
+      "quality",
+    ]);
+
+    const byId = new Map(snapshot.layers.map((layer) => [layer.id, layer]));
+    expect(byId.get("data")?.status).toBe("partial");
+    expect(byId.get("metric")?.status).toBe("implemented_v1");
+    expect(byId.get("question")?.status).toBe("implemented_v1");
+    expect(byId.get("action")?.status).toBe("partial");
+    expect(byId.get("quality")?.status).toBe("partial");
+    expect(byId.get("data")?.counts.osiDomains).toBe(3);
+    expect(byId.get("question")?.counts.questionBindings).toBe(100);
+    expect(byId.get("quality")?.remainingGaps.join(" ")).toContain("input > 0");
+
+    const lines = formatSemanticLayerStatusLines(snapshot);
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Semantic layer question: implemented_v1 | questionBindings=100"),
+        expect.stringContaining("Semantic layer action: partial"),
+      ]),
+    );
   });
 });

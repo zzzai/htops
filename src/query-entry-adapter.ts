@@ -141,15 +141,55 @@ function resolveMetaConceptExplanation(params: {
   binding: HetangEmployeeBinding;
   text: string;
   now: Date;
-}): { text: string; reason: "concept-explain"; failureClass: "concept_explain" } | null {
+}): {
+  text: string;
+  reason: "concept-explain" | "semantic-asset-design" | "book-knowledge-qa" | "brand-marketing-plan";
+  failureClass:
+    | "concept_explain"
+    | "semantic_asset_design"
+    | "book_knowledge_qa"
+    | "brand_marketing_plan";
+} | null {
   const semanticIntent = resolveSemanticIntent({
     config: params.config,
     text: params.text,
     now: params.now,
     binding: params.binding,
   });
-  if (semanticIntent.kind !== "concept_explain") {
+  if (
+    semanticIntent.kind !== "concept_explain" &&
+    semanticIntent.kind !== "semantic_asset_design" &&
+    semanticIntent.kind !== "book_knowledge_qa" &&
+    semanticIntent.kind !== "brand_marketing_plan"
+  ) {
     return null;
+  }
+  if (semanticIntent.kind === "semantic_asset_design") {
+    return {
+      text: [
+        "客户标签 OSI 草案可以按「基础字段 + 拓展指标 + 关联关系」三段来定义。",
+        "基础字段：客户ID、门店、会员等级、注册时间、最近到店、最近消费、储值余额、累计消费、累计到店、主服务技师、常来时段。",
+        "拓展指标：RFM分层、活跃/沉睡状态、高余额沉睡、团购新客、30天未二访、复购周期、充值意愿、项目偏好、价格敏感度、流失风险、生日窗口、技师绑定强度。",
+        "关联关系：客户标签 -> 触达动作 -> 话术/优惠 -> 负责人 -> 执行状态 -> 到店/消费/充值结果。",
+        "机器可读 contract 要包含 tag_id、口径公式、依赖字段、刷新频率、适用动作、不可用边界和审计样本。",
+      ].join("\n"),
+      reason: "semantic-asset-design",
+      failureClass: "semantic_asset_design",
+    };
+  }
+  if (semanticIntent.kind === "book_knowledge_qa") {
+    return {
+      text: "这是个人知识库问答问题，应走书籍知识助手：先从已索引书籍检索相关段落，再结合当前任务生成可落地的方法、清单或动作。不会当成门店经营数据查询，也不会追问门店。",
+      reason: "book-knowledge-qa",
+      failureClass: "book_knowledge_qa",
+    };
+  }
+  if (semanticIntent.kind === "brand_marketing_plan") {
+    return {
+      text: "这是品牌 / 营销方案问题，应走品牌策划 lane：先明确品牌对象、目标客群、竞争场景、核心承诺、超级符号、传播动作和门店转化闭环。不会当成单店数据查询。",
+      reason: "brand-marketing-plan",
+      failureClass: "brand_marketing_plan",
+    };
   }
   return {
     text: "这是经营方法论问题，不是门店数据查询。建议按「经营现实 + 外部环境 + 语义中枢 + AI动作 + 反馈飞轮」定义门店世界模型：先明确数据事实和指标口径，再把天气、商圈、竞品、口碑等外部变量入模，最后用 Agent 生成动作并追踪结果。",

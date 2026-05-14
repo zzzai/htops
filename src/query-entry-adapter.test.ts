@@ -148,6 +148,58 @@ describe("resolveHetangQueryEntry answerability gate", () => {
     });
   });
 
+  it("keeps customer tag OSI draft asks out of missing-store clarification", async () => {
+    await expect(
+      resolveHetangQueryEntry({
+        runtime: {},
+        config,
+        binding: HQ_BINDING,
+        text: "客户标签 osi草案",
+        now,
+      }),
+    ).resolves.toMatchObject({
+      kind: "clarify",
+      source: "rule_clarifier",
+      reason: "semantic-asset-design",
+      failureClass: "semantic_asset_design",
+      text: expect.stringContaining("客户标签 OSI 草案"),
+    });
+  });
+
+  it("keeps book knowledge and brand planning asks out of missing-store clarification", async () => {
+    await expect(
+      resolveHetangQueryEntry({
+        runtime: {},
+        config,
+        binding: HQ_BINDING,
+        text: "这本营销书如何用于店长管理",
+        now,
+      }),
+    ).resolves.toMatchObject({
+      kind: "clarify",
+      source: "rule_clarifier",
+      reason: "book-knowledge-qa",
+      failureClass: "book_knowledge_qa",
+      text: expect.stringContaining("书籍知识助手"),
+    });
+
+    await expect(
+      resolveHetangQueryEntry({
+        runtime: {},
+        config,
+        binding: HQ_BINDING,
+        text: "用华与华理论做品牌策划全案",
+        now,
+      }),
+    ).resolves.toMatchObject({
+      kind: "clarify",
+      source: "rule_clarifier",
+      reason: "brand-marketing-plan",
+      failureClass: "brand_marketing_plan",
+      text: expect.stringContaining("品牌策划 lane"),
+    });
+  });
+
   it("uses semantic fallback for a natural-language diagnostic ask without explicit business keywords", async () => {
     const resolveSemanticFallbackIntent = vi.fn().mockResolvedValue({
       clarificationText: "这句话能看出你想排查问题，但还缺门店范围，请先说具体门店或直接问五店全景。",
