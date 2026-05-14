@@ -14,6 +14,8 @@
 | 终端执行手册 | `knowledge/hxy/structured/execution-playbook.json` | 已生成，4 个执行面 / 3 个验证指标 |
 | 小店模型 | `knowledge/hxy/structured/store-model.json` | 已生成，投资 / 营收 / 净现金流 / 回本周期 |
 | 样板验证矩阵 | `knowledge/hxy/structured/pilot-validation-matrix.json` | 已生成，7 个验证项 |
+| 正式品牌全案 | `projects/hxy/deliverables/hxy-brand-plan-v1.md` | 已生成，面向业务汇报 |
+| 样板店执行包 | `projects/hxy/deliverables/hxy-pilot-execution-pack-v1.md` | 已生成，面向门店落地 |
 | 华与华理论 | `knowledge/brand/index.json` | 已可联合检索 |
 | 项目底稿 | `docs/plans/2026-05-14-hxy-project-knowledge-brief.md` | 已生成 |
 | 联合知识工作流 | `docs/plans/2026-05-14-hxy-brand-theory-workflow.md` | 已生成 |
@@ -31,6 +33,7 @@
 - 第一版品牌策划全案已生成，接入文化母体、购买理由、超级符号、货架思维
 - 第一版终端执行手册已生成，覆盖门头、菜单、技师话术、私域复购
 - 第一版小店模型和样板验证矩阵已生成，能把方案假设转成经营测算和验收指标
+- 第一版正式品牌全案和样板店执行包已生成，可用于业务评审和样板店试跑
 - 原始资料和索引不进入 Git / Docker 镜像
 
 ## 项目体系文件
@@ -54,13 +57,15 @@
 | `specs/brand-master-plan-v1-summary.md` | HXY 品牌策划全案 v1 摘要 |
 | `specs/execution-playbook-v1-summary.md` | HXY 终端执行手册 v1 摘要 |
 | `specs/store-model-and-validation-v1-summary.md` | HXY 小店模型与样板验证 v1 摘要 |
+| `deliverables/hxy-brand-plan-v1.md` | 荷小悦品牌策划全案 v1 |
+| `deliverables/hxy-pilot-execution-pack-v1.md` | 荷小悦样板店执行包 v1 |
 | `samples/store-model-input.sample.json` | 小店模型输入样例 |
 | `decisions/ADR-001-project-boundary.md` | 项目边界架构决策 |
 
 ## 下一步执行清单
 
-1. 人工确认《荷小悦品牌策划全案》v1 和《终端执行手册》v1。
-2. 把门头、菜单、技师话术、私域 SOP 转成样板店可打印物料。
+1. 人工确认《荷小悦品牌策划全案》v1 和《样板店执行包》v1。
+2. 把门头、菜单、技师话术、私域 SOP 转成样板店可打印物料和店长检查表。
 3. 用真实选址、面积、房租、技师人数替换小店模型样例输入。
 4. 把套餐成交、复购和健康档案字段接入真实数据表。
 5. 把执行反馈回流到 HXY 知识治理报告。
