@@ -51,6 +51,8 @@ services:
       HTOPS_CONFIG_PATH: /app/htops.json
       HETANG_RUNTIME_ENV_FILE: /app/.env.runtime
       HTOPS_STATE_DIR: /root/.htops
+      HETANG_NODE_BIN: /usr/local/bin/node
+      HETANG_PERSONAL_KNOWLEDGE_NODE_BIN: /usr/local/bin/node
       HETANG_QUERY_API_PYTHON: /usr/local/bin/python
       HETANG_QUERY_API_HOST: 0.0.0.0
       HETANG_QUERY_API_PORT: 18890
@@ -59,10 +61,12 @@ services:
     volumes:
       - ./htops.json:/app/htops.json:ro
       - ./.env.runtime:/app/.env.runtime:ro
+      - ./knowledge:/app/knowledge
       - ./data/htops-state:/root/.htops
+      - /root/.claude:/root/.claude:ro
       - ${HETANG_HERMES_CREDENTIALS_DIR:-/root/.hermes/credentials}:/root/.hermes/credentials:ro
     ports:
-      - 127.0.0.1:18890:18890
+      - ${HETANG_QUERY_API_PUBLISH_ADDR:-127.0.0.1}:18890:18890
     depends_on:
       postgres:
         condition: service_healthy
