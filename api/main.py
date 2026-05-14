@@ -728,8 +728,14 @@ def get_hxy_structured_dir(root_dir: Path | None = None) -> Path:
     return resolved_root / "knowledge" / "hxy" / "structured"
 
 
+def get_hxy_deliverables_dir(root_dir: Path | None = None) -> Path:
+    resolved_root = root_dir or get_htops_root_dir()
+    return resolved_root / "projects" / "hxy" / "deliverables"
+
+
 def build_hxy_project_brain_context_results(root_dir: Path | None = None) -> list[dict[str, Any]]:
     structured_dir = get_hxy_structured_dir(root_dir)
+    deliverables_dir = get_hxy_deliverables_dir(root_dir)
     results: list[dict[str, Any]] = []
     master_plan = load_json_file_if_exists(structured_dir / "brand-master-plan.json")
     if master_plan:
@@ -774,6 +780,24 @@ def build_hxy_project_brain_context_results(root_dir: Path | None = None) -> lis
                 ),
             }
         )
+    terminal_material_path = deliverables_dir / "hxy-terminal-material-pack-v1.md"
+    if terminal_material_path.exists():
+        try:
+            terminal_material_text = terminal_material_path.read_text(encoding="utf-8")
+        except Exception:
+            terminal_material_text = ""
+        if terminal_material_text.strip():
+            results.append(
+                {
+                    "sourceId": "hxy-terminal-material-pack",
+                    "domain": "hxy",
+                    "title": "HXY 终端物料包 v1",
+                    "relativePath": "projects/hxy/deliverables/hxy-terminal-material-pack-v1.md",
+                    "chunkIndex": 0,
+                    "score": 998,
+                    "text": terminal_material_text[:2500],
+                }
+            )
     execution_playbook = load_json_file_if_exists(structured_dir / "execution-playbook.json")
     if execution_playbook:
         surface_lines: list[str] = []

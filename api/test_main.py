@@ -302,6 +302,26 @@ class MainTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            deliverable_dir = root / "projects" / "hxy" / "deliverables"
+            deliverable_dir.mkdir(parents=True)
+            (deliverable_dir / "hxy-terminal-material-pack-v1.md").write_text(
+                "\n".join(
+                    [
+                        "# 荷小悦终端物料包 v1",
+                        "## 1. 门头与海报",
+                        "- 草本真现煮，按出真功夫",
+                        "## 2. 价格菜单",
+                        "- 基础款",
+                        "- 招牌款",
+                        "- 尊享款",
+                        "## 3. 技师服务话术卡",
+                        "- 今天先帮你把这里放松开。",
+                        "## 4. 私域跟进模板",
+                        "- 今天护理建议已记录。",
+                    ]
+                ),
+                encoding="utf-8",
+            )
 
             results = build_hxy_project_brain_context_results(root)
 
@@ -309,6 +329,7 @@ class MainTests(unittest.TestCase):
             [result["sourceId"] for result in results],
             [
                 "hxy-brand-master-plan",
+                "hxy-terminal-material-pack",
                 "hxy-execution-playbook",
                 "hxy-store-model",
                 "hxy-pilot-validation-matrix",
@@ -316,10 +337,12 @@ class MainTests(unittest.TestCase):
             ],
         )
         self.assertIn("社区泡脚按摩小店", results[0]["text"])
-        self.assertIn("草本真现煮，按出真功夫", results[1]["text"])
-        self.assertIn("月净现金流：36467.2", results[2]["text"])
-        self.assertIn("套餐选择率", results[3]["text"])
-        self.assertIn("当前主定位、融资叙事、远期平台愿景必须分开表达", results[4]["text"])
+        self.assertIn("技师服务话术卡", results[1]["text"])
+        self.assertIn("今天护理建议已记录", results[1]["text"])
+        self.assertIn("草本真现煮，按出真功夫", results[2]["text"])
+        self.assertIn("月净现金流：36467.2", results[3]["text"])
+        self.assertIn("套餐选择率", results[4]["text"])
+        self.assertIn("当前主定位、融资叙事、远期平台愿景必须分开表达", results[5]["text"])
 
     def test_hxy_chat_template_uses_project_brain_context_before_raw_sources(self) -> None:
         payload = render_hxy_knowledge_chat(
@@ -571,6 +594,41 @@ class MainTests(unittest.TestCase):
         self.assertIn("月净现金流：36467.2", content)
         self.assertIn("套餐选择率", content)
         self.assertIn("样板店验证", content)
+
+    def test_hxy_llm_request_includes_terminal_material_pack_for_storefront_menu_script_and_private_domain(self) -> None:
+        _, request_payload = build_personal_knowledge_llm_request(
+            {
+                "base_url": "https://claude.example.test",
+                "model": "claude-opus-4-6",
+                "wire_api": "anthropic_messages",
+            },
+            "hxy",
+            "荷小悦门头菜单技师话术私域怎么落地",
+            [
+                {
+                    "domain": "hxy",
+                    "sourceId": "hxy-terminal-material-pack",
+                    "title": "HXY 终端物料包 v1",
+                    "relativePath": "projects/hxy/deliverables/hxy-terminal-material-pack-v1.md",
+                    "chunkIndex": 0,
+                    "text": "门头与海报：草本真现煮，按出真功夫。价格菜单：基础款、招牌款、尊享款。技师服务话术卡：今天先帮你把这里放松开。私域跟进模板：今天护理建议已记录。",
+                },
+                {
+                    "domain": "brand",
+                    "sourceId": "brand-method",
+                    "title": "华与华方法",
+                    "relativePath": "knowledge/brand/raw/华与华方法.epub",
+                    "chunkIndex": 12,
+                    "text": "品牌策划要把购买理由、视觉符号、货架呈现和终端动作统一起来。",
+                },
+            ],
+        )
+
+        content = request_payload["messages"][0]["content"]
+        self.assertIn("HXY 终端物料包 v1", content)
+        self.assertIn("技师服务话术卡", content)
+        self.assertIn("私域跟进模板", content)
+        self.assertIn("知识域：brand", content)
 
     def test_build_personal_knowledge_llm_headers_adds_anthropic_version(self) -> None:
         headers = build_personal_knowledge_llm_headers(
