@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>个人知识助手</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #172018;
+        --muted: #627066;
+        --line: #d9e3dc;
+        --paper: #fbfcf8;
+        --panel: #ffffff;
+        --green: #1c5f50;
+        --green-soft: #e8f2ef;
+        --gold: #9b6b2a;
+        --red: #a44337;
+        --shadow: 0 18px 45px rgba(22, 32, 24, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "Microsoft YaHei", sans-serif;
+        color: var(--ink);
+        background:
+          linear-gradient(180deg, rgba(231, 243, 236, 0.72), rgba(251, 252, 248, 0.92) 42%),
+          var(--paper);
+      }
+
+      button,
+      input,
+      textarea,
+      select {
+        font: inherit;
+      }
+
+      .app {
+        width: min(1440px, calc(100vw - 40px));
+        min-height: calc(100vh - 40px);
+        margin: 20px auto;
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr) 340px;
+        gap: 16px;
+      }
+
+      .sidebar,
+      .chat,
+      .sources {
+        background: rgba(255, 255, 255, 0.86);
+        border: 1px solid rgba(217, 227, 220, 0.92);
+        box-shadow: var(--shadow);
+      }
+
+      .sidebar,
+      .sources {
+        border-radius: 8px;
+        padding: 18px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 22px;
+      }
+
+      .mark {
+        width: 38px;
+        height: 38px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        color: #fff;
+        font-weight: 800;
+        background: var(--green);
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.2;
+      }
+
+      .brand p,
+      .section-note {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .field {
+        margin-top: 18px;
+      }
+
+      .field label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      select,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--ink);
+        outline: none;
+      }
+
+      select {
+        height: 40px;
+        padding: 0 12px;
+      }
+
+      .chips {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .chip {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: #fff;
+        color: var(--ink);
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .chip:hover {
+        border-color: rgba(31, 111, 74, 0.55);
+        background: var(--green-soft);
+      }
+
+      .status {
+        margin-top: 18px;
+        padding: 12px;
+        border-radius: 8px;
+        background: #f5f7f2;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      .chat {
+        border-radius: 8px;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        min-width: 0;
+        overflow: hidden;
+      }
+
+      .chat-head {
+        padding: 18px 22px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .chat-head h2 {
+        margin: 0;
+        font-size: 20px;
+      }
+
+      .chat-head p {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .pill {
+        flex: 0 0 auto;
+        border-radius: 999px;
+        padding: 7px 11px;
+        background: var(--green-soft);
+        color: var(--green);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .messages {
+        padding: 22px;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .message {
+        max-width: 82%;
+        border-radius: 8px;
+        padding: 14px 15px;
+        line-height: 1.65;
+        white-space: pre-wrap;
+      }
+
+      .message.user {
+        align-self: flex-end;
+        background: var(--green);
+        color: #fff;
+      }
+
+      .message.assistant {
+        align-self: flex-start;
+        background: #f5f7f2;
+        border: 1px solid var(--line);
+      }
+
+      .composer {
+        border-top: 1px solid var(--line);
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.94);
+      }
+
+      textarea {
+        min-height: 92px;
+        max-height: 220px;
+        resize: vertical;
+        padding: 13px 14px;
+        line-height: 1.55;
+      }
+
+      .composer-actions {
+        margin-top: 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .hint {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .send {
+        min-width: 116px;
+        border: 0;
+        border-radius: 8px;
+        padding: 11px 16px;
+        background: var(--green);
+        color: #fff;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .send:disabled {
+        cursor: not-allowed;
+        opacity: 0.62;
+      }
+
+      .sources h3 {
+        margin: 0;
+        font-size: 17px;
+      }
+
+      .source-meta {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 5px;
+      }
+
+      .source-list {
+        margin-top: 16px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .source-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        background: #fff;
+      }
+
+      .source-title {
+        font-weight: 750;
+        line-height: 1.45;
+      }
+
+      .source-snippet {
+        margin-top: 7px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      .source-score {
+        margin-top: 8px;
+        color: var(--gold);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .error {
+        color: var(--red);
+      }
+
+      @media (max-width: 1120px) {
+        .app {
+          grid-template-columns: 220px minmax(0, 1fr);
+        }
+
+        .sources {
+          grid-column: 1 / -1;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .app {
+          width: min(100vw - 20px, 720px);
+          grid-template-columns: 1fr;
+          margin: 10px auto;
+        }
+
+        .message {
+          max-width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">知</div>
+          <div>
+            <h1>品牌知识助手</h1>
+            <p>/brand 书籍引用问答</p>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="domain">知识域</label>
+          <select id="domain">
+            <option value="brand" selected>品牌策划 /brand</option>
+            <option value="hxy">荷小悦项目</option>
+            <option value="marketing">营销策略</option>
+            <option value="management">管理动作</option>
+            <option value="book">全部书籍</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="bookFile">上传书籍</label>
+          <input id="bookFile" type="file" accept=".pdf,.epub,.txt,.md,.markdown,.docx,.html,.htm,.pptx" />
+          <button class="chip" id="uploadButton" type="button">上传并重建索引</button>
+          <p class="section-note">文件保存到本机 knowledge/&lt;domain&gt;/raw，不进入 Git。</p>
+        </div>
+
+        <div class="field">
+          <label>常用问题</label>
+          <div class="chips">
+            <button class="chip" data-prompt="基于华与华书籍引用，给荷塘悦色做一份品牌策划框架。">
+              华与华品牌分析
+            </button>
+            <button class="chip" data-prompt="基于书籍引用，荷塘悦色的超级符号、口号和门店终端动作应该怎么设计。">
+              超级符号与口号
+            </button>
+            <button class="chip" data-prompt="基于品牌书籍引用，拆解荷塘悦色和长风拨筋在品牌策划上的差异。">
+              竞品策划拆解
+            </button>
+          </div>
+        </div>
+
+        <div class="status" id="status">正在读取书库索引...</div>
+      </aside>
+
+      <section class="chat">
+        <div class="chat-head">
+          <div>
+            <h2>基于品牌书籍回答</h2>
+            <p>先检索 /brand 书籍证据，再生成品牌策划建议。回答必须带引用。</p>
+          </div>
+          <div class="pill">MVP</div>
+        </div>
+        <div class="messages" id="messages">
+          <div class="message assistant">
+            你可以直接问：基于华与华书籍引用，给荷塘悦色做品牌策划框架。当前只开放 /brand 知识域。
+          </div>
+        </div>
+        <form class="composer" id="form">
+          <textarea id="question" placeholder="输入你的问题，例如：基于华与华书籍引用，给荷塘悦色做一份品牌策划框架。"></textarea>
+          <div class="composer-actions">
+            <span class="hint">Enter 换行，点击发送提交</span>
+            <div>
+              <button class="send" id="exportButton" type="button">导出</button>
+              <button class="send" id="send" type="submit">发送</button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <aside class="sources">
+        <h3>引用来源</h3>
+        <div class="source-meta" id="sourceMeta">暂无引用</div>
+        <div class="source-list" id="sourceList"></div>
+      </aside>
+    </main>
+
+    <script>
+      const domainEl = document.querySelector("#domain");
+      const statusEl = document.querySelector("#status");
+      const formEl = document.querySelector("#form");
+      const questionEl = document.querySelector("#question");
+      const sendEl = document.querySelector("#send");
+      const uploadButtonEl = document.querySelector("#uploadButton");
+      const bookFileEl = document.querySelector("#bookFile");
+      const exportButtonEl = document.querySelector("#exportButton");
+      const messagesEl = document.querySelector("#messages");
+      const sourceMetaEl = document.querySelector("#sourceMeta");
+      const sourceListEl = document.querySelector("#sourceList");
+      let lastAnswer = "";
+      let lastQuestion = "";
+      let lastCitations = [];
+
+      function appendMessage(role, text) {
+        const el = document.createElement("div");
+        el.className = `message ${role}`;
+        el.textContent = text;
+        messagesEl.appendChild(el);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+
+      function renderCitations(citations, generatedAt) {
+        sourceListEl.innerHTML = "";
+          sourceMetaEl.textContent = citations.length
+            ? `索引时间：${generatedAt || "未知"}，引用 ${citations.length} 条`
+            : "暂无引用";
+        for (const citation of citations) {
+          const card = document.createElement("div");
+          card.className = "source-card";
+          card.innerHTML = `
+            <div class="source-title"></div>
+            <div class="source-snippet"></div>
+            <div class="source-score"></div>
+          `;
+          card.querySelector(".source-title").textContent = citation.title || "未知书籍";
+          card.querySelector(".source-snippet").textContent = citation.snippet || "";
+          card.querySelector(".source-score").textContent = `score ${citation.score ?? "-"} · chunk ${citation.chunkIndex ?? "-"}`;
+          sourceListEl.appendChild(card);
+        }
+      }
+
+      async function loadSources() {
+        const domain = domainEl.value;
+        try {
+          const response = await fetch(`/api/v1/personal-knowledge/sources?domain=${encodeURIComponent(domain)}`);
+          if (!response.ok) {
+            throw new Error(await response.text());
+          }
+          const payload = await response.json();
+          statusEl.classList.remove("error");
+          statusEl.textContent = `当前 ${payload.domain} 书库：${payload.source_count} 本书，${payload.chunk_count} 个片段，跳过 ${payload.skipped_count} 个文件。`;
+        } catch (error) {
+          statusEl.classList.add("error");
+          statusEl.textContent = "品牌书库索引未就绪。请先运行 build-personal-knowledge-index --domain brand。";
+        }
+      }
+
+      async function submitQuestion() {
+        const question = questionEl.value.trim();
+        if (!question) return;
+        appendMessage("user", question);
+        questionEl.value = "";
+        sendEl.disabled = true;
+        sendEl.textContent = "检索中";
+        try {
+          const response = await fetch("/api/v1/personal-knowledge/chat", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              domain: domainEl.value,
+              question,
+              top_k: 6,
+            }),
+          });
+          if (!response.ok) {
+            throw new Error(await response.text());
+          }
+          const payload = await response.json();
+          appendMessage("assistant", payload.answer || "没有生成答案。");
+          lastQuestion = question;
+          lastAnswer = payload.answer || "";
+          lastCitations = payload.citations || [];
+          renderCitations(payload.citations || [], payload.index_generated_at);
+        } catch (error) {
+          appendMessage("assistant", `请求失败：${error.message || error}`);
+        } finally {
+          sendEl.disabled = false;
+          sendEl.textContent = "发送";
+        }
+      }
+
+      function fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const value = String(reader.result || "");
+            resolve(value.includes(",") ? value.split(",").pop() : value);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }
+
+      async function uploadBook() {
+        const file = bookFileEl.files && bookFileEl.files[0];
+        if (!file) {
+          statusEl.classList.add("error");
+          statusEl.textContent = "请先选择要上传的书籍文件。";
+          return;
+        }
+        uploadButtonEl.disabled = true;
+        uploadButtonEl.textContent = "上传中";
+        try {
+          const contentBase64 = await fileToBase64(file);
+          const response = await fetch("/api/v1/personal-knowledge/upload", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              domain: domainEl.value,
+              file_name: file.name,
+              content_base64: contentBase64,
+            }),
+          });
+          if (!response.ok) {
+            throw new Error(await response.text());
+          }
+          const payload = await response.json();
+          statusEl.classList.remove("error");
+          statusEl.textContent = `已上传 ${payload.file_name}，当前 ${payload.domain} 索引：${payload.index.source_count} 本书，${payload.index.chunk_count} 个片段。`;
+          await loadSources();
+        } catch (error) {
+          statusEl.classList.add("error");
+          statusEl.textContent = `上传失败：${error.message || error}`;
+        } finally {
+          uploadButtonEl.disabled = false;
+          uploadButtonEl.textContent = "上传并重建索引";
+        }
+      }
+
+      async function exportPlan() {
+        if (!lastAnswer) {
+          statusEl.classList.add("error");
+          statusEl.textContent = "还没有可导出的回答。";
+          return;
+        }
+        const response = await fetch("/api/v1/personal-knowledge/export", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            domain: domainEl.value,
+            question: lastQuestion,
+            answer: lastAnswer,
+            citations: lastCitations,
+          }),
+        });
+        if (!response.ok) {
+          statusEl.classList.add("error");
+          statusEl.textContent = `导出失败：${await response.text()}`;
+          return;
+        }
+        const payload = await response.json();
+        const blob = new Blob([payload.markdown || ""], { type: "text/markdown;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = payload.file_name || "knowledge-export.md";
+        link.click();
+        URL.revokeObjectURL(url);
+      }
+
+      formEl.addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitQuestion();
+      });
+      domainEl.addEventListener("change", loadSources);
+      uploadButtonEl.addEventListener("click", uploadBook);
+      exportButtonEl.addEventListener("click", exportPlan);
+      document.querySelectorAll("[data-prompt]").forEach((button) => {
+        button.addEventListener("click", () => {
+          questionEl.value = button.dataset.prompt;
+          questionEl.focus();
+        });
+      });
+      loadSources();
+    </script>
+  </body>
+</html>

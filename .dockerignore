@@ -17,6 +17,11 @@ data
 .hermes
 .hermes-runtime
 mdshuju
+knowledge/**/raw
+knowledge/**/parsed
+knowledge/**/index.json
+knowledge/**/structured
+knowledge/**/*.zip
 __pycache__
 **/__pycache__
 *.pyc

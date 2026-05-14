@@ -2,13 +2,20 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import base64
+import binascii
 import json
 import os
 from pathlib import Path
 import re
+import subprocess
 from typing import Any, Iterable
+import urllib.error
+import urllib.request
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, HTMLResponse
+from pydantic import BaseModel
 import psycopg2
 from psycopg2 import pool as pg_pool
 from psycopg2.extras import RealDictCursor
@@ -24,6 +31,74 @@ _SEMANTIC_OPTIMIZATION_PLAYBOOK_PATH = (
     Path(__file__).resolve().parent.parent / "src" / "semantic-optimization-playbook.json"
 )
 ANALYSIS_DEAD_LETTER_STALE_AFTER_HOURS = 24.0
+_SUPPORTED_PERSONAL_KNOWLEDGE_DOMAINS = {"brand", "marketing", "management", "book", "hxy"}
+_SUPPORTED_PERSONAL_KNOWLEDGE_UPLOAD_EXTENSIONS = {
+    ".pdf",
+    ".epub",
+    ".txt",
+    ".md",
+    ".markdown",
+    ".docx",
+    ".html",
+    ".htm",
+    ".pptx",
+}
+_PERSONAL_KNOWLEDGE_STOPWORDS = {
+    "一个",
+    "什么",
+    "如何",
+    "怎么",
+    "怎样",
+    "是否",
+    "可以",
+    "应该",
+    "需要",
+    "通过",
+    "进行",
+    "这个",
+    "那个",
+    "以及",
+    "如果",
+    "我们",
+    "你们",
+    "他们",
+    "门店",
+    "品牌",
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "that",
+    "this",
+    "into",
+    "your",
+    "you",
+    "are",
+    "how",
+    "what",
+    "why",
+}
+_PERSONAL_KNOWLEDGE_LLM_TIMEOUT_SECONDS = 45
+
+
+class PersonalKnowledgeChatRequest(BaseModel):
+    question: str
+    domain: str = "brand"
+    top_k: int = 6
+
+
+class PersonalKnowledgeUploadRequest(BaseModel):
+    domain: str = "brand"
+    file_name: str
+    content_base64: str
+
+
+class PersonalKnowledgeExportRequest(BaseModel):
+    domain: str = "brand"
+    question: str
+    answer: str
+    citations: list[dict[str, Any]] = []
 
 
 def load_control_plane_contract() -> dict[str, Any]:
@@ -397,6 +472,1097 @@ def normalize_object(value: Any) -> dict[str, Any]:
     return {}
 
 
+def get_htops_root_dir() -> Path:
+    return Path(os.getenv("HETANG_ROOT_DIR") or os.getenv("HTOPS_ROOT_DIR") or Path(__file__).resolve().parent.parent)
+
+
+def resolve_personal_knowledge_domain(domain: str | None) -> str:
+    normalized = (domain or "brand").strip().lower()
+    if normalized not in _SUPPORTED_PERSONAL_KNOWLEDGE_DOMAINS:
+        raise HTTPException(status_code=400, detail="unsupported knowledge domain")
+    return normalized
+
+
+def sanitize_personal_knowledge_file_name(file_name: str) -> str:
+    candidate = Path(file_name).name.strip()
+    if not candidate:
+        raise HTTPException(status_code=400, detail="file_name is required")
+    candidate = re.sub(r"[\x00-\x1f]+", "", candidate).strip()
+    if not candidate or candidate in {".", ".."}:
+        raise HTTPException(status_code=400, detail="invalid file_name")
+    extension = Path(candidate).suffix.lower()
+    if extension not in _SUPPORTED_PERSONAL_KNOWLEDGE_UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="unsupported file type")
+    return candidate
+
+
+def get_personal_knowledge_index_path(domain: str) -> Path:
+    override = os.getenv(f"HETANG_PERSONAL_KNOWLEDGE_{domain.upper()}_INDEX")
+    if override and override.strip():
+        return Path(override.strip())
+    return get_htops_root_dir() / "knowledge" / domain / "index.json"
+
+
+def get_personal_knowledge_raw_dir(domain: str) -> Path:
+    return get_htops_root_dir() / "knowledge" / domain / "raw"
+
+
+def write_uploaded_personal_knowledge_file(
+    domain: str,
+    request: PersonalKnowledgeUploadRequest,
+) -> Path:
+    resolved_domain = resolve_personal_knowledge_domain(domain or request.domain)
+    file_name = sanitize_personal_knowledge_file_name(request.file_name)
+    try:
+        payload = base64.b64decode(request.content_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="content_base64 is invalid") from exc
+    if not payload:
+        raise HTTPException(status_code=400, detail="uploaded file is empty")
+    if len(payload) > int(os.getenv("HETANG_PERSONAL_KNOWLEDGE_UPLOAD_MAX_BYTES", "52428800")):
+        raise HTTPException(status_code=413, detail="uploaded file is too large")
+    raw_dir = get_personal_knowledge_raw_dir(resolved_domain)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    target_path = raw_dir / file_name
+    target_path.write_bytes(payload)
+    return target_path
+
+
+def extract_upload_text(file_path: Path) -> str:
+    extension = file_path.suffix.lower()
+    if extension == ".pdf":
+      raise RuntimeError("pdf rebuild requires scripts/build-personal-knowledge-index.ts")
+    return file_path.read_text(encoding="utf-8")
+
+
+def build_personal_knowledge_index_command(domain: str) -> list[str]:
+    resolved_domain = resolve_personal_knowledge_domain(domain)
+    raw_dir = get_personal_knowledge_raw_dir(resolved_domain)
+    index_path = get_personal_knowledge_index_path(resolved_domain)
+    root_dir = get_htops_root_dir()
+    script_path = root_dir / "scripts" / "build-personal-knowledge-index.ts"
+    if not script_path.exists():
+        raise FileNotFoundError(str(script_path))
+    node_bin = resolve_personal_knowledge_node_bin()
+    return [
+        node_bin,
+        "--import",
+        "tsx",
+        str(script_path),
+        "--domain",
+        resolved_domain,
+        "--raw-dir",
+        str(raw_dir),
+        "--output",
+        str(index_path),
+    ]
+
+
+def resolve_personal_knowledge_node_bin() -> str:
+    explicit_node_bin = os.getenv("HETANG_PERSONAL_KNOWLEDGE_NODE_BIN", "").strip()
+    if explicit_node_bin:
+        return explicit_node_bin
+    node_bin = os.getenv("HETANG_NODE_BIN", "").strip()
+    if node_bin and (Path(node_bin).is_absolute() and Path(node_bin).exists() or not Path(node_bin).is_absolute()):
+        return node_bin
+    return "node"
+
+
+def rebuild_personal_knowledge_index_with_typescript(domain: str) -> dict[str, Any]:
+    resolved_domain = resolve_personal_knowledge_domain(domain)
+    raw_dir = get_personal_knowledge_raw_dir(resolved_domain)
+    index_path = get_personal_knowledge_index_path(resolved_domain)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    command = build_personal_knowledge_index_command(resolved_domain)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(get_htops_root_dir()),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=int(os.getenv("HETANG_PERSONAL_KNOWLEDGE_REBUILD_TIMEOUT_SECONDS", "600")),
+        )
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"knowledge index rebuild failed: {(exc.stderr or exc.stdout or str(exc)).strip()}",
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="knowledge index rebuild timed out") from exc
+    index_payload = load_personal_knowledge_index(resolved_domain) if index_path.exists() else {}
+    sources = index_payload.get("sources")
+    chunks = index_payload.get("chunks")
+    skipped_files = index_payload.get("skippedFiles")
+    return {
+        "domain": resolved_domain,
+        "builder": "typescript",
+        "source_count": len(sources) if isinstance(sources, list) else 0,
+        "chunk_count": len(chunks) if isinstance(chunks, list) else 0,
+        "skipped_count": len(skipped_files) if isinstance(skipped_files, list) else 0,
+        "index_path": str(index_path),
+        "stdout": completed.stdout.strip(),
+    }
+
+
+def rebuild_personal_knowledge_index_python_fallback(domain: str) -> dict[str, Any]:
+    resolved_domain = resolve_personal_knowledge_domain(domain)
+    raw_dir = get_personal_knowledge_raw_dir(resolved_domain)
+    index_path = get_personal_knowledge_index_path(resolved_domain)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    sources: list[dict[str, Any]] = []
+    chunks: list[dict[str, Any]] = []
+    skipped_files: list[dict[str, Any]] = []
+    generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    root_dir = get_htops_root_dir()
+    for file_path in sorted(raw_dir.iterdir(), key=lambda path: path.name):
+        if not file_path.is_file() and not file_path.is_symlink():
+            continue
+        if file_path.suffix.lower() not in _SUPPORTED_PERSONAL_KNOWLEDGE_UPLOAD_EXTENSIONS:
+            skipped_files.append({"fileName": file_path.name, "reason": "unsupported_file_type"})
+            continue
+        try:
+            text = extract_upload_text(file_path)
+        except Exception:
+            skipped_files.append({"fileName": file_path.name, "reason": "text_extraction_failed"})
+            continue
+        normalized_text = " ".join(text.split()).strip()
+        if not normalized_text:
+            skipped_files.append({"fileName": file_path.name, "reason": "empty_text"})
+            continue
+        stat = file_path.stat()
+        relative_path = str(file_path.relative_to(root_dir))
+        source_id = f"{resolved_domain}:{relative_path}:{stat.st_size}"
+        title = file_path.stem.replace("_", " ").strip()
+        sources.append(
+            {
+                "sourceId": source_id,
+                "domain": resolved_domain,
+                "title": title,
+                "relativePath": relative_path,
+                "fileName": file_path.name,
+                "fileSize": stat.st_size,
+                "updatedAt": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+            }
+        )
+        chunk_size = 1200
+        overlap = 160
+        start = 0
+        chunk_index = 0
+        while start < len(normalized_text):
+            end = min(start + chunk_size, len(normalized_text))
+            chunk_text = normalized_text[start:end].strip()
+            if chunk_text:
+                chunks.append(
+                    {
+                        "chunkId": f"{source_id}:{chunk_index}",
+                        "sourceId": source_id,
+                        "domain": resolved_domain,
+                        "title": title,
+                        "relativePath": relative_path,
+                        "chunkIndex": chunk_index,
+                        "text": chunk_text,
+                        "keywords": extract_personal_knowledge_keywords(f"{title} {chunk_text}"),
+                    }
+                )
+                chunk_index += 1
+            if end >= len(normalized_text):
+                break
+            start = max(end - overlap, start + 1)
+    index_payload = {
+        "version": "personal-knowledge-index.v1",
+        "generatedAt": generated_at,
+        "rootDir": str(root_dir),
+        "rawDir": str(raw_dir),
+        "domains": [resolved_domain],
+        "sources": sources,
+        "chunks": chunks,
+        "skippedFiles": skipped_files,
+    }
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(json.dumps(index_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {
+        "domain": resolved_domain,
+        "builder": "python-fallback",
+        "source_count": len(sources),
+        "chunk_count": len(chunks),
+        "skipped_count": len(skipped_files),
+        "index_path": str(index_path),
+    }
+
+
+def rebuild_personal_knowledge_index(domain: str) -> dict[str, Any]:
+    try:
+        return rebuild_personal_knowledge_index_with_typescript(domain)
+    except FileNotFoundError:
+        return rebuild_personal_knowledge_index_python_fallback(domain)
+
+
+def load_personal_knowledge_index(domain: str) -> dict[str, Any]:
+    index_path = get_personal_knowledge_index_path(domain)
+    if not index_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"knowledge index not found for domain={domain}; run scripts/build-personal-knowledge-index.ts first",
+        )
+    try:
+        with index_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="failed to load knowledge index") from exc
+    return payload if isinstance(payload, dict) else {}
+
+
+def load_json_file_if_exists(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def get_hxy_structured_dir(root_dir: Path | None = None) -> Path:
+    resolved_root = root_dir or get_htops_root_dir()
+    return resolved_root / "knowledge" / "hxy" / "structured"
+
+
+def build_hxy_project_brain_context_results(root_dir: Path | None = None) -> list[dict[str, Any]]:
+    structured_dir = get_hxy_structured_dir(root_dir)
+    results: list[dict[str, Any]] = []
+    master_plan = load_json_file_if_exists(structured_dir / "brand-master-plan.json")
+    if master_plan:
+        sections = master_plan.get("sections")
+        section_text = ""
+        if isinstance(sections, list):
+            section_lines: list[str] = []
+            for section in sections[:7]:
+                if not isinstance(section, dict):
+                    continue
+                content = section.get("content")
+                content_text = "；".join(str(item) for item in content[:4]) if isinstance(content, list) else ""
+                section_lines.append(f"{section.get('title') or section.get('key')}: {content_text}")
+            section_text = "\n".join(section_lines)
+        methodology = master_plan.get("methodology_principles")
+        methodology_text = ""
+        if isinstance(methodology, list):
+            methodology_text = "\n".join(
+                f"{item.get('label')}: {item.get('application')}"
+                for item in methodology[:4]
+                if isinstance(item, dict)
+            )
+        risks = master_plan.get("risks")
+        risk_text = "\n".join(str(item) for item in risks[:3]) if isinstance(risks, list) else ""
+        results.append(
+            {
+                "sourceId": "hxy-brand-master-plan",
+                "domain": "hxy",
+                "title": "HXY 品牌策划全案 v1",
+                "relativePath": "knowledge/hxy/structured/brand-master-plan.json",
+                "chunkIndex": 0,
+                "score": 1000,
+                "text": "\n".join(
+                    item
+                    for item in [
+                        str(master_plan.get("executive_summary") or ""),
+                        methodology_text,
+                        section_text,
+                        risk_text,
+                    ]
+                    if item
+                ),
+            }
+        )
+    execution_playbook = load_json_file_if_exists(structured_dir / "execution-playbook.json")
+    if execution_playbook:
+        surface_lines: list[str] = []
+        surfaces = execution_playbook.get("surfaces")
+        if isinstance(surfaces, list):
+            for surface in surfaces[:4]:
+                if not isinstance(surface, dict):
+                    continue
+                copy_blocks = surface.get("copy_blocks")
+                copy_text = "、".join(str(item) for item in copy_blocks[:4]) if isinstance(copy_blocks, list) else ""
+                action_steps = surface.get("action_steps")
+                action_text = "；".join(str(item) for item in action_steps[:3]) if isinstance(action_steps, list) else ""
+                do_not_say = surface.get("do_not_say")
+                do_not_say_text = "；".join(str(item) for item in do_not_say[:3]) if isinstance(do_not_say, list) else ""
+                surface_lines.append(
+                    f"{surface.get('label') or surface.get('key')}: 目标：{surface.get('objective') or ''} 文案：{copy_text} 动作：{action_text} 禁用：{do_not_say_text}"
+                )
+        results.append(
+            {
+                "sourceId": "hxy-execution-playbook",
+                "domain": "hxy",
+                "title": "HXY 终端执行手册 v1",
+                "relativePath": "knowledge/hxy/structured/execution-playbook.json",
+                "chunkIndex": 0,
+                "score": 995,
+                "text": "\n".join(
+                    item
+                    for item in [
+                        str(execution_playbook.get("positioning_guardrail") or ""),
+                        "\n".join(surface_lines),
+                    ]
+                    if item
+                ),
+            }
+        )
+    store_model = load_json_file_if_exists(structured_dir / "store-model.json")
+    if store_model:
+        caveats = store_model.get("caveats")
+        caveat_text = "；".join(str(item) for item in caveats[:3]) if isinstance(caveats, list) else ""
+        results.append(
+            {
+                "sourceId": "hxy-store-model",
+                "domain": "hxy",
+                "title": "HXY 小店模型 v1",
+                "relativePath": "knowledge/hxy/structured/store-model.json",
+                "chunkIndex": 0,
+                "score": 992,
+                "text": "\n".join(
+                    [
+                        f"月总营收：{store_model.get('monthly_revenue')}",
+                        f"月净现金流：{store_model.get('monthly_net_cashflow')}",
+                        f"回本周期：{store_model.get('payback_months')}",
+                        f"边界：{caveat_text}",
+                    ]
+                ),
+            }
+        )
+    validation_matrix = load_json_file_if_exists(structured_dir / "pilot-validation-matrix.json")
+    if validation_matrix:
+        item_lines: list[str] = []
+        items = validation_matrix.get("items")
+        if isinstance(items, list):
+            for item in items[:7]:
+                if not isinstance(item, dict):
+                    continue
+                item_lines.append(
+                    f"{item.get('label') or item.get('key')}: 假设：{item.get('hypothesis') or ''} 证据：{item.get('evidence_source') or ''}"
+                )
+        results.append(
+            {
+                "sourceId": "hxy-pilot-validation-matrix",
+                "domain": "hxy",
+                "title": "HXY 样板验证矩阵 v1",
+                "relativePath": "knowledge/hxy/structured/pilot-validation-matrix.json",
+                "chunkIndex": 0,
+                "score": 991,
+                "text": "\n".join(item_lines),
+            }
+        )
+    osi_contract = load_json_file_if_exists(structured_dir / "osi-contract.json")
+    if osi_contract:
+        domains = osi_contract.get("domains")
+        domain_lines: list[str] = []
+        if isinstance(domains, list):
+            for domain in domains[:5]:
+                if not isinstance(domain, dict):
+                    continue
+                boundaries = domain.get("answer_boundaries")
+                boundary_text = "；".join(str(item) for item in boundaries[:3]) if isinstance(boundaries, list) else ""
+                metrics = domain.get("validation_metrics")
+                metric_text = "、".join(str(item.get("label") or item.get("key")) for item in metrics[:4] if isinstance(item, dict)) if isinstance(metrics, list) else ""
+                domain_lines.append(
+                    f"{domain.get('label') or domain.get('domain')}: {domain.get('purpose') or ''} 边界：{boundary_text} 验证：{metric_text}"
+                )
+        results.append(
+            {
+                "sourceId": "hxy-osi-contract",
+                "domain": "hxy",
+                "title": "HXY OSI 合同 v1",
+                "relativePath": "knowledge/hxy/structured/osi-contract.json",
+                "chunkIndex": 0,
+                "score": 990,
+                "text": "\n".join(domain_lines),
+            }
+        )
+    return results
+
+
+def extract_personal_knowledge_keywords(value: str) -> list[str]:
+    normalized = value.lower()
+    tokens: set[str] = set()
+    for token in re.findall(r"[\u4e00-\u9fff]{2,}|[a-z0-9][a-z0-9-]{2,}", normalized):
+        if token in _PERSONAL_KNOWLEDGE_STOPWORDS:
+            continue
+        if re.fullmatch(r"[\u4e00-\u9fff]+", token):
+            tokens.add(token)
+            for index in range(0, max(len(token) - 1, 0)):
+                bigram = token[index : index + 2]
+                if bigram and bigram not in _PERSONAL_KNOWLEDGE_STOPWORDS:
+                    tokens.add(bigram)
+        else:
+            tokens.add(token)
+    return list(tokens)
+
+
+def search_personal_knowledge_index(
+    index_payload: dict[str, Any],
+    question: str,
+    domain: str,
+    top_k: int = 6,
+) -> list[dict[str, Any]]:
+    query_keywords = set(extract_personal_knowledge_keywords(question))
+    if not query_keywords:
+        return []
+    scored: list[dict[str, Any]] = []
+    chunks = index_payload.get("chunks")
+    if not isinstance(chunks, list):
+        return []
+    for raw_chunk in chunks:
+        if not isinstance(raw_chunk, dict):
+            continue
+        if str(raw_chunk.get("domain")) != domain:
+            continue
+        chunk_keywords = set(str(keyword) for keyword in raw_chunk.get("keywords", []))
+        title = str(raw_chunk.get("title") or "")
+        score = 0
+        for keyword in query_keywords:
+            if keyword in chunk_keywords:
+                score += 2 if len(keyword) >= 3 else 1
+            if keyword and keyword in title:
+                score += 1
+        if score <= 0:
+            continue
+        if domain == "brand":
+            score += score_brand_knowledge_chunk(title, str(raw_chunk.get("text") or ""), chunk_keywords, query_keywords)
+        scored.append(
+            {
+                "sourceId": raw_chunk.get("sourceId"),
+                "domain": domain,
+                "title": title,
+                "relativePath": raw_chunk.get("relativePath"),
+                "chunkIndex": normalize_int(raw_chunk.get("chunkIndex")),
+                "score": score,
+                "text": str(raw_chunk.get("text") or ""),
+            }
+        )
+    scored.sort(key=lambda item: (-normalize_int(item.get("score")), normalize_int(item.get("chunkIndex"))))
+    return scored[: max(1, min(top_k, 12))]
+
+
+def should_merge_brand_theory_for_hxy(question: str) -> bool:
+    terms = [
+        "华与华",
+        "品牌策划",
+        "品牌战略",
+        "品牌定位",
+        "超级符号",
+        "购买理由",
+        "品牌承诺",
+        "口号",
+        "slogan",
+        "终端",
+        "传播成本",
+    ]
+    return any(term.lower() in question.lower() for term in terms)
+
+
+def build_cross_domain_personal_knowledge_results(
+    domain: str,
+    question: str,
+    top_k: int,
+    load_index: Any = load_personal_knowledge_index,
+) -> list[dict[str, Any]]:
+    resolved_domain = resolve_personal_knowledge_domain(domain)
+    primary_index = load_index(resolved_domain)
+    primary_results = search_personal_knowledge_index(
+        primary_index,
+        question,
+        resolved_domain,
+        max(3, min(top_k, 8)),
+    )
+    if resolved_domain != "hxy" or not should_merge_brand_theory_for_hxy(question):
+        return primary_results[: max(1, min(top_k, 12))]
+
+    try:
+        brand_index = load_index("brand")
+    except HTTPException:
+        return primary_results[: max(1, min(top_k, 12))]
+    brand_results = search_personal_knowledge_index(
+        brand_index,
+        build_brand_knowledge_search_query(question),
+        "brand",
+        max(2, min(top_k, 6)),
+    )
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    for result in [*primary_results[: max(2, top_k // 2)], *brand_results, *primary_results]:
+        key = (str(result.get("sourceId") or ""), normalize_int(result.get("chunkIndex")))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(result)
+        if len(merged) >= max(1, min(top_k, 12)):
+            break
+    return merged
+
+
+def prepend_hxy_project_brain_context(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    for result in [*build_hxy_project_brain_context_results(), *results]:
+        key = (str(result.get("sourceId") or ""), normalize_int(result.get("chunkIndex")))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(result)
+    return merged
+
+
+def score_brand_knowledge_chunk(
+    title: str,
+    text: str,
+    chunk_keywords: set[str],
+    query_keywords: set[str],
+) -> int:
+    bonus = 0
+    method_title_terms = ["方法", "原理", "使用说明书", "品牌的起源", "定位"]
+    case_title_terms = ["案例集"]
+    if any(term in title for term in method_title_terms):
+        bonus += 6
+    if any(term in title for term in case_title_terms):
+        bonus -= 3
+    strong_terms = [
+        "购买理由",
+        "品牌承诺",
+        "超级符号",
+        "传播成本",
+        "交易成本",
+        "终端",
+        "定位",
+        "品牌资产",
+    ]
+    for term in strong_terms:
+        if term in text or term in chunk_keywords:
+            bonus += 2
+    if "品牌策划" in query_keywords and ("方法" in title or "原理" in title):
+        bonus += 4
+    return bonus
+
+
+def render_personal_knowledge_chat(
+    question: str,
+    domain: str,
+    results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    citations = [
+        {
+            "sourceId": result.get("sourceId"),
+            "title": result.get("title"),
+            "relativePath": result.get("relativePath"),
+            "chunkIndex": result.get("chunkIndex"),
+            "score": result.get("score"),
+            "snippet": str(result.get("text") or "")[:180],
+        }
+        for result in results[:5]
+    ]
+    if not citations:
+        return {
+            "answer": "\n".join(
+                [
+                    f"当前 {domain} 书库没有检索到足够依据。",
+                    "建议先补充对应书籍，或把问题拆成更明确的概念、场景、动作目标。",
+                ]
+            ),
+            "citations": [],
+        }
+    evidence_lines = [
+        f"{index + 1}. 《{result.get('title')}》相关片段提示：{str(result.get('text') or '')[:120]}"
+        for index, result in enumerate(results[:3])
+    ]
+    return {
+        "answer": "\n".join(
+            [
+                f"基于 {domain} 书库，当前问题可以先按“方法论 -> 场景 -> 动作 -> 反馈”处理。",
+                "",
+                "可执行建议：",
+                *evidence_lines,
+                "",
+                "落地时不要只复述书中概念，要把它转成目标客群、触点、话术、活动机制和验证指标。",
+            ]
+        ),
+        "citations": citations,
+    }
+
+
+def render_brand_knowledge_chat(
+    question: str,
+    results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    citations = [
+        {
+            "sourceId": result.get("sourceId"),
+            "title": result.get("title"),
+            "relativePath": result.get("relativePath"),
+            "chunkIndex": result.get("chunkIndex"),
+            "score": result.get("score"),
+            "snippet": str(result.get("text") or "")[:180],
+        }
+        for result in results[:5]
+    ]
+    if not citations:
+        return {
+            "answer": "\n".join(
+                [
+                    "当前 brand 书库没有检索到足够书籍依据。",
+                    "本入口只做“基于书籍引用回答”，所以不会凭空生成品牌策划结论。",
+                    "请先把华与华、品牌策划相关书籍放入 knowledge/brand/raw，并重建索引。",
+                ]
+            ),
+            "citations": [],
+        }
+
+    evidence_lines = [
+        f"{index + 1}. 《{result.get('title')}》：{str(result.get('text') or '')[:130]}"
+        for index, result in enumerate(results[:3])
+    ]
+    citation_lines = [
+        f"[{index + 1}] 《{citation.get('title')}》 chunk {citation.get('chunkIndex')} · {citation.get('relativePath')}"
+        for index, citation in enumerate(citations)
+    ]
+    return {
+        "answer": "\n".join(
+            [
+                "品牌策划回答（基于本地书籍引用）",
+                f"问题：{question}",
+                "",
+                "一、书籍依据",
+                *evidence_lines,
+                "",
+                "二、可落地策划框架",
+                "1. 先提炼品牌承诺：用一句顾客能复述的话说明“为什么选荷塘悦色”。",
+                "2. 再确定超级符号：把品牌承诺落到门头、空间、员工动作、话术、团购页面和私域触达。",
+                "3. 然后设计购买理由：围绕目标客群、核心场景、价格锚点、服务差异和复购理由展开。",
+                "4. 最后接经营闭环：用到店客流、团购二访、储值转化、复购和口碑反馈验证策划是否有效。",
+                "",
+                "三、引用来源",
+                *citation_lines,
+            ]
+        ),
+        "citations": citations,
+    }
+
+
+def render_hxy_knowledge_chat(
+    question: str,
+    results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    citations = [
+        {
+            "sourceId": result.get("sourceId"),
+            "title": result.get("title"),
+            "relativePath": result.get("relativePath"),
+            "chunkIndex": result.get("chunkIndex"),
+            "score": result.get("score"),
+            "snippet": str(result.get("text") or "")[:180],
+        }
+        for result in results[:5]
+    ]
+    if not citations:
+        return {
+            "answer": "\n".join(
+                [
+                    "当前 hxy 项目知识库没有检索到足够依据。",
+                    "请先生成 HXY 项目大脑资料，或补充 knowledge/hxy/raw 后重建索引。",
+                ]
+            ),
+            "citations": [],
+        }
+    project_brain = next(
+        (result for result in results if str(result.get("sourceId") or "").startswith("hxy-brand-master-plan")),
+        results[0],
+    )
+    theory_titles = [
+        f"《{result.get('title')}》"
+        for result in results
+        if str(result.get("domain") or "") == "brand"
+    ][:3]
+    return {
+        "answer": "\n".join(
+            [
+                "HXY 项目大脑回答（项目知识 + 品牌理论引用）",
+                f"问题：{question}",
+                "",
+                "一、项目大脑结论",
+                str(project_brain.get("text") or "")[:700],
+                "",
+                "二、当前执行原则",
+                "1. 当前经营先讲社区泡脚按摩小店，不把银发健康科技平台当前置主定位。",
+                "2. 门头、菜单、技师话术、私域触达必须统一到购买理由和终端动作。",
+                "3. 产品价格、单店财务、客群判断必须进入样板店验证。",
+                "",
+                "三、书籍/理论依据",
+                "；".join(theory_titles) if theory_titles else "本次未合并到品牌理论书籍依据。",
+            ]
+        ),
+        "citations": citations,
+    }
+
+
+def resolve_personal_knowledge_llm_config() -> dict[str, Any] | None:
+    base_url = os.getenv("HETANG_PERSONAL_KNOWLEDGE_AI_BASE_URL", "").strip()
+    api_key = os.getenv("HETANG_PERSONAL_KNOWLEDGE_AI_API_KEY", "").strip()
+    model = os.getenv("HETANG_PERSONAL_KNOWLEDGE_AI_MODEL", "").strip()
+    wire_api = os.getenv("HETANG_PERSONAL_KNOWLEDGE_AI_WIRE_API", "").strip()
+    auth_type = os.getenv("HETANG_PERSONAL_KNOWLEDGE_AI_AUTH_TYPE", "").strip()
+    effort_level = os.getenv("HETANG_PERSONAL_KNOWLEDGE_AI_EFFORT_LEVEL", "").strip()
+    if not base_url or not api_key or not model:
+        claude_config = load_claude_personal_knowledge_llm_config()
+        base_url = base_url or str(claude_config.get("base_url") or "")
+        api_key = api_key or str(claude_config.get("api_key") or "")
+        model = model or str(claude_config.get("model") or "")
+        wire_api = wire_api or str(claude_config.get("wire_api") or "")
+        auth_type = auth_type or str(claude_config.get("auth_type") or "")
+        effort_level = effort_level or str(claude_config.get("effort_level") or "")
+    if not base_url or not api_key or not model:
+        return None
+    return {
+        "base_url": base_url.rstrip("/"),
+        "api_key": api_key,
+        "model": model,
+        "wire_api": wire_api or "chat",
+        "auth_type": auth_type or "bearer",
+        "effort_level": effort_level,
+        "timeout_seconds": int(
+            os.getenv(
+                "HETANG_PERSONAL_KNOWLEDGE_AI_TIMEOUT_SECONDS",
+                str(_PERSONAL_KNOWLEDGE_LLM_TIMEOUT_SECONDS),
+            )
+        ),
+    }
+
+
+def load_claude_personal_knowledge_llm_config(
+    claude_dir: Path | None = None,
+) -> dict[str, Any]:
+    resolved_claude_dir = claude_dir or Path(
+        os.getenv("HETANG_PERSONAL_KNOWLEDGE_CLAUDE_DIR", "/root/.claude")
+    )
+    settings_path = resolved_claude_dir / "settings.json"
+    if not settings_path.exists():
+        return {}
+    try:
+        settings_payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(settings_payload, dict):
+        return {}
+    env_payload = settings_payload.get("env")
+    if not isinstance(env_payload, dict):
+        env_payload = {}
+    return {
+        "base_url": str(env_payload.get("ANTHROPIC_BASE_URL") or "").strip(),
+        "wire_api": "anthropic_messages",
+        "model": normalize_claude_personal_knowledge_model(settings_payload.get("model")),
+        "api_key": str(env_payload.get("ANTHROPIC_AUTH_TOKEN") or "").strip(),
+        "auth_type": "bearer",
+        "effort_level": str(settings_payload.get("effortLevel") or "").strip(),
+    }
+
+
+def normalize_claude_personal_knowledge_model(model: Any) -> str:
+    model_name = str(model or "").strip()
+    if model_name == "opus[1m]":
+        return "claude-opus-4-6"
+    if model_name.endswith("[1m]"):
+        return model_name.removesuffix("[1m]")
+    return model_name
+
+
+def build_personal_knowledge_grounding_prompt(
+    domain: str,
+    question: str,
+    results: list[dict[str, Any]],
+) -> str:
+    evidence_blocks = []
+    for index, result in enumerate(results[:5], start=1):
+        evidence_blocks.append(
+            "\n".join(
+                [
+                    f"[{index}] 知识域：{result.get('domain') or domain}",
+                    f"资料名：{result.get('title') or '未知资料'}",
+                    f"路径：{result.get('relativePath') or '-'}",
+                    f"chunk：{result.get('chunkIndex')}",
+                    f"摘录：{str(result.get('text') or '')[:900]}",
+                ]
+            )
+        )
+    evidence_label = "项目结构化资产与书籍证据" if domain == "hxy" else "书籍证据"
+    task_rules = [
+        "1. 必须使用中文。",
+        "2. 先给结论，再给可执行步骤。",
+        "3. 不允许编造书外事实；证据不足时明确说明不足。",
+        "4. 回答中用 [1] [2] 标注对应证据。",
+    ]
+    if domain == "hxy":
+        task_rules.extend(
+            [
+                "5. 优先使用 HXY OSI、品牌全案、终端执行手册、小店模型和样板验证矩阵。",
+                "6. 再用华与华/营销/管理书籍提升判断，不得让外部理论覆盖项目事实。",
+                "7. 如果是落地问题，输出：核心判断、门店动作、数据/财务假设、样板店验证、风险边界。",
+            ]
+        )
+    else:
+        task_rules.append(
+            "5. 如果是品牌策划问题，输出：核心判断、品牌承诺、购买理由、超级符号/终端动作、验证指标。"
+        )
+    return "\n\n".join(
+        [
+            f"知识域：{domain}",
+            f"用户问题：{question}",
+            f"{evidence_label}：",
+            *evidence_blocks,
+            "",
+            f"请基于上述{evidence_label}回答。要求：",
+            *task_rules,
+        ]
+    )
+
+
+def extract_openai_chat_message(payload: dict[str, Any]) -> str:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        return ""
+    message = first_choice.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        return str(content).strip() if content else ""
+    text = first_choice.get("text")
+    return str(text).strip() if text else ""
+
+
+def extract_openai_responses_message(payload: dict[str, Any]) -> str:
+    output_text = payload.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+    output = payload.get("output")
+    if not isinstance(output, list):
+        return ""
+    parts: list[str] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for content_item in content:
+            if not isinstance(content_item, dict):
+                continue
+            text = content_item.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+    return "\n".join(parts).strip()
+
+
+def extract_anthropic_messages_text(payload: dict[str, Any]) -> str:
+    content = payload.get("content")
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if isinstance(text, str) and text.strip():
+            parts.append(text.strip())
+    return "\n".join(parts).strip()
+
+
+def build_personal_knowledge_llm_request(config: dict[str, Any], domain: str, question: str, results: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    wire_api = str(config.get("wire_api") or "chat").strip().lower()
+    grounding_prompt = build_personal_knowledge_grounding_prompt(domain, question, results)
+    if wire_api == "anthropic_messages":
+        effort_level = str(config.get("effort_level") or "").strip()
+        reasoning_line = (
+            f"当前推理强度配置：{effort_level}。"
+            if effort_level
+            else "当前推理强度配置：默认。"
+        )
+        return (
+            f"{config['base_url']}/v1/messages",
+            {
+                "model": config["model"],
+                "max_tokens": 2200,
+                "temperature": 0.2,
+                "system": (
+                    "你是个人知识助手。你必须结合模型的综合推理能力和用户提供的本地书籍证据作答，"
+                    "保留 [1] [2] 这种引用编号；不要编造没有证据支撑的书籍内容。"
+                    f"{reasoning_line}"
+                ),
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": grounding_prompt,
+                    }
+                ],
+            },
+        )
+    if wire_api == "responses":
+        return (
+            f"{config['base_url']}/responses",
+            {
+                "model": config["model"],
+                "reasoning": {"effort": "high"},
+                "input": [
+                    {
+                        "role": "system",
+                        "content": "你是个人知识助手，必须结合模型推理能力与用户提供的书籍证据作答，并保留引用编号。",
+                    },
+                    {
+                        "role": "user",
+                        "content": grounding_prompt,
+                    },
+                ],
+            },
+        )
+    return (
+        f"{config['base_url']}/chat/completions",
+        {
+            "model": config["model"],
+            "temperature": 0.2,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "你是个人知识助手，只能基于用户提供的书籍证据回答，并必须保留引用编号。",
+                },
+                {
+                    "role": "user",
+                    "content": grounding_prompt,
+                },
+            ],
+        },
+    )
+
+
+def build_personal_knowledge_llm_headers(config: dict[str, Any]) -> dict[str, str]:
+    headers = {
+        "content-type": "application/json",
+        "authorization": f"Bearer {config['api_key']}",
+    }
+    if str(config.get("wire_api") or "").lower() == "anthropic_messages":
+        headers["anthropic-version"] = "2023-06-01"
+    return headers
+
+
+def call_personal_knowledge_llm(
+    domain: str,
+    question: str,
+    results: list[dict[str, Any]],
+) -> str | None:
+    config = resolve_personal_knowledge_llm_config()
+    if config is None or not results:
+        return None
+    request_url, request_payload = build_personal_knowledge_llm_request(
+        config, domain, question, results
+    )
+    request = urllib.request.Request(
+        request_url,
+        data=json.dumps(request_payload, ensure_ascii=False).encode("utf-8"),
+        headers=build_personal_knowledge_llm_headers(config),
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=config["timeout_seconds"]) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (TimeoutError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    wire_api = str(config.get("wire_api") or "").lower()
+    if wire_api == "responses":
+        answer = extract_openai_responses_message(payload)
+    elif wire_api == "anthropic_messages":
+        answer = extract_anthropic_messages_text(payload)
+    else:
+        answer = extract_openai_chat_message(payload)
+    return answer or None
+
+
+def render_personal_knowledge_chat_with_llm(
+    domain: str,
+    question: str,
+    results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    template_payload = (
+        render_brand_knowledge_chat(question, results)
+        if domain == "brand"
+        else render_hxy_knowledge_chat(question, results)
+        if domain == "hxy"
+        else render_personal_knowledge_chat(question, domain, results)
+    )
+    llm_answer = call_personal_knowledge_llm(domain, question, results)
+    if not llm_answer:
+        return {**template_payload, "answer_source": "template"}
+    return {
+        **template_payload,
+        "answer": llm_answer,
+        "answer_source": "llm",
+    }
+
+
+def build_brand_knowledge_search_query(question: str) -> str:
+    expansion_terms = [
+        "华与华",
+        "超级符号",
+        "品牌资产",
+        "定位",
+        "购买理由",
+        "品牌承诺",
+        "传播成本",
+        "终端",
+        "门头",
+        "包装",
+        "口号",
+    ]
+    normalized_question = question.strip()
+    missing_terms = [term for term in expansion_terms if term not in normalized_question]
+    return " ".join([normalized_question, *missing_terms]).strip()
+
+
+def render_personal_knowledge_export_plan(
+    domain: str,
+    question: str,
+    answer: str,
+    citations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    safe_domain = resolve_personal_knowledge_domain(domain)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    citation_lines = []
+    for index, citation in enumerate(citations, start=1):
+        citation_lines.append(
+            f"{index}. 《{citation.get('title', '未知书籍')}》 chunk {citation.get('chunkIndex', '-')} · {citation.get('relativePath', '-')}"
+        )
+    markdown = "\n".join(
+        [
+            "# 荷塘个人知识助手导出",
+            "",
+            f"- 知识域：{safe_domain}",
+            f"- 问题：{question}",
+            f"- 导出时间：{timestamp}",
+            "",
+            "## 回答",
+            "",
+            answer.strip(),
+            "",
+            "## 引用来源",
+            "",
+            *(citation_lines or ["暂无引用"]),
+            "",
+        ]
+    )
+    return {
+        "file_name": f"knowledge-{safe_domain}-{timestamp}.md",
+        "markdown": markdown,
+    }
+
+
 def release_db_connection(connection: psycopg2.extensions.connection | None) -> None:
     if connection is None:
         return
@@ -649,9 +1815,102 @@ def get_health() -> dict[str, Any]:
     }
 
 
+@app.get("/", response_class=HTMLResponse)
+def personal_knowledge_home() -> FileResponse:
+    page_path = get_htops_root_dir() / "docs" / "personal-knowledge-chat.html"
+    if not page_path.exists():
+        raise HTTPException(status_code=404, detail="personal knowledge chat page not found")
+    return FileResponse(page_path)
+
+
+@app.get("/knowledge", response_class=HTMLResponse)
+def personal_knowledge_chat_page() -> FileResponse:
+    return personal_knowledge_home()
+
+
 @app.on_event("shutdown")
 def shutdown_db_pool() -> None:
     close_db_connection_pool()
+
+
+@app.get("/api/v1/personal-knowledge/sources")
+def get_personal_knowledge_sources(
+    domain: str = Query("brand", description="Knowledge domain"),
+) -> dict[str, Any]:
+    resolved_domain = resolve_personal_knowledge_domain(domain)
+    index_payload = load_personal_knowledge_index(resolved_domain)
+    sources = index_payload.get("sources")
+    chunks = index_payload.get("chunks")
+    skipped_files = index_payload.get("skippedFiles")
+    return make_json_safe(
+        {
+            "domain": resolved_domain,
+            "generated_at": index_payload.get("generatedAt"),
+            "source_count": len(sources) if isinstance(sources, list) else 0,
+            "chunk_count": len(chunks) if isinstance(chunks, list) else 0,
+            "skipped_count": len(skipped_files) if isinstance(skipped_files, list) else 0,
+            "sources": sources if isinstance(sources, list) else [],
+        }
+    )
+
+
+@app.post("/api/v1/personal-knowledge/chat")
+def post_personal_knowledge_chat(request: PersonalKnowledgeChatRequest) -> dict[str, Any]:
+    question = request.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required")
+    domain = resolve_personal_knowledge_domain(request.domain)
+    index_payload = load_personal_knowledge_index(domain)
+    if domain == "brand":
+        results = search_personal_knowledge_index(
+            index_payload,
+            build_brand_knowledge_search_query(question),
+            domain,
+            request.top_k,
+        )
+    else:
+        results = build_cross_domain_personal_knowledge_results(domain, question, request.top_k)
+        if domain == "hxy":
+            results = prepend_hxy_project_brain_context(results)
+    rendered = render_personal_knowledge_chat_with_llm(domain, question, results)
+    return make_json_safe(
+        {
+            "ok": True,
+            "domain": domain,
+            "question": question,
+            "answer": rendered["answer"],
+            "answer_source": rendered.get("answer_source", "template"),
+            "citations": rendered["citations"],
+            "index_generated_at": index_payload.get("generatedAt"),
+        }
+    )
+
+
+@app.post("/api/v1/personal-knowledge/upload")
+def post_personal_knowledge_upload(request: PersonalKnowledgeUploadRequest) -> dict[str, Any]:
+    domain = resolve_personal_knowledge_domain(request.domain)
+    saved_path = write_uploaded_personal_knowledge_file(domain, request)
+    summary = rebuild_personal_knowledge_index(domain)
+    return make_json_safe(
+        {
+            "ok": True,
+            "domain": domain,
+            "file_name": saved_path.name,
+            "relative_path": str(saved_path.relative_to(get_htops_root_dir())),
+            "index": summary,
+        }
+    )
+
+
+@app.post("/api/v1/personal-knowledge/export")
+def post_personal_knowledge_export(request: PersonalKnowledgeExportRequest) -> dict[str, Any]:
+    payload = render_personal_knowledge_export_plan(
+        domain=request.domain,
+        question=request.question,
+        answer=request.answer,
+        citations=request.citations,
+    )
+    return make_json_safe({"ok": True, **payload})
 
 
 @app.get("/api/v1/kpi/daily")

@@ -33,3 +33,7 @@ tools/**/__pycache__/
 *.pyo
 
 knowledge/**/raw/
+knowledge/**/index.json
+knowledge/**/parsed/
+knowledge/**/structured/
+knowledge/**/*.zip

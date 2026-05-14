@@ -2,16 +2,43 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+import base64
+import json
+import os
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+import subprocess
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from main import (
+    CONTROL_PLANE_CONTRACT_VERSION,
+    PersonalKnowledgeUploadRequest,
+    build_hxy_project_brain_context_results,
+    build_personal_knowledge_llm_headers,
+    build_brand_knowledge_search_query,
+    build_cross_domain_personal_knowledge_results,
+    build_personal_knowledge_llm_request,
     close_db_connection_pool,
+    extract_anthropic_messages_text,
+    extract_openai_responses_message,
     fetch_rows,
+    build_personal_knowledge_index_command,
+    load_claude_personal_knowledge_llm_config,
+    normalize_claude_personal_knowledge_model,
+    rebuild_personal_knowledge_index,
+    render_brand_knowledge_chat,
+    render_hxy_knowledge_chat,
+    render_personal_knowledge_chat_with_llm,
+    render_personal_knowledge_chat,
+    render_personal_knowledge_export_plan,
+    resolve_personal_knowledge_domain,
+    sanitize_personal_knowledge_file_name,
+    search_personal_knowledge_index,
+    write_uploaded_personal_knowledge_file,
     get_runtime_semantic_quality,
     get_runtime_queues,
     make_json_safe,
@@ -46,6 +73,699 @@ class MainTests(unittest.TestCase):
                 },
             },
         )
+
+    def test_search_personal_knowledge_index_ranks_chunks_and_citations(self) -> None:
+        payload = search_personal_knowledge_index(
+            {
+                "version": "personal-knowledge-index.v1",
+                "sources": [
+                    {
+                        "sourceId": "s1",
+                        "domain": "marketing",
+                        "title": "华与华超级符号案例集",
+                    }
+                ],
+                "chunks": [
+                    {
+                        "chunkId": "c1",
+                        "sourceId": "s1",
+                        "domain": "marketing",
+                        "title": "华与华超级符号案例集",
+                        "relativePath": "knowledge/marketing/raw/华与华超级符号案例集.pdf",
+                        "chunkIndex": 0,
+                        "text": "超级符号是降低传播成本的品牌资产，要落到门头、包装、话语和员工动作。",
+                        "keywords": ["超级符号", "品牌资产", "传播成本", "门头"],
+                    },
+                    {
+                        "chunkId": "c2",
+                        "sourceId": "s2",
+                        "domain": "marketing",
+                        "title": "增长黑客",
+                        "relativePath": "knowledge/marketing/raw/增长黑客.pdf",
+                        "chunkIndex": 0,
+                        "text": "增长实验通过数据反馈优化获客和留存。",
+                        "keywords": ["增长实验", "获客", "留存"],
+                    },
+                ],
+            },
+            "门店品牌超级符号",
+            "marketing",
+            1,
+        )
+
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["title"], "华与华超级符号案例集")
+        self.assertGreater(payload[0]["score"], 0)
+
+    def test_render_personal_knowledge_chat_returns_grounded_answer(self) -> None:
+        payload = render_personal_knowledge_chat(
+            "如何设计门店超级符号",
+            "marketing",
+            [
+                {
+                    "sourceId": "s1",
+                    "title": "华与华超级符号案例集",
+                    "relativePath": "knowledge/marketing/raw/华与华超级符号案例集.pdf",
+                    "chunkIndex": 0,
+                    "score": 4,
+                    "text": "超级符号是降低传播成本的品牌资产，要落到门头、包装、话语和员工动作。",
+                }
+            ],
+        )
+
+        self.assertIn("基于 marketing 书库", payload["answer"])
+        self.assertEqual(payload["citations"][0]["title"], "华与华超级符号案例集")
+        self.assertLessEqual(len(payload["citations"][0]["snippet"]), 180)
+
+    def test_brand_marketing_management_book_and_hxy_domains_are_supported(self) -> None:
+        self.assertEqual(resolve_personal_knowledge_domain("brand"), "brand")
+        self.assertEqual(resolve_personal_knowledge_domain("marketing"), "marketing")
+        self.assertEqual(resolve_personal_knowledge_domain("management"), "management")
+        self.assertEqual(resolve_personal_knowledge_domain("book"), "book")
+        self.assertEqual(resolve_personal_knowledge_domain("hxy"), "hxy")
+
+    def test_render_brand_knowledge_chat_requires_book_citations(self) -> None:
+        payload = render_brand_knowledge_chat(
+            "用华与华理论做荷塘悦色品牌策划",
+            [
+                {
+                    "sourceId": "s1",
+                    "title": "华与华超级符号案例集",
+                    "relativePath": "knowledge/brand/raw/华与华超级符号案例集.pdf",
+                    "chunkIndex": 0,
+                    "score": 8,
+                    "text": "超级符号是降低品牌传播成本的核心资产，要把品牌承诺变成人人看得懂、记得住、能复述的符号。",
+                },
+                {
+                    "sourceId": "s2",
+                    "title": "华与华方法",
+                    "relativePath": "knowledge/brand/raw/华与华方法.pdf",
+                    "chunkIndex": 12,
+                    "score": 5,
+                    "text": "品牌策划要把购买理由、视觉符号、货架呈现和终端动作统一起来，形成可重复的经营动作。",
+                },
+            ],
+        )
+
+        self.assertIn("品牌策划回答", payload["answer"])
+        self.assertIn("引用来源", payload["answer"])
+        self.assertIn("《华与华超级符号案例集》", payload["answer"])
+        self.assertEqual(payload["citations"][0]["relativePath"], "knowledge/brand/raw/华与华超级符号案例集.pdf")
+
+    def test_hxy_brand_strategy_questions_merge_project_and_brand_evidence(self) -> None:
+        index_by_domain = {
+            "hxy": {
+                "chunks": [
+                    {
+                        "sourceId": "hxy1",
+                        "domain": "hxy",
+                        "title": "荷小悦_品牌策划全案",
+                        "relativePath": "knowledge/hxy/raw/荷小悦_品牌策划全案.docx",
+                        "chunkIndex": 0,
+                        "score": 0,
+                        "text": "荷小悦定位社区泡脚按摩小店，主打草本真现煮，按出真功夫。",
+                        "keywords": ["荷小悦", "定位", "社区", "泡脚", "按摩", "草本", "小店"],
+                    }
+                ]
+            },
+            "brand": {
+                "chunks": [
+                    {
+                        "sourceId": "brand1",
+                        "domain": "brand",
+                        "title": "华与华方法",
+                        "relativePath": "knowledge/brand/raw/华与华方法.epub",
+                        "chunkIndex": 3,
+                        "score": 0,
+                        "text": "品牌策划要明确购买理由、品牌承诺、超级符号、终端动作和传播成本。",
+                        "keywords": ["品牌策划", "购买理由", "品牌承诺", "超级符号", "终端动作", "传播成本"],
+                    }
+                ]
+            },
+        }
+
+        results = build_cross_domain_personal_knowledge_results(
+            domain="hxy",
+            question="用华与华方法优化荷小悦品牌定位和超级符号",
+            top_k=6,
+            load_index=lambda domain: index_by_domain[domain],
+        )
+
+        self.assertEqual({result["domain"] for result in results}, {"hxy", "brand"})
+        self.assertEqual(results[0]["domain"], "hxy")
+        self.assertTrue(any(result["title"] == "华与华方法" for result in results))
+
+    def test_hxy_project_brain_context_results_prepend_structured_project_brain(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            structured_dir = root / "knowledge" / "hxy" / "structured"
+            structured_dir.mkdir(parents=True)
+            (structured_dir / "brand-master-plan.json").write_text(
+                json.dumps(
+                    {
+                        "version": "hxy-brand-master-plan.v1",
+                        "executive_summary": "荷小悦是社区泡脚按摩小店，核心是家门口、真实有效、价格不心疼、能复购。",
+                        "methodology_principles": [
+                            {
+                                "label": "购买理由",
+                                "application": "真实有效、价格不心疼、离家近可信。",
+                            }
+                        ],
+                        "sections": [
+                            {
+                                "title": "终端执行",
+                                "content": ["门头突出草本现煮，按出真功夫。"],
+                            }
+                        ],
+                        "risks": ["社区小店定位与银发健康科技平台不能同时作为当前主定位。"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (structured_dir / "osi-contract.json").write_text(
+                json.dumps(
+                    {
+                        "version": "hxy-osi-contract.v1",
+                        "domains": [
+                            {
+                                "label": "品牌定位 OSI",
+                                "purpose": "拆开当前定位和远期愿景。",
+                                "answer_boundaries": ["当前主定位、融资叙事、远期平台愿景必须分开表达。"],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (structured_dir / "execution-playbook.json").write_text(
+                json.dumps(
+                    {
+                        "version": "hxy-execution-playbook.v1",
+                        "positioning_guardrail": "当前经营只讲社区泡脚按摩小店。",
+                        "surfaces": [
+                            {
+                                "label": "门头/门店",
+                                "objective": "让路过的人立刻知道荷小悦卖什么。",
+                                "copy_blocks": ["草本真现煮，按出真功夫"],
+                                "action_steps": ["门头只保留品牌名、品类和一句购买理由。"],
+                                "do_not_say": ["我们是大健康生态平台。"],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (structured_dir / "store-model.json").write_text(
+                json.dumps(
+                    {
+                        "version": "hxy-store-model.v1",
+                        "monthly_revenue": 142760,
+                        "monthly_net_cashflow": 36467.2,
+                        "payback_months": 5,
+                        "caveats": ["这是样板店假设模型，不是已审计财务报表。"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (structured_dir / "pilot-validation-matrix.json").write_text(
+                json.dumps(
+                    {
+                        "version": "hxy-pilot-validation-matrix.v1",
+                        "items": [
+                            {
+                                "label": "套餐选择率",
+                                "hypothesis": "三层菜单能让招牌款成为主销套餐。",
+                                "evidence_source": "收银流水、套餐订单明细",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            results = build_hxy_project_brain_context_results(root)
+
+        self.assertEqual(
+            [result["sourceId"] for result in results],
+            [
+                "hxy-brand-master-plan",
+                "hxy-execution-playbook",
+                "hxy-store-model",
+                "hxy-pilot-validation-matrix",
+                "hxy-osi-contract",
+            ],
+        )
+        self.assertIn("社区泡脚按摩小店", results[0]["text"])
+        self.assertIn("草本真现煮，按出真功夫", results[1]["text"])
+        self.assertIn("月净现金流：36467.2", results[2]["text"])
+        self.assertIn("套餐选择率", results[3]["text"])
+        self.assertIn("当前主定位、融资叙事、远期平台愿景必须分开表达", results[4]["text"])
+
+    def test_hxy_chat_template_uses_project_brain_context_before_raw_sources(self) -> None:
+        payload = render_hxy_knowledge_chat(
+            "荷小悦品牌定位怎么做",
+            [
+                {
+                    "sourceId": "hxy-brand-master-plan",
+                    "domain": "hxy",
+                    "title": "HXY 品牌策划全案 v1",
+                    "relativePath": "knowledge/hxy/structured/brand-master-plan.json",
+                    "chunkIndex": 0,
+                    "score": 1000,
+                    "text": "荷小悦是社区泡脚按摩小店，核心是家门口、真实有效、价格不心疼、能复购。",
+                },
+                {
+                    "sourceId": "brand1",
+                    "domain": "brand",
+                    "title": "华与华方法",
+                    "relativePath": "knowledge/brand/raw/华与华方法.epub",
+                    "chunkIndex": 3,
+                    "score": 8,
+                    "text": "购买理由、超级符号和终端动作要统一。",
+                },
+            ],
+        )
+
+        self.assertIn("HXY 项目大脑回答", payload["answer"])
+        self.assertIn("社区泡脚按摩小店", payload["answer"])
+        self.assertIn("项目大脑", payload["answer"])
+        self.assertEqual(payload["citations"][0]["sourceId"], "hxy-brand-master-plan")
+
+    def test_render_personal_knowledge_chat_with_llm_uses_citations_when_configured(self) -> None:
+        results = [
+            {
+                "sourceId": "s1",
+                "title": "华与华方法",
+                "relativePath": "knowledge/brand/raw/华与华方法.epub",
+                "chunkIndex": 0,
+                "score": 8,
+                "text": "品牌策划要明确购买理由、品牌承诺、超级符号、终端动作和传播成本。",
+            }
+        ]
+        with patch.dict(
+            os.environ,
+            {
+                "HETANG_PERSONAL_KNOWLEDGE_AI_BASE_URL": "https://example.test/v1",
+                "HETANG_PERSONAL_KNOWLEDGE_AI_API_KEY": "test-key",
+                "HETANG_PERSONAL_KNOWLEDGE_AI_MODEL": "test-model",
+            },
+        ):
+            with patch("main.call_personal_knowledge_llm") as call_llm:
+                call_llm.return_value = "基于引用，荷塘悦色应先定义购买理由，再统一超级符号。"
+
+                payload = render_personal_knowledge_chat_with_llm("brand", "给荷塘悦色做品牌策划", results)
+
+        call_llm.assert_called_once()
+        self.assertIn("基于引用", payload["answer"])
+        self.assertEqual(payload["answer_source"], "llm")
+        self.assertEqual(payload["citations"][0]["title"], "华与华方法")
+
+    def test_render_personal_knowledge_chat_with_llm_falls_back_without_config(self) -> None:
+        results = [
+            {
+                "sourceId": "s1",
+                "title": "华与华方法",
+                "relativePath": "knowledge/brand/raw/华与华方法.epub",
+                "chunkIndex": 0,
+                "score": 8,
+                "text": "品牌策划要明确购买理由、品牌承诺、超级符号、终端动作和传播成本。",
+            }
+        ]
+        with patch.dict(
+            os.environ,
+            {"HETANG_PERSONAL_KNOWLEDGE_CLAUDE_DIR": "/tmp/missing-claude-config"},
+            clear=True,
+        ):
+            payload = render_personal_knowledge_chat_with_llm("brand", "给荷塘悦色做品牌策划", results)
+
+        self.assertEqual(payload["answer_source"], "template")
+        self.assertIn("品牌策划回答", payload["answer"])
+        self.assertEqual(payload["citations"][0]["title"], "华与华方法")
+
+    def test_extract_openai_responses_message_reads_output_text(self) -> None:
+        self.assertEqual(
+            extract_openai_responses_message(
+                {
+                    "output": [
+                        {
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "基于书籍证据的综合回答",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ),
+            "基于书籍证据的综合回答",
+        )
+
+    def test_extract_anthropic_messages_text_reads_content_blocks(self) -> None:
+        self.assertEqual(
+            extract_anthropic_messages_text(
+                {
+                    "content": [
+                        {"type": "text", "text": "基于书籍证据"},
+                        {"type": "text", "text": "结合模型综合判断"},
+                    ]
+                }
+            ),
+            "基于书籍证据\n结合模型综合判断",
+        )
+
+    def test_load_claude_personal_knowledge_llm_config_reads_settings_env(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            claude_dir = Path(temp_dir)
+            (claude_dir / "settings.json").write_text(
+                json.dumps(
+                    {
+                        "env": {
+                            "ANTHROPIC_AUTH_TOKEN": "test-token",
+                            "ANTHROPIC_BASE_URL": "https://claude.example.test",
+                        },
+                        "model": "opus[1m]",
+                        "effortLevel": "xhigh",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_claude_personal_knowledge_llm_config(claude_dir)
+
+        self.assertEqual(config["base_url"], "https://claude.example.test")
+        self.assertEqual(config["model"], "claude-opus-4-6")
+        self.assertEqual(config["wire_api"], "anthropic_messages")
+        self.assertEqual(config["api_key"], "test-token")
+        self.assertEqual(config["auth_type"], "bearer")
+        self.assertEqual(config["effort_level"], "xhigh")
+
+    def test_normalize_claude_personal_knowledge_model_maps_code_aliases(self) -> None:
+        self.assertEqual(normalize_claude_personal_knowledge_model("opus[1m]"), "claude-opus-4-6")
+        self.assertEqual(
+            normalize_claude_personal_knowledge_model("claude-opus-4-6[1m]"),
+            "claude-opus-4-6",
+        )
+        self.assertEqual(
+            normalize_claude_personal_knowledge_model("claude-haiku-4-5-20251001"),
+            "claude-haiku-4-5-20251001",
+        )
+
+    def test_build_personal_knowledge_llm_request_uses_anthropic_messages(self) -> None:
+        request_url, request_payload = build_personal_knowledge_llm_request(
+            {
+                "base_url": "https://claude.example.test",
+                "model": "opus[1m]",
+                "wire_api": "anthropic_messages",
+                "effort_level": "xhigh",
+            },
+            "brand",
+            "给荷塘悦色做品牌策划",
+            [
+                {
+                    "title": "华与华方法",
+                    "relativePath": "knowledge/brand/raw/华与华方法.epub",
+                    "chunkIndex": 3,
+                    "text": "品牌策划要明确购买理由、品牌承诺、超级符号、终端动作和传播成本。",
+                }
+            ],
+        )
+
+        self.assertEqual(request_url, "https://claude.example.test/v1/messages")
+        self.assertEqual(request_payload["model"], "opus[1m]")
+        self.assertIn("xhigh", request_payload["system"])
+        self.assertEqual(request_payload["messages"][0]["role"], "user")
+        self.assertIn("华与华方法", request_payload["messages"][0]["content"])
+
+    def test_build_personal_knowledge_llm_request_labels_cross_domain_evidence(self) -> None:
+        _, request_payload = build_personal_knowledge_llm_request(
+            {
+                "base_url": "https://claude.example.test",
+                "model": "claude-opus-4-6",
+                "wire_api": "anthropic_messages",
+            },
+            "hxy",
+            "用华与华方法优化荷小悦品牌",
+            [
+                {
+                    "domain": "hxy",
+                    "title": "荷小悦_品牌策划全案",
+                    "relativePath": "knowledge/hxy/raw/荷小悦_品牌策划全案.docx",
+                    "chunkIndex": 0,
+                    "text": "荷小悦定位社区泡脚按摩小店。",
+                },
+                {
+                    "domain": "brand",
+                    "title": "华与华方法",
+                    "relativePath": "knowledge/brand/raw/华与华方法.epub",
+                    "chunkIndex": 3,
+                    "text": "品牌策划要明确购买理由、品牌承诺和超级符号。",
+                },
+            ],
+        )
+
+        content = request_payload["messages"][0]["content"]
+        self.assertIn("知识域：hxy", content)
+        self.assertIn("知识域：brand", content)
+
+    def test_hxy_llm_request_includes_project_brain_assets(self) -> None:
+        _, request_payload = build_personal_knowledge_llm_request(
+            {
+                "base_url": "https://claude.example.test",
+                "model": "claude-opus-4-6",
+                "wire_api": "anthropic_messages",
+            },
+            "hxy",
+            "荷小悦样板店如何落地",
+            [
+                {
+                    "domain": "hxy",
+                    "sourceId": "hxy-execution-playbook",
+                    "title": "HXY 终端执行手册 v1",
+                    "relativePath": "knowledge/hxy/structured/execution-playbook.json",
+                    "chunkIndex": 0,
+                    "text": "门头/门店：文案：草本真现煮，按出真功夫。",
+                },
+                {
+                    "domain": "hxy",
+                    "sourceId": "hxy-store-model",
+                    "title": "HXY 小店模型 v1",
+                    "relativePath": "knowledge/hxy/structured/store-model.json",
+                    "chunkIndex": 0,
+                    "text": "月净现金流：36467.2。回本周期：5。",
+                },
+                {
+                    "domain": "hxy",
+                    "sourceId": "hxy-pilot-validation-matrix",
+                    "title": "HXY 样板验证矩阵 v1",
+                    "relativePath": "knowledge/hxy/structured/pilot-validation-matrix.json",
+                    "chunkIndex": 0,
+                    "text": "套餐选择率：证据：收银流水、套餐订单明细。",
+                },
+            ],
+        )
+
+        content = request_payload["messages"][0]["content"]
+        self.assertIn("项目结构化资产与书籍证据", content)
+        self.assertIn("HXY 终端执行手册 v1", content)
+        self.assertIn("月净现金流：36467.2", content)
+        self.assertIn("套餐选择率", content)
+        self.assertIn("样板店验证", content)
+
+    def test_build_personal_knowledge_llm_headers_adds_anthropic_version(self) -> None:
+        headers = build_personal_knowledge_llm_headers(
+            {
+                "api_key": "test-token",
+                "wire_api": "anthropic_messages",
+                "auth_type": "bearer",
+            }
+        )
+
+        self.assertEqual(headers["authorization"], "Bearer test-token")
+        self.assertEqual(headers["anthropic-version"], "2023-06-01")
+
+    def test_brand_search_query_expands_brand_planning_terms(self) -> None:
+        query = build_brand_knowledge_search_query("给荷塘悦色做品牌策划框架")
+
+        self.assertIn("超级符号", query)
+        self.assertIn("品牌资产", query)
+        self.assertIn("定位", query)
+
+    def test_brand_search_prioritizes_methodology_terms_over_loose_case_matches(self) -> None:
+        results = search_personal_knowledge_index(
+            {
+                "chunks": [
+                    {
+                        "sourceId": "case",
+                        "domain": "brand",
+                        "title": "华与华超级符号案例集",
+                        "relativePath": "knowledge/brand/raw/case.pdf",
+                        "chunkIndex": 0,
+                        "text": "某小说 app 有用户流失问题，需要通过榜单提升阅读留存。",
+                        "keywords": ["华与华", "案例", "品牌"],
+                    },
+                    {
+                        "sourceId": "method",
+                        "domain": "brand",
+                        "title": "华与华方法",
+                        "relativePath": "knowledge/brand/raw/method.epub",
+                        "chunkIndex": 0,
+                        "text": "品牌策划要明确购买理由、品牌承诺、超级符号、终端动作和传播成本。",
+                        "keywords": ["品牌策划", "购买理由", "品牌承诺", "超级符号", "终端动作", "传播成本"],
+                    },
+                ]
+            },
+            build_brand_knowledge_search_query("给荷塘悦色做品牌策划框架"),
+            "brand",
+            2,
+        )
+
+        self.assertEqual(results[0]["title"], "华与华方法")
+
+    def test_brand_search_prefers_method_books_when_scores_are_close(self) -> None:
+        results = search_personal_knowledge_index(
+            {
+                "chunks": [
+                    {
+                        "sourceId": "case",
+                        "domain": "brand",
+                        "title": "华与华超级符号案例集",
+                        "relativePath": "knowledge/brand/raw/case.pdf",
+                        "chunkIndex": 0,
+                        "text": "品牌传播活动案例。",
+                        "keywords": ["华与华", "品牌", "传播", "活动", "案例"],
+                    },
+                    {
+                        "sourceId": "method",
+                        "domain": "brand",
+                        "title": "超级符号原理",
+                        "relativePath": "knowledge/brand/raw/symbol.epub",
+                        "chunkIndex": 0,
+                        "text": "购买理由和超级符号要降低传播成本。",
+                        "keywords": ["购买理由", "超级符号", "传播成本"],
+                    },
+                ]
+            },
+            build_brand_knowledge_search_query("品牌策划框架"),
+            "brand",
+            2,
+        )
+
+        self.assertEqual(results[0]["title"], "超级符号原理")
+
+    def test_brand_search_penalizes_low_signal_design_story_chunks(self) -> None:
+        results = search_personal_knowledge_index(
+            {
+                "chunks": [
+                    {
+                        "sourceId": "story",
+                        "domain": "brand",
+                        "title": "华与华方法",
+                        "relativePath": "knowledge/brand/raw/method.epub",
+                        "chunkIndex": 57,
+                        "text": "这个封面不是根据书房收藏书柜设计的，能不能再弄一个内封，外面的销售用，里面的收藏用。",
+                        "keywords": ["品牌", "华与华", "设计", "销售"],
+                    },
+                    {
+                        "sourceId": "method",
+                        "domain": "brand",
+                        "title": "华与华方法",
+                        "relativePath": "knowledge/brand/raw/method.epub",
+                        "chunkIndex": 12,
+                        "text": "品牌策划要把购买理由、品牌承诺、超级符号、终端动作和传播成本统一起来。",
+                        "keywords": ["品牌策划", "购买理由", "品牌承诺", "超级符号", "终端动作", "传播成本"],
+                    },
+                ]
+            },
+            build_brand_knowledge_search_query("基于华与华书籍引用，给荷塘悦色做品牌策划框架"),
+            "brand",
+            2,
+        )
+
+        self.assertEqual(results[0]["chunkIndex"], 12)
+
+    def test_upload_sanitizes_file_name_and_rebuilds_text_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(os.environ, {"HETANG_ROOT_DIR": temp_dir}):
+                saved_path = write_uploaded_personal_knowledge_file(
+                    "management",
+                    PersonalKnowledgeUploadRequest(
+                        domain="management",
+                        file_name="../店长管理.md",
+                        content_base64=base64.b64encode(
+                            "店长管理要把目标、动作、检查和反馈形成闭环。".encode("utf-8")
+                        ).decode("ascii"),
+                    ),
+                )
+                self.assertEqual(saved_path.name, "店长管理.md")
+
+                summary = rebuild_personal_knowledge_index("management")
+                self.assertEqual(summary["source_count"], 1)
+                self.assertGreater(summary["chunk_count"], 0)
+
+    def test_rebuild_personal_knowledge_index_uses_ts_builder_for_pdf_and_epub(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(os.environ, {"HETANG_ROOT_DIR": temp_dir}):
+                Path(temp_dir, "scripts").mkdir()
+                Path(temp_dir, "scripts", "build-personal-knowledge-index.ts").write_text(
+                    "// test builder",
+                    encoding="utf-8",
+                )
+                Path(temp_dir, "knowledge", "brand", "raw").mkdir(parents=True)
+                Path(temp_dir, "knowledge", "brand", "raw", "华与华方法.epub").write_bytes(b"fake epub")
+
+                command = build_personal_knowledge_index_command("brand")
+                self.assertEqual(command[:3], ["node", "--import", "tsx"])
+                self.assertIn("--domain", command)
+                self.assertIn("brand", command)
+
+                with patch("main.subprocess.run") as run:
+                    run.return_value = subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+                    summary = rebuild_personal_knowledge_index("brand")
+
+                run.assert_called_once()
+                self.assertEqual(summary["domain"], "brand")
+                self.assertEqual(summary["builder"], "typescript")
+
+    def test_build_personal_knowledge_index_command_ignores_invalid_node_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(
+                os.environ,
+                {"HETANG_ROOT_DIR": temp_dir, "HETANG_NODE_BIN": "/missing/node"},
+            ):
+                Path(temp_dir, "scripts").mkdir()
+                Path(temp_dir, "scripts", "build-personal-knowledge-index.ts").write_text(
+                    "// test builder",
+                    encoding="utf-8",
+                )
+
+                command = build_personal_knowledge_index_command("brand")
+
+        self.assertEqual(command[0], "node")
+
+    def test_sanitize_personal_knowledge_file_name_rejects_unsupported_files(self) -> None:
+        self.assertEqual(sanitize_personal_knowledge_file_name("../华与华.md"), "华与华.md")
+        with self.assertRaises(Exception):
+            sanitize_personal_knowledge_file_name("installer.apk")
+
+    def test_render_personal_knowledge_export_plan_returns_markdown_with_citations(self) -> None:
+        payload = render_personal_knowledge_export_plan(
+            domain="brand",
+            question="给荷塘悦色做品牌策划",
+            answer="品牌策划回答\n一、书籍依据\n二、可落地策划框架",
+            citations=[
+                {
+                    "title": "华与华超级符号案例集",
+                    "relativePath": "knowledge/brand/raw/华与华超级符号案例集.pdf",
+                    "chunkIndex": 0,
+                    "score": 8,
+                }
+            ],
+        )
+
+        self.assertTrue(payload["file_name"].endswith(".md"))
+        self.assertIn("# 荷塘个人知识助手导出", payload["markdown"])
+        self.assertIn("华与华超级符号案例集", payload["markdown"])
 
     def test_serialize_scheduler_snapshot_merges_registry_with_last_runs_and_pollers(self) -> None:
         payload = serialize_scheduler_snapshot(
@@ -92,7 +812,7 @@ class MainTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["authority"], "app-service-pollers")
-        self.assertEqual(payload["contract_version"], "2026-04-16.control-plane.v1")
+        self.assertEqual(payload["contract_version"], CONTROL_PLANE_CONTRACT_VERSION)
         self.assertEqual(
             payload["entry_surface"],
             {
@@ -524,7 +1244,7 @@ class MainTests(unittest.TestCase):
     def test_get_runtime_semantic_quality_uses_explicit_occurred_after_and_deploy_marker_when_provided(self) -> None:
         captured_fetch_one: list[tuple[str, tuple[object, ...]]] = []
         captured_fetch_rows: list[tuple[str, tuple[object, ...]]] = []
-        occurred_after = "2026-04-18T03:00:00.000Z"
+        occurred_after = "2999-04-18T03:00:00.000Z"
         deploy_marker = "serving:serving-20260418040000"
 
         def fake_fetch_one(sql: str, params=()):
@@ -554,11 +1274,11 @@ class MainTests(unittest.TestCase):
         self.assertEqual(payload["total_count"], 2)
         self.assertEqual(
             captured_fetch_one[0][1],
-            ("2026-04-18T03:00:00Z", deploy_marker),
+            ("2999-04-18T03:00:00Z", deploy_marker),
         )
         self.assertTrue(
             all(
-                params[0] == "2026-04-18T03:00:00Z" and params[1] == deploy_marker
+                params[0] == "2999-04-18T03:00:00Z" and params[1] == deploy_marker
                 for _, params in captured_fetch_rows
             )
         )
